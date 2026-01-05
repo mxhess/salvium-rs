@@ -216,16 +216,6 @@ console.log(sig);
 | `verifySignature(message, address, signature)` | Verify a message signature, returns result object |
 | `parseSignature(signature)` | Parse signature string into components |
 
-## Testing
-
-```bash
-npm test
-```
-
-## License
-
-MIT
-
 ## Contributing
 
 Contributions welcome! Please read the Salvium source code for reference:
