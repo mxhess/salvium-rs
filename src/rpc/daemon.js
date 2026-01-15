@@ -5,9 +5,9 @@
  * Includes network info, block operations, transaction queries, mining, and more.
  *
  * Default ports from cryptonote_config.h:
- * - Mainnet:  P2P 19080, RPC 19081, ZMQ 19082
- * - Testnet:  P2P 29080, RPC 29081, ZMQ 29082
- * - Stagenet: P2P 39080, RPC 39081, ZMQ 39082
+ * - Mainnet:  P2P 19080, RPC 19081, ZMQ 19083
+ * - Testnet:  P2P 29080, RPC 29081, ZMQ 29083
+ * - Stagenet: P2P 39080, RPC 39081, ZMQ 39083
  *
  * Note: Restricted RPC has no default port in source code (user-specified).
  * Convention is typically daemon port + 8 (e.g., 19089 for mainnet).
@@ -771,19 +771,19 @@ export const TESTNET_URL = 'http://localhost:29081';
 export const STAGENET_URL = 'http://localhost:39081';
 
 /**
- * Default mainnet ZMQ RPC URL (from config::ZMQ_RPC_DEFAULT_PORT = 19082)
+ * Default mainnet ZMQ RPC URL (from config::ZMQ_RPC_DEFAULT_PORT = 19083)
  */
-export const ZMQ_MAINNET_URL = 'http://localhost:19082';
+export const ZMQ_MAINNET_URL = 'http://localhost:19083';
 
 /**
- * Default testnet ZMQ RPC URL (from config::testnet::ZMQ_RPC_DEFAULT_PORT = 29082)
+ * Default testnet ZMQ RPC URL (from config::testnet::ZMQ_RPC_DEFAULT_PORT = 29083)
  */
-export const ZMQ_TESTNET_URL = 'http://localhost:29082';
+export const ZMQ_TESTNET_URL = 'http://localhost:29083';
 
 /**
- * Default stagenet ZMQ RPC URL (from config::stagenet::ZMQ_RPC_DEFAULT_PORT = 39082)
+ * Default stagenet ZMQ RPC URL (from config::stagenet::ZMQ_RPC_DEFAULT_PORT = 39083)
  */
-export const ZMQ_STAGENET_URL = 'http://localhost:39082';
+export const ZMQ_STAGENET_URL = 'http://localhost:39083';
 
 /**
  * Mainnet restricted (public) RPC URL - no default in source, this is convention

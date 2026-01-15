@@ -5,7 +5,7 @@
  *
  * Port configuration from cryptonote_config.h:
  * - Daemon RPC: 19081 (mainnet), 29081 (testnet), 39081 (stagenet)
- * - ZMQ RPC:    19082 (mainnet), 29082 (testnet), 39082 (stagenet)
+ * - ZMQ RPC:    19083 (mainnet), 29083 (testnet), 39083 (stagenet)
  * - Wallet RPC: No default in source - conventionally daemon port + 1
  * - Restricted: No default in source - conventionally daemon port + 8
  *
@@ -17,15 +17,15 @@
  * const daemon = createDaemonRPC({ url: 'http://localhost:19081' });
  * const info = await daemon.getInfo();
  *
- * // Create wallet client (port 19082 is convention, not in source)
- * const wallet = createWalletRPC({ url: 'http://localhost:19082' });
+ * // Create wallet client (port 19083 is convention, not in source)
+ * const wallet = createWalletRPC({ url: 'http://localhost:19083' });
  * const balance = await wallet.getBalance();
  *
  * @example
  * // Using class constructors
  * const daemon = new DaemonRPC({ url: 'http://node.example.com:19081' });
  * const wallet = new WalletRPC({
- *   url: 'http://localhost:19082',
+ *   url: 'http://localhost:19083',
  *   username: 'user',
  *   password: 'pass'
  * });
@@ -103,9 +103,9 @@ export default {
       restrictedStagenet: DAEMON_RESTRICTED_STAGENET // convention (no source default)
     },
     zmq: {
-      mainnet: ZMQ_MAINNET,          // config::ZMQ_RPC_DEFAULT_PORT = 19082
-      testnet: ZMQ_TESTNET,          // config::testnet::ZMQ_RPC_DEFAULT_PORT = 29082
-      stagenet: ZMQ_STAGENET         // config::stagenet::ZMQ_RPC_DEFAULT_PORT = 39082
+      mainnet: ZMQ_MAINNET,          // config::ZMQ_RPC_DEFAULT_PORT = 19083
+      testnet: ZMQ_TESTNET,          // config::testnet::ZMQ_RPC_DEFAULT_PORT = 29083
+      stagenet: ZMQ_STAGENET         // config::stagenet::ZMQ_RPC_DEFAULT_PORT = 39083
     },
     wallet: {
       mainnet: WALLET_MAINNET,       // convention - daemon port + 1 (no source default)

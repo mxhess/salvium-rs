@@ -5,13 +5,13 @@
  * Includes account management, transfers, transaction history, signing, and more.
  *
  * Conventional ports (wallet RPC has no default in source - it's user-specified):
- * - Mainnet: 19082 (daemon port + 1)
- * - Testnet: 29082 (daemon port + 1)
- * - Stagenet: 39082 (daemon port + 1)
+ * - Mainnet: 19083 (daemon port + 1)
+ * - Testnet: 29083 (daemon port + 1)
+ * - Stagenet: 39083 (daemon port + 1)
  *
  * Note: The wallet RPC server (salvium-wallet-rpc) must be started separately.
  * The --rpc-bind-port argument is required and has no default value.
- * Start with: salvium-wallet-rpc --wallet-file <wallet> --rpc-bind-port 19082
+ * Start with: salvium-wallet-rpc --wallet-file <wallet> --rpc-bind-port 19083
  */
 
 import { RPCClient } from './client.js';
@@ -102,7 +102,7 @@ export class WalletRPC extends RPCClient {
   constructor(options = {}) {
     // Default to mainnet wallet RPC port if no URL provided
     if (!options.url) {
-      options.url = 'http://localhost:19082';
+      options.url = 'http://localhost:19083';
     }
     super(options);
   }
@@ -1288,17 +1288,17 @@ export function createWalletRPC(options = {}) {
 /**
  * Conventional mainnet wallet RPC URL (no default in source - daemon port + 1)
  */
-export const MAINNET_URL = 'http://localhost:19082';
+export const MAINNET_URL = 'http://localhost:19083';
 
 /**
  * Conventional testnet wallet RPC URL (no default in source - daemon port + 1)
  */
-export const TESTNET_URL = 'http://localhost:29082';
+export const TESTNET_URL = 'http://localhost:29083';
 
 /**
  * Conventional stagenet wallet RPC URL (no default in source - daemon port + 1)
  */
-export const STAGENET_URL = 'http://localhost:39082';
+export const STAGENET_URL = 'http://localhost:39083';
 
 export default {
   WalletRPC,

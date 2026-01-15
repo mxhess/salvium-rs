@@ -28,6 +28,11 @@ const tests = [
   { name: 'Subaddress Tests', file: 'subaddress.test.js' },
   { name: 'Mnemonic Tests', file: 'mnemonic.test.js' },
   { name: 'Key Derivation Tests', file: 'keys.test.js' },
+  { name: 'Address Generation Tests', file: 'address.test.js' },
+  { name: 'Wallet Tests', file: 'wallet.test.js' },
+  { name: 'Transaction Scanning Tests', file: 'scanning.test.js' },
+  { name: 'Key Image Tests', file: 'keyimage.test.js' },
+  { name: 'Transaction Construction Tests', file: 'transaction.test.js' },
 ];
 
 if (runIntegration) {

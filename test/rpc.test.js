@@ -125,16 +125,16 @@ test('Daemon URLs are exported with correct Salvium ports (from cryptonote_confi
 
 test('ZMQ URLs are exported with correct Salvium ports (from cryptonote_config.h)', () => {
   // config::ZMQ_RPC_DEFAULT_PORT values
-  assertEqual(ZMQ_MAINNET_URL, 'http://localhost:19082');
-  assertEqual(ZMQ_TESTNET_URL, 'http://localhost:29082');
-  assertEqual(ZMQ_STAGENET_URL, 'http://localhost:39082');
+  assertEqual(ZMQ_MAINNET_URL, 'http://localhost:19083');
+  assertEqual(ZMQ_TESTNET_URL, 'http://localhost:29083');
+  assertEqual(ZMQ_STAGENET_URL, 'http://localhost:39083');
 });
 
 test('Wallet URLs are exported (conventional ports, no source default)', () => {
   // No default in salvium-wallet-rpc source - convention is daemon port + 1
-  assertEqual(WALLET_MAINNET_URL, 'http://localhost:19082');
-  assertEqual(WALLET_TESTNET_URL, 'http://localhost:29082');
-  assertEqual(WALLET_STAGENET_URL, 'http://localhost:39082');
+  assertEqual(WALLET_MAINNET_URL, 'http://localhost:19083');
+  assertEqual(WALLET_TESTNET_URL, 'http://localhost:29083');
+  assertEqual(WALLET_STAGENET_URL, 'http://localhost:39083');
 });
 
 // ============================================================
@@ -280,13 +280,13 @@ test('createDaemonRPC creates DaemonRPC instance', () => {
 console.log('\n--- WalletRPC Tests ---');
 
 test('WalletRPC extends RPCClient', () => {
-  const wallet = new WalletRPC({ url: 'http://localhost:19082' });
+  const wallet = new WalletRPC({ url: 'http://localhost:19083' });
   assertInstanceOf(wallet, RPCClient);
 });
 
 test('WalletRPC defaults to mainnet port', () => {
   const wallet = new WalletRPC();
-  assertEqual(wallet.url, 'http://localhost:19082');
+  assertEqual(wallet.url, 'http://localhost:19083');
 });
 
 test('WalletRPC has wallet management methods', () => {
@@ -402,9 +402,9 @@ test('WalletRPC has utility methods', () => {
 });
 
 test('createWalletRPC creates WalletRPC instance', () => {
-  const wallet = createWalletRPC({ url: 'http://localhost:39082' });
+  const wallet = createWalletRPC({ url: 'http://localhost:39083' });
   assertInstanceOf(wallet, WalletRPC);
-  assertEqual(wallet.url, 'http://localhost:39082');
+  assertEqual(wallet.url, 'http://localhost:39083');
 });
 
 // ============================================================
