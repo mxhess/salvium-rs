@@ -1,0 +1,24 @@
+{
+  "targets": {
+    "release": {
+      "outFile": "build/randomx.wasm",
+      "textFile": "build/randomx.wat",
+      "optimizeLevel": 3,
+      "shrinkLevel": 1,
+      "converge": true,
+      "noAssert": true
+    },
+    "debug": {
+      "outFile": "build/randomx.debug.wasm",
+      "textFile": "build/randomx.debug.wat",
+      "debug": true
+    }
+  },
+  "options": {
+    "runtime": "stub",
+    "exportRuntime": true,
+    "importMemory": true,
+    "initialMemory": 4608,
+    "maximumMemory": 8192
+  }
+}

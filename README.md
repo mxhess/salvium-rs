@@ -14,7 +14,8 @@ JavaScript library for Salvium cryptocurrency - wallet generation, address handl
 - **Transaction Scanning** - Detect owned outputs, decrypt amounts, view tags
 - **Key Images** - Generate and validate key images for spend detection
 - **Transaction Construction** - Pedersen commitments, CLSAG signatures, serialization
-- **Bulletproofs+ Verification** - Pure JS range proof verification (mobile-friendly)
+- **Bulletproofs+ Range Proofs** - Pure JS proof generation AND verification (mobile-friendly)
+- **RandomX Proof-of-Work** - Pure JS implementation (no WASM/native) for mobile/browser
 - **RPC Clients** - Full daemon and wallet RPC implementations
 - **Signature Verification** - Verify message signatures (V1 and V2 formats)
 - **Cryptographic Primitives** - Blake2b, Keccak-256, Ed25519, Base58
@@ -534,12 +535,18 @@ const signature = clsagSign(
 const valid = clsagVerify(message, signature, ring, commitments, pseudoCommitment);
 ```
 
-## Bulletproofs+ Range Proof Verification
+## Bulletproofs+ Range Proofs
 
-Verify that transaction amounts are in valid range (0 to 2^64-1) without revealing the actual amounts.
+Generate and verify range proofs that prove transaction amounts are in valid range (0 to 2^64-1) without revealing the actual amounts. **100% pure JavaScript** - no WASM required.
 
 ```javascript
 import {
+  // Proof generation
+  proveRange,
+  proveRangeMultiple,
+  randomScalar,
+  serializeProof,
+  // Verification
   verifyBulletproofPlus,
   verifyRangeProof,
   parseProof,
@@ -547,35 +554,47 @@ import {
   bytesToPoint
 } from 'salvium-js';
 
-// Initialize generators (done once, cached for future use)
-// For a single 64-bit proof, we need 64 Gi and 64 Hi generators
-initGenerators(64);
+// === PROOF GENERATION ===
 
-// Verify a range proof from a transaction
-// V = commitment points, proofBytes = serialized BP+ proof
-const commitments = tx.rctSig.outPk.map(c => bytesToPoint(c));
-const valid = verifyRangeProof(
+// Generate a range proof for a single amount
+const amount = 1000000000n;  // 10 SAL in atomic units
+const mask = randomScalar();  // Blinding factor (commitment mask)
+
+const proof = proveRange(amount, mask);
+// proof = { V, A, A1, B, r1, s1, d1, L, R }
+// V[0] is the Pedersen commitment: mask*G + amount*H
+
+// Generate proof for multiple amounts (batched, more efficient)
+const amounts = [1000000000n, 500000000n];
+const masks = [randomScalar(), randomScalar()];
+const batchProof = proveRangeMultiple(amounts, masks);
+
+// Serialize for transmission
+const proofBytes = serializeProof(proof);
+
+// === VERIFICATION ===
+
+// Verify a generated proof
+const valid = verifyBulletproofPlus(proof.V, proof);
+
+// Verify from serialized bytes (e.g., from a transaction)
+const isValid = verifyRangeProof(
   tx.rctSig.outPk,      // Array of commitment bytes
   tx.rctSig.proofBytes  // Serialized Bulletproof+ proof
 );
 
-if (valid) {
-  console.log('Range proof verified - amounts are valid');
-}
-
-// Or parse and verify separately for more control
-const proof = parseProof(proofBytes);
-// proof = { A, A1, B, r1, s1, d1, L, R }
-
-const isValid = verifyBulletproofPlus(commitments, proof);
+// Parse and verify separately for more control
+const parsedProof = parseProof(proofBytes);
+const verified = verifyBulletproofPlus(commitments, parsedProof);
 ```
 
 **Performance** (pure JavaScript, no WASM):
 | Operation | Time |
 |-----------|------|
-| Generator init (1024 pts) | ~800ms (one-time) |
-| MSM 128 points | ~220ms |
-| MSM 256 points (full proof) | ~420ms |
+| Generator init (1024 pts) | ~800ms (one-time, cached) |
+| Single proof generation | ~1100ms |
+| Proof verification | ~300ms |
+| Round-trip (generate + verify) | ~1400ms |
 
 This is fast enough for mobile wallets (React Native on iOS/Android).
 
@@ -591,6 +610,72 @@ const tx = {
 const serialized = serializeTxPrefix(tx);
 const prefixHash = getTxPrefixHash(tx);
 ```
+
+## RandomX Proof-of-Work
+
+Pure JavaScript implementation of RandomX for transaction verification and light mining. **No WASM, no native modules** - works in browsers, Node.js, and React Native.
+
+```javascript
+import {
+  RandomXContext,
+  rxSlowHash,
+  verifyHash,
+  checkDifficulty,
+  mine
+} from 'salvium-js';
+
+// === BASIC HASHING ===
+
+// One-shot hash (creates temporary context)
+const key = new TextEncoder().encode('block header hash');
+const input = new TextEncoder().encode('block blob');
+const hash = rxSlowHash(key, input);  // 32-byte hash
+
+// === REUSABLE CONTEXT (Recommended) ===
+
+// For multiple hashes with same key, reuse context
+const ctx = new RandomXContext();
+ctx.init(key);  // Initialize cache (takes time, ~256MB)
+
+const hash1 = ctx.hash(input1);
+const hash2 = ctx.hash(input2);  // Much faster, reuses cache
+
+// === VERIFICATION ===
+
+// Verify a hash
+const isValid = verifyHash(key, input, expectedHash);
+
+// Check if hash meets difficulty target
+const meetsDifficulty = checkDifficulty(hash, difficulty);
+// Uses: hash * difficulty <= 2^256 - 1
+
+// === MINING ===
+
+// Find nonce that meets difficulty
+const result = mine(
+  key,            // Cache key (prev block hash)
+  blockBlob,      // Block blob with nonce placeholder
+  nonceOffset,    // Byte offset of nonce in blob
+  difficulty,     // Target difficulty (BigInt)
+  maxNonce,       // Max nonce to try (default: 2^32)
+  (nonce, rate) => console.log(`Nonce: ${nonce}, ${rate} H/s`)  // Progress
+);
+
+if (result) {
+  console.log('Found nonce:', result.nonce);
+  console.log('Hash:', result.hash);
+}
+```
+
+**Components** (all pure JavaScript):
+- **Argon2d** - Cache initialization (256MB, 3 iterations)
+- **SuperscalarHash** - Dataset item generation with x86 pipeline simulation
+- **Soft AES** - Scratchpad filling without hardware acceleration
+- **RandomX VM** - Full instruction set (integer, float, memory ops)
+
+**Performance Note**: Pure JS is significantly slower than native RandomX.
+- Suitable for: transaction verification, light wallets, educational use, mobile mining (reduced hashrate)
+- For high-performance mining, use native implementations
 
 ## Verify Message Signatures
 
@@ -725,6 +810,10 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 
 | Function | Description |
 |----------|-------------|
+| `proveRange(amount, mask)` | Generate range proof for single amount |
+| `proveRangeMultiple(amounts, masks)` | Generate batched range proof for multiple amounts |
+| `randomScalar()` | Generate cryptographically secure random scalar |
+| `serializeProof(proof)` | Serialize proof to bytes for transmission |
 | `verifyBulletproofPlus(V, proof)` | Verify single range proof |
 | `verifyBulletproofPlusBatch(proofs)` | Batch verify multiple proofs |
 | `verifyRangeProof(commitments, proofBytes)` | Verify from raw bytes |
@@ -733,6 +822,27 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `multiScalarMul(scalars, points)` | Multiscalar multiplication |
 | `bytesToPoint(bytes)` | Decode compressed point |
 | `bytesToScalar(bytes)` | Decode scalar from bytes |
+
+### RandomX Functions
+
+| Function | Description |
+|----------|-------------|
+| `RandomXContext` | Reusable context class for repeated hashing with same key |
+| `rxSlowHash(key, input)` | One-shot RandomX hash computation |
+| `randomxHash(key, input)` | Alias for rxSlowHash |
+| `verifyHash(key, input, expected)` | Verify RandomX hash matches expected |
+| `checkDifficulty(hash, difficulty)` | Check if hash meets difficulty target |
+| `mine(key, blob, nonceOffset, difficulty, maxNonce, onProgress)` | Find nonce meeting difficulty |
+| `calculateCommitment(input, hashIn)` | Calculate hash commitment |
+| `RandomXCache` | Cache class for Argon2d-initialized memory |
+| `initDatasetItem(cache, itemNumber)` | Generate single dataset item from cache |
+| `RandomXVM` | Virtual machine for RandomX program execution |
+| `Blake2Generator` | Pseudo-random byte generator using Blake2b |
+| `generateSuperscalar(gen)` | Generate superscalar program |
+| `executeSuperscalar(registers, program)` | Execute superscalar program on registers |
+| `reciprocal(divisor)` | Compute reciprocal for IMUL_RCP instruction |
+| `argon2d(password, salt, tCost, mCost, parallelism, outLen)` | Argon2d hash function |
+| `argon2InitCache(key)` | Initialize RandomX cache with Argon2d |
 
 ### Utility Functions
 
@@ -757,7 +867,7 @@ bun test/all.js --integration
 bun test/all.js --integration http://localhost:19081
 ```
 
-Test coverage: 436 tests across 11 test suites.
+Test coverage: 259 tests across 13 test suites including RandomX.
 
 ## License
 

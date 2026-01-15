@@ -28,6 +28,29 @@ export * from './scanning.js';
 export * from './keyimage.js';
 export * from './transaction.js';
 export * from './bulletproofs_plus.js';
+export * from './mining.js';
+
+// RandomX proof-of-work (pure JavaScript implementation)
+export * as randomx from './randomx/index.js';
+export {
+  RandomXContext,
+  rxSlowHash,
+  randomxHash,
+  calculateCommitment,
+  verifyHash,
+  checkDifficulty,
+  mine,
+  RandomXCache,
+  initDatasetItem,
+  RandomXVM,
+  fillAes,
+  Blake2Generator,
+  generateSuperscalar,
+  executeSuperscalar,
+  reciprocal,
+  argon2InitCache,
+  argon2d
+} from './randomx/index.js';
 
 // Wordlists available as separate imports for tree-shaking
 // Usage: import { spanish } from 'salvium-js/wordlists';
@@ -51,6 +74,11 @@ export {
   scalarMultBase,
   scalarMultPoint,
   pointAddCompressed,
+  pointSubCompressed,
+  pointNegate,
+  randomScalar as ed25519RandomScalar,
+  randomPoint,
+  isValidPoint,
   getGeneratorG,
   getGeneratorT,
   computeCarrotSpendPubkey,
@@ -140,6 +168,11 @@ import {
   scalarMultBase,
   scalarMultPoint,
   pointAddCompressed,
+  pointSubCompressed,
+  pointNegate,
+  randomScalar as ed25519RandomScalar,
+  randomPoint,
+  isValidPoint,
   getGeneratorG,
   getGeneratorT,
   computeCarrotSpendPubkey,
@@ -295,7 +328,16 @@ import {
   encryptCarrotAmount,
   encryptCarrotPaymentId,
   createCarrotOutput,
-  computeCarrotSpecialAnchor
+  computeCarrotSpecialAnchor,
+  // Block serialization
+  HF_VERSION_ENABLE_ORACLE,
+  serializeSupplyData,
+  serializeAssetData,
+  serializePricingRecord,
+  serializeBlockHeader,
+  serializeBlock,
+  getBlockHash,
+  computeMerkleRoot
 } from './transaction.js';
 
 import {
@@ -323,8 +365,56 @@ import {
   verifyBulletproofPlus,
   verifyBulletproofPlusBatch,
   verifyRangeProof,
+  // Proof generation
+  proveRange,
+  proveRangeMultiple,
+  randomScalar,
+  serializeProof,
+  bulletproofPlusProve,
   Point
 } from './bulletproofs_plus.js';
+
+import {
+  MINING_CONSTANTS,
+  parseBlockTemplate,
+  parseDifficulty,
+  treeHash,
+  constructBlockHashingBlob,
+  setNonce,
+  getNonce,
+  setExtraNonce,
+  checkHash,
+  difficultyToTarget,
+  hashToDifficulty,
+  formatDifficulty,
+  formatBlockForSubmission,
+  findNonceOffset,
+  calculateHashrate,
+  formatHashrate,
+  estimateBlockTime,
+  formatDuration,
+  createMiningContext
+} from './mining.js';
+
+import {
+  RandomXContext,
+  rxSlowHash,
+  randomxHash,
+  calculateCommitment,
+  verifyHash,
+  checkDifficulty as randomxCheckDifficulty,
+  mine as randomxMine,
+  RandomXCache,
+  initDatasetItem,
+  RandomXVM,
+  fillAes,
+  Blake2Generator,
+  generateSuperscalar,
+  executeSuperscalar,
+  reciprocal,
+  argon2InitCache,
+  argon2d
+} from './randomx/index.js';
 
 // Main API object
 const salvium = {
@@ -374,6 +464,11 @@ const salvium = {
   scalarMultBase,
   scalarMultPoint,
   pointAddCompressed,
+  pointSubCompressed,
+  pointNegate,
+  ed25519RandomScalar,
+  randomPoint,
+  isValidPoint,
   getGeneratorG,
   getGeneratorT,
 
@@ -561,6 +656,16 @@ const salvium = {
   createCarrotOutput,
   computeCarrotSpecialAnchor,
 
+  // Block Serialization
+  HF_VERSION_ENABLE_ORACLE,
+  serializeSupplyData,
+  serializeAssetData,
+  serializePricingRecord,
+  serializeBlockHeader,
+  serializeBlock,
+  getBlockHash,
+  computeMerkleRoot,
+
   // Bulletproofs+
   bytesToScalar,
   scalarToBytes,
@@ -574,7 +679,53 @@ const salvium = {
   verifyBulletproofPlus,
   verifyBulletproofPlusBatch,
   verifyRangeProof,
-  Point
+  // Proof generation
+  proveRange,
+  proveRangeMultiple,
+  randomScalar,
+  serializeProof,
+  bulletproofPlusProve,
+  Point,
+
+  // Mining
+  MINING_CONSTANTS,
+  parseBlockTemplate,
+  parseDifficulty,
+  treeHash,
+  constructBlockHashingBlob,
+  setNonce,
+  getNonce,
+  setExtraNonce,
+  checkHash,
+  difficultyToTarget,
+  hashToDifficulty,
+  formatDifficulty,
+  formatBlockForSubmission,
+  findNonceOffset,
+  calculateHashrate,
+  formatHashrate,
+  estimateBlockTime,
+  formatDuration,
+  createMiningContext,
+
+  // RandomX (Pure JavaScript)
+  RandomXContext,
+  rxSlowHash,
+  randomxHash,
+  calculateCommitment,
+  verifyHash,
+  randomxCheckDifficulty,
+  randomxMine,
+  RandomXCache,
+  initDatasetItem,
+  RandomXVM,
+  fillAes,
+  Blake2Generator,
+  generateSuperscalar,
+  executeSuperscalar,
+  reciprocal,
+  argon2InitCache,
+  argon2d
 };
 
 export default salvium;

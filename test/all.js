@@ -5,8 +5,8 @@
  * Runs all salvium-js tests in sequence.
  *
  * Usage:
- *   bun test/all.js                    # Run all unit tests
- *   bun test/all.js --integration      # Include integration tests
+ *   bun test/all.js                    # Run all tests
+ *   bun test/all.js --integration      # Include RPC integration tests
  *   bun test/all.js --integration URL  # Integration tests against specific daemon
  */
 
@@ -33,6 +33,8 @@ const tests = [
   { name: 'Transaction Scanning Tests', file: 'scanning.test.js' },
   { name: 'Key Image Tests', file: 'keyimage.test.js' },
   { name: 'Transaction Construction Tests', file: 'transaction.test.js' },
+  { name: 'Mining Tests', file: 'mining.test.js' },
+  { name: 'RandomX Tests', file: 'randomx.test.js' },
 ];
 
 if (runIntegration) {

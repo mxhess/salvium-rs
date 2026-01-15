@@ -134,7 +134,7 @@ export class DaemonRPC extends RPCClient {
    * @returns {Promise<RPCResponse>} List of connections
    */
   async getConnections() {
-    return this.post('/get_connections');
+    return this.call('get_connections');
   }
 
   /**
@@ -170,7 +170,7 @@ export class DaemonRPC extends RPCClient {
    * @returns {Promise<RPCResponse>} Sync status and peer info
    */
   async syncInfo() {
-    return this.post('/sync_info');
+    return this.call('sync_info');
   }
 
   /**

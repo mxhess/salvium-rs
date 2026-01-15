@@ -1,6 +1,6 @@
 {
   "name": "salvium-js",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "JavaScript library for Salvium cryptocurrency - wallet generation, transaction construction, Bulletproofs+, RPC clients",
   "main": "src/index.js",
   "type": "module",
@@ -24,11 +24,18 @@
     "./bulletproofs": "./src/bulletproofs_plus.js",
     "./transaction": "./src/transaction.js",
     "./scanning": "./src/scanning.js",
-    "./keyimage": "./src/keyimage.js"
+    "./keyimage": "./src/keyimage.js",
+    "./mining": "./src/mining.js"
   },
   "scripts": {
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "build:wasm": "asc assembly/index.ts --outFile build/randomx.wasm --optimize --enable simd"
   },
+  "files": [
+    "src/",
+    "build/randomx.wasm",
+    "assembly/"
+  ],
   "keywords": [
     "salvium",
     "cryptocurrency",
@@ -63,5 +70,8 @@
   "dependencies": {
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
   }
 }

@@ -35,6 +35,18 @@ const T_BYTES = new Uint8Array([
 // Group order L
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
 
+// Crypto random (for browser & Node.js compatibility)
+function getRandomBytes(n) {
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+    const buf = new Uint8Array(n);
+    globalThis.crypto.getRandomValues(buf);
+    return buf;
+  }
+  // Node.js fallback
+  const { randomBytes } = require('crypto');
+  return new Uint8Array(randomBytes(n));
+}
+
 // Field operations
 function feAdd(a, b) {
   return (a + b) % P;
@@ -690,6 +702,95 @@ export function computeXFromY(y) {
   };
 }
 
+/**
+ * Generate a random scalar in range [1, L-1]
+ * @returns {Uint8Array} 32-byte random scalar
+ */
+export function randomScalar() {
+  // Generate 64 bytes and reduce mod L for uniform distribution
+  const bytes64 = getRandomBytes(64);
+  let val = 0n;
+  for (let i = bytes64.length - 1; i >= 0; i--) {
+    val = (val << 8n) | BigInt(bytes64[i]);
+  }
+  // Reduce mod L and ensure non-zero
+  val = val % L;
+  if (val === 0n) val = 1n;
+
+  // Convert back to 32 bytes
+  const result = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    result[i] = Number(val & 0xffn);
+    val = val >> 8n;
+  }
+  return result;
+}
+
+/**
+ * Generate a random point on the curve: r*G where r is random
+ * @returns {Uint8Array} 32-byte compressed random point
+ */
+export function randomPoint() {
+  const scalar = randomScalar();
+  return scalarMultBase(scalar);
+}
+
+/**
+ * Negate a point: -P
+ * @param {Uint8Array} P - 32-byte compressed point
+ * @returns {Uint8Array|null} 32-byte compressed negated point, or null if P invalid
+ */
+export function pointNegate(P) {
+  const point = pointFromBytes(P);
+  if (!point) return null;
+
+  // Negate: (X, Y, Z, T) -> (-X, Y, Z, -T)
+  const negated = {
+    X: feNeg(point.X),
+    Y: point.Y,
+    Z: point.Z,
+    T: feNeg(point.T)
+  };
+
+  return pointToBytes(negated);
+}
+
+/**
+ * Point subtraction: P - Q = P + (-Q)
+ * @param {Uint8Array} P - 32-byte compressed point
+ * @param {Uint8Array} Q - 32-byte compressed point
+ * @returns {Uint8Array|null} 32-byte compressed result, or null if invalid
+ */
+export function pointSubCompressed(P, Q) {
+  const negQ = pointNegate(Q);
+  if (!negQ) return null;
+  return pointAddCompressed(P, negQ);
+}
+
+/**
+ * Check if a point is valid (on the curve and in the prime-order subgroup)
+ * @param {Uint8Array} P - 32-byte compressed point
+ * @returns {boolean} true if valid
+ */
+export function isValidPoint(P) {
+  const point = pointFromBytes(P);
+  if (!point) return false;
+
+  // Check if on curve
+  const zi = feInv(point.Z);
+  const x = feMul(point.X, zi);
+  const y = feMul(point.Y, zi);
+  if (!isOnCurve(x, y)) return false;
+
+  // Check if in prime-order subgroup (L*P = identity)
+  const lP = scalarMult(point, L);
+  const lPz = feInv(lP.Z);
+  const lPx = feMul(lP.X, lPz);
+  const lPy = feMul(lP.Y, lPz);
+
+  return lPx === 0n && lPy === 1n;
+}
+
 export default {
   scalarCheck,
   scalarIsNonzero,
@@ -699,6 +800,11 @@ export default {
   pointFromBytes,
   pointToBytes,
   pointAddCompressed,
+  pointSubCompressed,
+  pointNegate,
+  randomScalar,
+  randomPoint,
+  isValidPoint,
   doubleScalarMultBase,
   isIdentity,
   getGeneratorG,

@@ -16,7 +16,15 @@ import {
   multiScalarMul,
   verifyBulletproofPlus,
   verifyBulletproofPlusBatch,
-  Point
+  Point,
+  // Proving functions
+  randomScalar,
+  bulletproofPlusProve,
+  proveRange,
+  proveRangeMultiple,
+  serializeProof,
+  L,
+  INV_EIGHT
 } from '../src/bulletproofs_plus.js';
 
 let passed = 0;
@@ -346,6 +354,180 @@ testAsync('Benchmark: MSM with 256 points (full BP+ verification size)', async (
   const elapsed = performance.now() - start;
   console.log(`      MSM (256 points): ${elapsed.toFixed(2)}ms`);
   assertTrue(elapsed < 30000, 'Should complete in reasonable time');
+});
+
+// ============================================================
+// Proof Generation Tests
+// ============================================================
+
+console.log('\n--- Proof Generation Tests ---');
+
+test('randomScalar generates valid scalar', () => {
+  const s = randomScalar();
+  assertTrue(s >= 0n, 'Scalar should be non-negative');
+  assertTrue(s < L, 'Scalar should be less than L');
+});
+
+test('randomScalar generates different values', () => {
+  const s1 = randomScalar();
+  const s2 = randomScalar();
+  assertTrue(s1 !== s2, 'Two random scalars should differ');
+});
+
+test('proveRange generates proof for single amount', () => {
+  const amount = 1000000n; // 1 SAL in atomic units
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+
+  assertExists(proof.V);
+  assertExists(proof.A);
+  assertExists(proof.A1);
+  assertExists(proof.B);
+  assertExists(proof.r1);
+  assertExists(proof.s1);
+  assertExists(proof.d1);
+  assertExists(proof.L);
+  assertExists(proof.R);
+
+  assertEqual(proof.V.length, 1, 'Should have 1 commitment');
+  assertEqual(proof.L.length, 6, 'Should have 6 L points for 64-bit proof');
+  assertEqual(proof.R.length, 6, 'Should have 6 R points');
+});
+
+test('proveRange proof verifies correctly', () => {
+  const amount = 12345678n;
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+
+  // Verify the proof
+  const valid = verifyBulletproofPlus(proof.V, proof);
+  assertTrue(valid, 'Proof should verify');
+});
+
+test('proveRange works for zero amount', () => {
+  const amount = 0n;
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+  const valid = verifyBulletproofPlus(proof.V, proof);
+  assertTrue(valid, 'Zero amount proof should verify');
+});
+
+test('proveRange works for max amount (2^64 - 1)', () => {
+  const amount = (1n << 64n) - 1n;
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+  const valid = verifyBulletproofPlus(proof.V, proof);
+  assertTrue(valid, 'Max amount proof should verify');
+});
+
+test('proveRangeMultiple generates proof for 2 amounts', () => {
+  const amounts = [100n, 200n];
+  const masks = [randomScalar(), randomScalar()];
+
+  const proof = proveRangeMultiple(amounts, masks);
+
+  assertEqual(proof.V.length, 2, 'Should have 2 commitments');
+  assertEqual(proof.L.length, 7, 'Should have 7 L points for 2-amount proof');
+});
+
+test('proveRangeMultiple proof verifies correctly', () => {
+  const amounts = [1000000n, 2000000n];
+  const masks = [randomScalar(), randomScalar()];
+
+  const proof = proveRangeMultiple(amounts, masks);
+  const valid = verifyBulletproofPlus(proof.V, proof);
+  assertTrue(valid, 'Multi-amount proof should verify');
+});
+
+test('serializeProof produces correct size', () => {
+  const amount = 100n;
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+  const bytes = serializeProof(proof);
+
+  // Size = 3 points + 3 scalars + 6 L/R pairs = 6*32 + 6*64 = 576 bytes
+  assertEqual(bytes.length, 576, 'Serialized proof should be 576 bytes');
+});
+
+test('serialized proof can be parsed and verified', () => {
+  const amount = 999n;
+  const mask = randomScalar();
+
+  const proof = proveRange(amount, mask);
+  const bytes = serializeProof(proof);
+
+  // Parse it back
+  const parsed = parseProof(bytes);
+
+  // Verify with original V
+  const valid = verifyBulletproofPlus(proof.V, parsed);
+  assertTrue(valid, 'Parsed proof should verify');
+});
+
+test('invalid amount (>= 2^64) throws error', () => {
+  const amount = 1n << 64n; // Exactly 2^64, out of range
+  const mask = randomScalar();
+
+  let threw = false;
+  try {
+    proveRange(amount, mask);
+  } catch (e) {
+    threw = true;
+  }
+  assertTrue(threw, 'Should throw for out-of-range amount');
+});
+
+test('mismatched amounts/masks throws error', () => {
+  const amounts = [100n, 200n];
+  const masks = [randomScalar()]; // Only 1 mask
+
+  let threw = false;
+  try {
+    proveRangeMultiple(amounts, masks);
+  } catch (e) {
+    threw = true;
+  }
+  assertTrue(threw, 'Should throw for mismatched arrays');
+});
+
+// ============================================================
+// Proof Generation Benchmarks
+// ============================================================
+
+console.log('\n--- Proof Generation Benchmarks ---');
+
+testAsync('Benchmark: Single amount proof generation', async () => {
+  const amount = 1000000000n;
+  const mask = randomScalar();
+
+  const start = performance.now();
+  const proof = proveRange(amount, mask);
+  const elapsed = performance.now() - start;
+
+  console.log(`      Single proof generation: ${elapsed.toFixed(2)}ms`);
+  assertTrue(elapsed < 60000, 'Should complete in reasonable time');
+});
+
+testAsync('Benchmark: Proof generation + verification round-trip', async () => {
+  const amount = 123456789n;
+  const mask = randomScalar();
+
+  const start = performance.now();
+  const proof = proveRange(amount, mask);
+  const genTime = performance.now() - start;
+
+  const verifyStart = performance.now();
+  const valid = verifyBulletproofPlus(proof.V, proof);
+  const verifyTime = performance.now() - verifyStart;
+
+  console.log(`      Generation: ${genTime.toFixed(2)}ms, Verification: ${verifyTime.toFixed(2)}ms`);
+  console.log(`      Round-trip: ${(genTime + verifyTime).toFixed(2)}ms`);
+  assertTrue(valid, 'Proof should verify');
 });
 
 // ============================================================
