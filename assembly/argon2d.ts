@@ -326,6 +326,13 @@ export function argon2d_read_block(blockIdx: u32, dataPtr: usize): void {
 }
 
 /**
+ * Test function to verify indexAlpha
+ */
+export function argon2d_test_index_alpha(pass: u32, slice: u32, index: u32, pseudoRand: u32, sameLane: u32): u32 {
+  return indexAlpha(pass, slice, index, pseudoRand, sameLane != 0);
+}
+
+/**
  * XOR block into accumulator
  */
 export function argon2d_xor_block(blockIdx: u32, accumPtr: usize): void {
@@ -335,4 +342,11 @@ export function argon2d_xor_block(blockIdx: u32, accumPtr: usize): void {
     const blockVal = load<u64>(memoryPtr + baseOffset + i * 8);
     store<u64>(accumPtr + i * 8, existing ^ blockVal);
   }
+}
+
+/**
+ * Debug: get location of blockR array
+ */
+export function argon2d_debug_blockR_ptr(): usize {
+  return changetype<usize>(blockR);
 }

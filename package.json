@@ -29,7 +29,7 @@
   },
   "scripts": {
     "test": "node test/run.js",
-    "build:wasm": "asc assembly/index.ts --outFile build/randomx.wasm --optimize --enable simd"
+    "build:wasm": "asc assembly/index.ts --outFile build/randomx.wasm --optimize --enable simd --initialMemory 16 --maximumMemory 8192"
   },
   "files": [
     "src/",
@@ -69,7 +69,8 @@
   },
   "dependencies": {
     "@noble/curves": "^2.0.1",
-    "@noble/hashes": "^2.0.1"
+    "@noble/hashes": "^2.0.1",
+    "vitest": "^4.0.17"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.0"

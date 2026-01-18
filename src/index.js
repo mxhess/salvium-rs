@@ -30,26 +30,30 @@ export * from './transaction.js';
 export * from './bulletproofs_plus.js';
 export * from './mining.js';
 
-// RandomX proof-of-work (pure JavaScript implementation)
+// RandomX proof-of-work (WASM-JIT implementation)
 export * as randomx from './randomx/index.js';
 export {
+  // Light mode
   RandomXContext,
+  RandomXNative,
+  RandomXWorkerPool,
+  getAvailableCores,
+  // Full mode
+  RandomXFullMode,
+  createFullModeContext,
+  RANDOMX_DATASET_ITEM_COUNT,
+  RANDOMX_DATASET_ITEM_SIZE,
+  RANDOMX_DATASET_SIZE,
+  // Functions
   rxSlowHash,
   randomxHash,
   calculateCommitment,
   verifyHash,
   checkDifficulty,
   mine,
-  RandomXCache,
-  initDatasetItem,
-  RandomXVM,
-  fillAes,
-  Blake2Generator,
-  generateSuperscalar,
-  executeSuperscalar,
-  reciprocal,
-  argon2InitCache,
-  argon2d
+  randomx_init_cache,
+  randomx_create_vm,
+  randomx_machine_id
 } from './randomx/index.js';
 
 // Wordlists available as separate imports for tree-shaking
@@ -59,6 +63,10 @@ export * as wordlists from './wordlists/index.js';
 // RPC clients available as namespace
 // Usage: import { rpc } from 'salvium-js'; or import { DaemonRPC, WalletRPC } from 'salvium-js/rpc';
 export * as rpc from './rpc/index.js';
+
+// Stratum mining client
+export * as stratum from './stratum/index.js';
+export { StratumClient, StratumMiner, createMiner } from './stratum/index.js';
 export {
   RPCClient,
   DaemonRPC,
@@ -397,23 +405,27 @@ import {
 } from './mining.js';
 
 import {
+  // Light mode
   RandomXContext,
+  RandomXNative,
+  RandomXWorkerPool,
+  getAvailableCores,
+  // Full mode
+  RandomXFullMode,
+  createFullModeContext,
+  RANDOMX_DATASET_ITEM_COUNT,
+  RANDOMX_DATASET_ITEM_SIZE,
+  RANDOMX_DATASET_SIZE,
+  // Functions
   rxSlowHash,
   randomxHash,
   calculateCommitment,
   verifyHash,
   checkDifficulty as randomxCheckDifficulty,
   mine as randomxMine,
-  RandomXCache,
-  initDatasetItem,
-  RandomXVM,
-  fillAes,
-  Blake2Generator,
-  generateSuperscalar,
-  executeSuperscalar,
-  reciprocal,
-  argon2InitCache,
-  argon2d
+  randomx_init_cache,
+  randomx_create_vm,
+  randomx_machine_id
 } from './randomx/index.js';
 
 // Main API object
@@ -708,24 +720,28 @@ const salvium = {
   formatDuration,
   createMiningContext,
 
-  // RandomX (Pure JavaScript)
+  // RandomX (WASM-JIT)
+  // Light mode (256MB cache per thread)
   RandomXContext,
+  RandomXNative,
+  RandomXWorkerPool,
+  getAvailableCores,
+  // Full mode (2GB shared dataset)
+  RandomXFullMode,
+  createFullModeContext,
+  RANDOMX_DATASET_ITEM_COUNT,
+  RANDOMX_DATASET_ITEM_SIZE,
+  RANDOMX_DATASET_SIZE,
+  // Functions
   rxSlowHash,
   randomxHash,
   calculateCommitment,
   verifyHash,
   randomxCheckDifficulty,
   randomxMine,
-  RandomXCache,
-  initDatasetItem,
-  RandomXVM,
-  fillAes,
-  Blake2Generator,
-  generateSuperscalar,
-  executeSuperscalar,
-  reciprocal,
-  argon2InitCache,
-  argon2d
+  randomx_init_cache,
+  randomx_create_vm,
+  randomx_machine_id
 };
 
 export default salvium;

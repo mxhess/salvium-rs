@@ -19,7 +19,9 @@ export {
   argon2d_fill_segment,
   argon2d_write_block,
   argon2d_read_block,
-  argon2d_xor_block
+  argon2d_xor_block,
+  argon2d_test_index_alpha,
+  argon2d_debug_blockR_ptr
 } from './argon2d';
 
 // Re-export Superscalar
@@ -44,6 +46,25 @@ export {
   init_dataset_batch,
   init_dataset_batch_simd
 } from './superscalar';
+
+// Re-export VM (Full mode support)
+export {
+  vm_init,
+  vm_reset,
+  vm_set_config,
+  vm_set_a_registers,
+  vm_set_dataset_size,
+  vm_execute,
+  vm_get_register_file,
+  vm_set_r,
+  vm_get_r
+} from './vm';
+
+// Re-export AES (for scratchpad fill)
+export {
+  fillScratchpad,
+  mixScratchpad
+} from './aes';
 
 // Memory management helpers
 export function allocate(size: u32): usize {
