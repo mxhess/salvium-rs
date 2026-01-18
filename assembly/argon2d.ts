@@ -350,3 +350,162 @@ export function argon2d_xor_block(blockIdx: u32, accumPtr: usize): void {
 export function argon2d_debug_blockR_ptr(): usize {
   return changetype<usize>(blockR);
 }
+
+// ============================================================================
+// Complete Cache Initialization for RandomX Light Mode
+// ============================================================================
+
+// Temp buffer for initial hash
+let h0Buffer: StaticArray<u8> = new StaticArray<u8>(72);  // 64 bytes H0 + 8 bytes for index
+let initHashInput: StaticArray<u8> = new StaticArray<u8>(256);  // Buffer for H0 computation
+let initBlockTemp: StaticArray<u8> = new StaticArray<u8>(64);  // Temp buffer for block generation
+
+/**
+ * Write u32 as little-endian to buffer
+ */
+@inline
+function writeU32LE(arr: StaticArray<u8>, offset: i32, value: u32): void {
+  unchecked(arr[offset] = <u8>(value));
+  unchecked(arr[offset + 1] = <u8>(value >> 8));
+  unchecked(arr[offset + 2] = <u8>(value >> 16));
+  unchecked(arr[offset + 3] = <u8>(value >> 24));
+}
+
+/**
+ * Compute H0 hash for Argon2d
+ * H0 = H(lanes, tag_length, memory, iterations, version, type, p_len, P, s_len, S, k_len, K, x_len, X)
+ */
+function computeH0(seedPtr: usize, seedLen: i32): void {
+  let offset: i32 = 0;
+
+  // lanes (p) = 1
+  writeU32LE(initHashInput, offset, 1);
+  offset += 4;
+
+  // tag_length (T) = 0 for RandomX cache
+  writeU32LE(initHashInput, offset, 0);
+  offset += 4;
+
+  // memory (m) = 262144 KB
+  writeU32LE(initHashInput, offset, RANDOMX_ARGON_MEMORY);
+  offset += 4;
+
+  // iterations (t) = 3
+  writeU32LE(initHashInput, offset, RANDOMX_ARGON_ITERATIONS);
+  offset += 4;
+
+  // version = 0x13
+  writeU32LE(initHashInput, offset, ARGON2_VERSION);
+  offset += 4;
+
+  // type = 0 (Argon2d)
+  writeU32LE(initHashInput, offset, 0);
+  offset += 4;
+
+  // password length = seedLen
+  writeU32LE(initHashInput, offset, <u32>seedLen);
+  offset += 4;
+
+  // password (seed)
+  for (let i: i32 = 0; i < seedLen; i++) {
+    unchecked(initHashInput[offset + i] = load<u8>(seedPtr + i));
+  }
+  offset += seedLen;
+
+  // salt length = 8 (RandomX uses "RandomX\x03")
+  writeU32LE(initHashInput, offset, 8);
+  offset += 4;
+
+  // salt = "RandomX" + version byte
+  unchecked(initHashInput[offset] = 0x52);  // R
+  unchecked(initHashInput[offset + 1] = 0x61);  // a
+  unchecked(initHashInput[offset + 2] = 0x6e);  // n
+  unchecked(initHashInput[offset + 3] = 0x64);  // d
+  unchecked(initHashInput[offset + 4] = 0x6f);  // o
+  unchecked(initHashInput[offset + 5] = 0x6d);  // m
+  unchecked(initHashInput[offset + 6] = 0x58);  // X
+  unchecked(initHashInput[offset + 7] = 0x03);  // version 3
+  offset += 8;
+
+  // secret length = 0
+  writeU32LE(initHashInput, offset, 0);
+  offset += 4;
+
+  // associated data length = 0
+  writeU32LE(initHashInput, offset, 0);
+  offset += 4;
+
+  // Hash to get 64-byte H0
+  blake2b(changetype<usize>(initHashInput), offset, changetype<usize>(h0Buffer), 64);
+}
+
+/**
+ * Generate initial block content using Blake2b long hash
+ * This produces 1024 bytes from the 64-byte H0 + lane + block indices
+ */
+function generateInitialBlock(blockIdx: u32, lane: u32): void {
+  // Use H' (variable-length hash) to expand H0 into 1024 bytes
+  // For each 64-byte chunk, hash (H0 || index)
+
+  const baseOffset = blockIdx * ARGON2_QWORDS_IN_BLOCK * 8;
+
+  // Set indices in h0Buffer
+  writeU32LE(h0Buffer, 64, 0);      // block index (0 or 1)
+  writeU32LE(h0Buffer, 68, lane);   // lane
+
+  // First, modify position 64 with the target block index
+  if (blockIdx == 0 || blockIdx == 1) {
+    unchecked(h0Buffer[64] = <u8>blockIdx);
+  }
+
+  // Use Blake2b variable-length hash (H' from Argon2 spec)
+  // For 1024 bytes: ceil(1024/64) = 16 iterations
+  // Use pre-allocated initBlockTemp buffer
+
+  for (let chunk: u32 = 0; chunk < 16; chunk++) {
+    // Hash (len=4 || H0 || chunk_index)
+    writeU32LE(h0Buffer, 64, 1024);  // Output length
+    unchecked(h0Buffer[68] = <u8>(lane));
+    unchecked(h0Buffer[69] = <u8>(blockIdx));
+    unchecked(h0Buffer[70] = <u8>(chunk));
+    unchecked(h0Buffer[71] = 0);
+
+    blake2b(changetype<usize>(h0Buffer), 72, changetype<usize>(initBlockTemp), 64);
+
+    // Write 64 bytes to block
+    for (let i: u32 = 0; i < 64; i++) {
+      store<u8>(memoryPtr + baseOffset + chunk * 64 + i, unchecked(initBlockTemp[i]));
+    }
+  }
+}
+
+/**
+ * Initialize RandomX Argon2d cache completely in WASM
+ *
+ * @param memPtr - Pointer to 256MB cache memory
+ * @param seedPtr - Pointer to seed bytes
+ * @param seedLen - Length of seed (typically 32 bytes)
+ */
+export function init_cache(memPtr: usize, seedPtr: usize, seedLen: i32): void {
+  // Set memory pointer and dimensions
+  memoryPtr = memPtr;
+  const totalBlocks: u32 = RANDOMX_ARGON_MEMORY;  // 262144 blocks
+  laneLength = totalBlocks / RANDOMX_ARGON_LANES;  // = totalBlocks for 1 lane
+  segmentLength = laneLength / ARGON2_SYNC_POINTS;  // = laneLength / 4
+
+  // Step 1: Compute H0
+  computeH0(seedPtr, seedLen);
+
+  // Step 2: Generate initial blocks B[0] and B[1]
+  generateInitialBlock(0, 0);
+  generateInitialBlock(1, 0);
+
+  // Step 3: Fill all passes
+  for (let pass: u32 = 0; pass < RANDOMX_ARGON_ITERATIONS; pass++) {
+    for (let slice: u32 = 0; slice < ARGON2_SYNC_POINTS; slice++) {
+      for (let lane: u32 = 0; lane < RANDOMX_ARGON_LANES; lane++) {
+        fillSegment(pass, lane, slice);
+      }
+    }
+  }
+}

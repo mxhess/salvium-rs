@@ -682,6 +682,244 @@ export class DaemonRPC extends RPCClient {
   }
 
   // ============================================================
+  // Salvium-Specific Methods
+  // ============================================================
+
+  /**
+   * Get supply information (Salvium-specific)
+   * Returns multi-currency supply tally
+   * @returns {Promise<RPCResponse>} Supply info with currency entries
+   */
+  async getSupplyInfo() {
+    return this.call('get_supply_info');
+  }
+
+  /**
+   * Get yield/staking information (Salvium-specific)
+   * Returns staking economics data including burnt, staked, yield rates
+   * @returns {Promise<RPCResponse>} Yield info with:
+   *   - total_burnt: Total coins burned
+   *   - total_staked: Total coins locked/staked
+   *   - total_yield: Total yield generated
+   *   - yield_per_stake: Yield rate per staked unit
+   *   - yield_data[]: Per-block yield data with network health
+   */
+  async getYieldInfo() {
+    return this.call('get_yield_info');
+  }
+
+  // ============================================================
+  // Mining Control
+  // ============================================================
+
+  /**
+   * Start mining on the daemon
+   * @param {string} minerAddress - Address to receive mining rewards
+   * @param {number} [threadsCount=1] - Number of mining threads
+   * @param {boolean} [doBackgroundMining=false] - Background mining mode
+   * @param {boolean} [ignoreBattery=false] - Ignore battery status
+   * @returns {Promise<RPCResponse>} Result
+   */
+  async startMining(minerAddress, threadsCount = 1, doBackgroundMining = false, ignoreBattery = false) {
+    return this.post('/start_mining', {
+      miner_address: minerAddress,
+      threads_count: threadsCount,
+      do_background_mining: doBackgroundMining,
+      ignore_battery: ignoreBattery
+    });
+  }
+
+  /**
+   * Stop mining on the daemon
+   * @returns {Promise<RPCResponse>} Result
+   */
+  async stopMining() {
+    return this.post('/stop_mining');
+  }
+
+  /**
+   * Get current mining status
+   * @returns {Promise<RPCResponse>} Mining status including:
+   *   - active: boolean
+   *   - speed: hashrate
+   *   - threads_count: number of threads
+   *   - address: mining address
+   *   - difficulty: current difficulty
+   *   - block_reward: current block reward
+   */
+  async miningStatus() {
+    return this.post('/mining_status');
+  }
+
+  // ============================================================
+  // Bandwidth Control
+  // ============================================================
+
+  /**
+   * Get current bandwidth limits
+   * @returns {Promise<RPCResponse>} Current limits (limit_down, limit_up in kB/s)
+   */
+  async getLimit() {
+    return this.post('/get_limit');
+  }
+
+  /**
+   * Set bandwidth limits
+   * @param {number} limitDown - Download limit in kB/s (-1 to reset to default)
+   * @param {number} limitUp - Upload limit in kB/s (-1 to reset to default)
+   * @returns {Promise<RPCResponse>} New limits
+   */
+  async setLimit(limitDown, limitUp) {
+    return this.post('/set_limit', {
+      limit_down: limitDown,
+      limit_up: limitUp
+    });
+  }
+
+  /**
+   * Reset download limit to default
+   * @returns {Promise<RPCResponse>} New limits
+   */
+  async resetDownloadLimit() {
+    return this.setLimit(-1, 0);
+  }
+
+  /**
+   * Reset upload limit to default
+   * @returns {Promise<RPCResponse>} New limits
+   */
+  async resetUploadLimit() {
+    return this.setLimit(0, -1);
+  }
+
+  // ============================================================
+  // Peer Control
+  // ============================================================
+
+  /**
+   * Set maximum number of outgoing peers
+   * @param {number} outPeers - Maximum outgoing peers (-1 for default)
+   * @returns {Promise<RPCResponse>} Result with new out_peers value
+   */
+  async setOutPeers(outPeers) {
+    return this.post('/out_peers', { out_peers: outPeers });
+  }
+
+  /**
+   * Set maximum number of incoming peers
+   * @param {number} inPeers - Maximum incoming peers (-1 for default)
+   * @returns {Promise<RPCResponse>} Result with new in_peers value
+   */
+  async setInPeers(inPeers) {
+    return this.post('/in_peers', { in_peers: inPeers });
+  }
+
+  /**
+   * Check if an IP address is banned
+   * @param {string} address - IP address to check
+   * @returns {Promise<RPCResponse>} Ban status
+   */
+  async isBanned(address) {
+    return this.call('banned', { address });
+  }
+
+  // ============================================================
+  // Daemon Administration
+  // ============================================================
+
+  /**
+   * Set bootstrap daemon for syncing
+   * @param {string} address - Bootstrap daemon address (empty to disable)
+   * @param {string} [username] - Optional username for authentication
+   * @param {string} [password] - Optional password for authentication
+   * @returns {Promise<RPCResponse>} Result
+   */
+  async setBootstrapDaemon(address, username, password) {
+    const params = { address };
+    if (username) params.username = username;
+    if (password) params.password = password;
+    return this.post('/set_bootstrap_daemon', params);
+  }
+
+  /**
+   * Check for daemon updates
+   * @param {string} [command='check'] - Command: 'check' or 'download'
+   * @param {string} [path] - Download path (for 'download' command)
+   * @returns {Promise<RPCResponse>} Update info including:
+   *   - update: boolean if update available
+   *   - version: new version string
+   *   - user_uri: download URL
+   *   - auto_uri: auto-update URL
+   *   - hash: update file hash
+   */
+  async checkUpdate(command = 'check', path) {
+    const params = { command };
+    if (path) params.path = path;
+    return this.post('/update', params);
+  }
+
+  /**
+   * Download daemon update
+   * @param {string} [path] - Download path
+   * @returns {Promise<RPCResponse>} Download result
+   */
+  async downloadUpdate(path) {
+    return this.checkUpdate('download', path);
+  }
+
+  /**
+   * Pop blocks from the blockchain (for reorg/testing)
+   * @param {number} nblocks - Number of blocks to pop
+   * @returns {Promise<RPCResponse>} Result with new height
+   */
+  async popBlocks(nblocks) {
+    return this.post('/pop_blocks', { nblocks });
+  }
+
+  // ============================================================
+  // Binary Endpoints
+  // ============================================================
+
+  /**
+   * Get output indexes for a transaction (binary format)
+   * @param {string} txid - Transaction ID
+   * @returns {Promise<RPCResponse>} Output indexes
+   */
+  async getOutputIndexes(txid) {
+    return this.post('/get_o_indexes.bin', { txid });
+  }
+
+  /**
+   * Get blocks in binary format
+   * @param {string[]} blockIds - Block hashes to fetch
+   * @param {number} startHeight - Start height for fetching
+   * @param {boolean} [prune=false] - Prune block data
+   * @param {boolean} [noMinerTx=false] - Exclude miner transactions
+   * @returns {Promise<RPCResponse>} Blocks data
+   */
+  async getBlocksBin(blockIds, startHeight, prune = false, noMinerTx = false) {
+    return this.post('/get_blocks.bin', {
+      block_ids: blockIds,
+      start_height: startHeight,
+      prune,
+      no_miner_tx: noMinerTx
+    });
+  }
+
+  /**
+   * Get block/transaction hashes (binary format)
+   * @param {string[]} blockIds - Known block hashes
+   * @param {number} startHeight - Start height
+   * @returns {Promise<RPCResponse>} Hashes data
+   */
+  async getHashesBin(blockIds, startHeight) {
+    return this.post('/get_hashes.bin', {
+      block_ids: blockIds,
+      start_height: startHeight
+    });
+  }
+
+  // ============================================================
   // Utility Methods
   // ============================================================
 

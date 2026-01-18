@@ -1,8 +1,9 @@
 {
   "name": "salvium-js",
-  "version": "0.4.0",
-  "description": "JavaScript library for Salvium cryptocurrency - wallet generation, transaction construction, Bulletproofs+, RPC clients",
+  "version": "0.5.0",
+  "description": "JavaScript library for Salvium cryptocurrency - wallet generation, transaction construction, Bulletproofs+, RandomX mining, RPC clients",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
   "type": "module",
   "exports": {
     ".": "./src/index.js",
@@ -25,7 +26,10 @@
     "./transaction": "./src/transaction.js",
     "./scanning": "./src/scanning.js",
     "./keyimage": "./src/keyimage.js",
-    "./mining": "./src/mining.js"
+    "./mining": "./src/mining.js",
+    "./stratum": "./src/stratum/index.js",
+    "./wallet": "./src/wallet.js",
+    "./randomx": "./src/randomx/index.js"
   },
   "scripts": {
     "test": "node test/run.js",
@@ -33,6 +37,7 @@
   },
   "files": [
     "src/",
+    "src/index.d.ts",
     "build/randomx.wasm",
     "assembly/"
   ],
@@ -53,7 +58,11 @@
     "bulletproofs",
     "ringct",
     "clsag",
-    "ed25519"
+    "ed25519",
+    "randomx",
+    "mining",
+    "stratum",
+    "proof-of-work"
   ],
   "author": "WhiskyMine",
   "license": "MIT",
@@ -69,8 +78,7 @@
   },
   "dependencies": {
     "@noble/curves": "^2.0.1",
-    "@noble/hashes": "^2.0.1",
-    "vitest": "^4.0.17"
+    "@noble/hashes": "^2.0.1"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.0"

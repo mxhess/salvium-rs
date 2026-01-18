@@ -39,6 +39,17 @@ export * as config from './config.js';
 export * as aes from './aes.js';
 export * as superscalar from './superscalar.js';
 
+// Export individual superscalar functions for direct access
+export {
+  Blake2Generator,
+  generateSuperscalar,
+  executeSuperscalar,
+  reciprocal
+} from './superscalar.js';
+
+// Argon2d for cache initialization
+export { argon2d } from './argon2d.js';
+
 // Full mode (2GB dataset)
 export {
   RandomXFullMode,

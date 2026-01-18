@@ -3,10 +3,13 @@
  *
  * Native u64 implementation for dataset item generation.
  * This is the hot path for full mode dataset generation.
+ * Now includes program generation for fully portable light mode.
  *
  * Uses WASM SIMD (v128) for optimized cache block operations.
  * SIMD support: Chrome 91+, Firefox 89+, Safari 16.4+, Node 16.4+
  */
+
+import { blake2b } from './blake2b';
 
 // Superscalar instruction opcodes
 const ISUB_R: u8 = 0;
@@ -36,6 +39,525 @@ const SUPERSCALAR_ADD7: u64 = 9549104520008361294;
 
 // Cache parameters
 const CACHE_LINE_SIZE: u32 = 64;
+
+// Program generation constants
+const RANDOMX_SUPERSCALAR_LATENCY: i32 = 170;
+const RANDOMX_CACHE_ACCESSES: i32 = 8;
+const SUPERSCALAR_MAX_SIZE: i32 = 512;
+const REGISTER_NEEDS_DISPLACEMENT: i32 = 5;
+
+// ============================================================================
+// Blake2Generator - generates pseudo-random bytes from a seed
+// ============================================================================
+
+let genData: StaticArray<u8> = new StaticArray<u8>(64);
+let genDataIndex: i32 = 64;
+// Reusable temp buffers for regenerateGenData (avoid allocations per call)
+let genTempIn: StaticArray<u8> = new StaticArray<u8>(64);
+let genTempOut: StaticArray<u8> = new StaticArray<u8>(64);
+
+/**
+ * Initialize Blake2Generator with seed and nonce
+ */
+export function blake2gen_init(seedPtr: usize, seedLen: i32, nonce: u32): void {
+  // Clear data
+  for (let i = 0; i < 64; i++) {
+    unchecked(genData[i] = 0);
+  }
+
+  // Copy seed (max 60 bytes)
+  const copyLen = seedLen < 60 ? seedLen : 60;
+  for (let i = 0; i < copyLen; i++) {
+    unchecked(genData[i] = load<u8>(seedPtr + i));
+  }
+
+  // Store nonce at position 60 (32-bit LE)
+  unchecked(genData[60] = <u8>(nonce & 0xff));
+  unchecked(genData[61] = <u8>((nonce >> 8) & 0xff));
+  unchecked(genData[62] = <u8>((nonce >> 16) & 0xff));
+  unchecked(genData[63] = <u8>((nonce >> 24) & 0xff));
+
+  genDataIndex = 64; // Force regeneration on first use
+}
+
+/**
+ * Internal: regenerate data using Blake2b
+ */
+function regenerateGenData(): void {
+  // We need to hash the 64 bytes in genData and write result back
+  // Use pre-allocated temp buffers to avoid memory allocation per call
+  for (let i = 0; i < 64; i++) {
+    unchecked(genTempIn[i] = genData[i]);
+  }
+
+  blake2b(changetype<usize>(genTempIn), 64, changetype<usize>(genTempOut), 64);
+
+  for (let i = 0; i < 64; i++) {
+    unchecked(genData[i] = genTempOut[i]);
+  }
+
+  genDataIndex = 0;
+}
+
+/**
+ * Check if we need more data and regenerate if needed
+ */
+@inline
+function checkGenData(bytesNeeded: i32): void {
+  if (genDataIndex + bytesNeeded > 64) {
+    regenerateGenData();
+  }
+}
+
+/**
+ * Get a single byte from generator
+ */
+@inline
+function genGetByte(): u8 {
+  checkGenData(1);
+  const b = unchecked(genData[genDataIndex]);
+  genDataIndex++;
+  return b;
+}
+
+/**
+ * Get a 32-bit unsigned integer from generator
+ */
+@inline
+function genGetUInt32(): u32 {
+  checkGenData(4);
+  const value = <u32>unchecked(genData[genDataIndex]) |
+    (<u32>unchecked(genData[genDataIndex + 1]) << 8) |
+    (<u32>unchecked(genData[genDataIndex + 2]) << 16) |
+    (<u32>unchecked(genData[genDataIndex + 3]) << 24);
+  genDataIndex += 4;
+  return value;
+}
+
+// ============================================================================
+// Program Generation Storage
+// ============================================================================
+
+// Generated program storage (single program at a time for light mode)
+let genProgOpcodes: StaticArray<u8> = new StaticArray<u8>(SUPERSCALAR_MAX_SIZE);
+let genProgDst: StaticArray<u8> = new StaticArray<u8>(SUPERSCALAR_MAX_SIZE);
+let genProgSrc: StaticArray<u8> = new StaticArray<u8>(SUPERSCALAR_MAX_SIZE);
+let genProgMod: StaticArray<u8> = new StaticArray<u8>(SUPERSCALAR_MAX_SIZE);
+let genProgImm32: StaticArray<u32> = new StaticArray<u32>(SUPERSCALAR_MAX_SIZE);
+let genProgSize: i32 = 0;
+let genProgAddressReg: i32 = 0;
+
+// Register state during generation
+let genRegLatency: StaticArray<i32> = new StaticArray<i32>(8);
+let genRegLastOpGroup: StaticArray<i32> = new StaticArray<i32>(8);
+let genRegLastOpPar: StaticArray<i32> = new StaticArray<i32>(8);
+// ASIC latency calc buffer (reused, not per-call allocated)
+let genAsicLatency: StaticArray<i32> = new StaticArray<i32>(8);
+
+// Slot instruction arrays
+const SLOT_3: StaticArray<u8> = [ISUB_R, IXOR_R];
+const SLOT_3L: StaticArray<u8> = [ISUB_R, IXOR_R, IMULH_R, ISMULH_R];
+const SLOT_4: StaticArray<u8> = [IROR_C, IADD_RS];
+const SLOT_7: StaticArray<u8> = [IXOR_C7, IADD_C7];
+const SLOT_8: StaticArray<u8> = [IXOR_C8, IADD_C8];
+const SLOT_9: StaticArray<u8> = [IXOR_C9, IADD_C9];
+
+// Decode buffer configurations
+const DECODE_484: StaticArray<i32> = [4, 8, 4];
+const DECODE_7333: StaticArray<i32> = [7, 3, 3, 3];
+const DECODE_3733: StaticArray<i32> = [3, 7, 3, 3];
+const DECODE_493: StaticArray<i32> = [4, 9, 3];
+const DECODE_4444: StaticArray<i32> = [4, 4, 4, 4];
+const DECODE_3310: StaticArray<i32> = [3, 3, 10];
+
+/**
+ * Get instruction latency
+ */
+@inline
+function getLatency(opcode: u8): i32 {
+  if (opcode == ISUB_R || opcode == IXOR_R || opcode == IADD_RS ||
+      opcode == IROR_C || opcode == IADD_C7 || opcode == IXOR_C7 ||
+      opcode == IADD_C8 || opcode == IXOR_C8 || opcode == IADD_C9 ||
+      opcode == IXOR_C9) {
+    return 1;
+  }
+  if (opcode == IMUL_R) return 3;
+  if (opcode == IMULH_R || opcode == ISMULH_R || opcode == IMUL_RCP) return 4;
+  return 1;
+}
+
+/**
+ * Check if value is zero or power of 2
+ */
+@inline
+function isZeroOrPowerOf2(x: u32): bool {
+  return (x & (x - 1)) == 0;
+}
+
+/**
+ * Generate a superscalar program
+ * Result stored in genProg* arrays
+ */
+export function generateSuperscalarProgram(): void {
+  // Reset program
+  genProgSize = 0;
+
+  // Reset register state
+  for (let i = 0; i < 8; i++) {
+    unchecked(genRegLatency[i] = 0);
+    unchecked(genRegLastOpGroup[i] = -1);
+    unchecked(genRegLastOpPar[i] = -1);
+  }
+
+  let cycle: i32 = 0;
+  let mulCount: i32 = 0;
+  let lastInstrType: i32 = -1;
+
+  // Generate until we reach target latency or max size
+  while (cycle < RANDOMX_SUPERSCALAR_LATENCY && genProgSize < SUPERSCALAR_MAX_SIZE) {
+    // Select decode buffer
+    let bufferLen: i32;
+    let slot0: i32, slot1: i32, slot2: i32, slot3: i32;
+
+    if (lastInstrType == IMULH_R || lastInstrType == ISMULH_R) {
+      bufferLen = 3;
+      slot0 = 3; slot1 = 3; slot2 = 10; slot3 = 0;
+    } else if (mulCount < cycle + 1) {
+      bufferLen = 4;
+      slot0 = 4; slot1 = 4; slot2 = 4; slot3 = 4;
+    } else if (lastInstrType == IMUL_RCP) {
+      bufferLen = 3;
+      if (genGetByte() & 1) {
+        slot0 = 4; slot1 = 8; slot2 = 4; slot3 = 0;
+      } else {
+        slot0 = 4; slot1 = 9; slot2 = 3; slot3 = 0;
+      }
+    } else {
+      const bufIdx = genGetByte() & 3;
+      if (bufIdx == 0) {
+        bufferLen = 3;
+        slot0 = 4; slot1 = 8; slot2 = 4; slot3 = 0;
+      } else if (bufIdx == 1) {
+        bufferLen = 4;
+        slot0 = 7; slot1 = 3; slot2 = 3; slot3 = 3;
+      } else if (bufIdx == 2) {
+        bufferLen = 4;
+        slot0 = 3; slot1 = 7; slot2 = 3; slot3 = 3;
+      } else {
+        bufferLen = 3;
+        slot0 = 4; slot1 = 9; slot2 = 3; slot3 = 0;
+      }
+    }
+
+    // Fill each slot
+    for (let slot = 0; slot < bufferLen && genProgSize < SUPERSCALAR_MAX_SIZE; slot++) {
+      let slotSize: i32;
+      if (slot == 0) slotSize = slot0;
+      else if (slot == 1) slotSize = slot1;
+      else if (slot == 2) slotSize = slot2;
+      else slotSize = slot3;
+
+      const isLast = slot == bufferLen - 1;
+
+      // Select instruction type
+      let instrType: u8;
+      let mod: u8 = 0;
+      let imm32: u32 = 0;
+      let opGroup: i32 = -1;
+      let opGroupPar: i32 = -1;
+      let canReuse: bool = false;
+      let srcRequired: bool = true;
+
+      if (slotSize == 3) {
+        if (isLast) {
+          instrType = unchecked(SLOT_3L[genGetByte() & 3]);
+        } else {
+          instrType = unchecked(SLOT_3[genGetByte() & 1]);
+        }
+      } else if (slotSize == 4) {
+        if (slot0 == 4 && slot1 == 4 && slot2 == 4 && slot3 == 4 && !isLast) {
+          instrType = IMUL_R;
+        } else {
+          instrType = unchecked(SLOT_4[genGetByte() & 1]);
+        }
+      } else if (slotSize == 7) {
+        instrType = unchecked(SLOT_7[genGetByte() & 1]);
+      } else if (slotSize == 8) {
+        instrType = unchecked(SLOT_8[genGetByte() & 1]);
+      } else if (slotSize == 9) {
+        instrType = unchecked(SLOT_9[genGetByte() & 1]);
+      } else if (slotSize == 10) {
+        instrType = IMUL_RCP;
+      } else {
+        continue;
+      }
+
+      // Configure instruction parameters
+      if (instrType == ISUB_R) {
+        opGroup = IADD_RS;
+      } else if (instrType == IXOR_R) {
+        opGroup = IXOR_R;
+      } else if (instrType == IADD_RS) {
+        mod = genGetByte();
+        opGroup = IADD_RS;
+      } else if (instrType == IMUL_R) {
+        opGroup = IMUL_R;
+      } else if (instrType == IROR_C) {
+        do {
+          imm32 = <u32>(genGetByte() & 63);
+        } while (imm32 == 0);
+        opGroup = IROR_C;
+        opGroupPar = -1;
+        srcRequired = false;
+      } else if (instrType == IADD_C7 || instrType == IADD_C8 || instrType == IADD_C9) {
+        imm32 = genGetUInt32();
+        opGroup = IADD_C7;
+        opGroupPar = -1;
+        srcRequired = false;
+      } else if (instrType == IXOR_C7 || instrType == IXOR_C8 || instrType == IXOR_C9) {
+        imm32 = genGetUInt32();
+        opGroup = IXOR_C7;
+        opGroupPar = -1;
+        srcRequired = false;
+      } else if (instrType == IMULH_R) {
+        canReuse = true;
+        opGroup = IMULH_R;
+        opGroupPar = <i32>genGetUInt32();
+      } else if (instrType == ISMULH_R) {
+        canReuse = true;
+        opGroup = ISMULH_R;
+        opGroupPar = <i32>genGetUInt32();
+      } else if (instrType == IMUL_RCP) {
+        do {
+          imm32 = genGetUInt32();
+        } while (isZeroOrPowerOf2(imm32));
+        opGroup = IMUL_RCP;
+        opGroupPar = -1;
+        srcRequired = false;
+      }
+
+      // Select source register
+      let src: i32 = -1;
+      if (srcRequired) {
+        let availCount: i32 = 0;
+        for (let i = 0; i < 8; i++) {
+          if (unchecked(genRegLatency[i]) <= cycle) {
+            availCount++;
+          }
+        }
+        if (availCount > 0) {
+          let pick = <i32>(genGetUInt32() % <u32>availCount);
+          for (let i = 0; i < 8; i++) {
+            if (unchecked(genRegLatency[i]) <= cycle) {
+              if (pick == 0) {
+                src = i;
+                break;
+              }
+              pick--;
+            }
+          }
+          if (srcRequired && opGroupPar == -1) {
+            opGroupPar = src;
+          }
+        }
+      }
+
+      // Select destination register
+      let dst: i32 = -1;
+      let availDstCount: i32 = 0;
+      for (let i = 0; i < 8; i++) {
+        if (unchecked(genRegLatency[i]) <= cycle &&
+            (canReuse || i != src) &&
+            (opGroup != IMUL_R || unchecked(genRegLastOpGroup[i]) != IMUL_R) &&
+            (unchecked(genRegLastOpGroup[i]) != opGroup || unchecked(genRegLastOpPar[i]) != opGroupPar) &&
+            (instrType != IADD_RS || i != REGISTER_NEEDS_DISPLACEMENT)) {
+          availDstCount++;
+        }
+      }
+
+      if (availDstCount > 0) {
+        let pick = <i32>(genGetUInt32() % <u32>availDstCount);
+        for (let i = 0; i < 8; i++) {
+          if (unchecked(genRegLatency[i]) <= cycle &&
+              (canReuse || i != src) &&
+              (opGroup != IMUL_R || unchecked(genRegLastOpGroup[i]) != IMUL_R) &&
+              (unchecked(genRegLastOpGroup[i]) != opGroup || unchecked(genRegLastOpPar[i]) != opGroupPar) &&
+              (instrType != IADD_RS || i != REGISTER_NEEDS_DISPLACEMENT)) {
+            if (pick == 0) {
+              dst = i;
+              break;
+            }
+            pick--;
+          }
+        }
+      } else {
+        continue;
+      }
+
+      // Add instruction
+      unchecked(genProgOpcodes[genProgSize] = instrType);
+      unchecked(genProgDst[genProgSize] = <u8>dst);
+      unchecked(genProgSrc[genProgSize] = src >= 0 ? <u8>src : <u8>dst);
+      unchecked(genProgMod[genProgSize] = mod);
+      unchecked(genProgImm32[genProgSize] = imm32);
+      genProgSize++;
+
+      // Update register state
+      const latency = getLatency(instrType);
+      unchecked(genRegLatency[dst] = cycle + latency);
+      unchecked(genRegLastOpGroup[dst] = opGroup);
+      unchecked(genRegLastOpPar[dst] = opGroupPar);
+
+      if (instrType == IMUL_R || instrType == IMULH_R ||
+          instrType == ISMULH_R || instrType == IMUL_RCP) {
+        mulCount++;
+      }
+
+      lastInstrType = <i32>instrType;
+    }
+
+    cycle++;
+  }
+
+  // Determine address register (highest ASIC latency)
+  // Use pre-allocated genAsicLatency buffer
+  for (let i = 0; i < 8; i++) {
+    unchecked(genAsicLatency[i] = 0);
+  }
+
+  for (let i = 0; i < genProgSize; i++) {
+    const dst = <i32>unchecked(genProgDst[i]);
+    const src = <i32>unchecked(genProgSrc[i]);
+    let latDst = unchecked(genAsicLatency[dst]) + 1;
+    let latSrc = dst != src ? unchecked(genAsicLatency[src]) + 1 : 0;
+    unchecked(genAsicLatency[dst] = latDst > latSrc ? latDst : latSrc);
+  }
+
+  let maxLatency: i32 = 0;
+  genProgAddressReg = 0;
+  for (let i = 0; i < 8; i++) {
+    if (unchecked(genAsicLatency[i]) > maxLatency) {
+      maxLatency = unchecked(genAsicLatency[i]);
+      genProgAddressReg = i;
+    }
+  }
+}
+
+/**
+ * Execute the generated program on registers r0-r7
+ */
+export function executeGeneratedProgram(): void {
+  for (let i = 0; i < genProgSize; i++) {
+    const opcode = unchecked(genProgOpcodes[i]);
+    const dst = unchecked(genProgDst[i]);
+    const src = unchecked(genProgSrc[i]);
+    const mod = unchecked(genProgMod[i]);
+    const imm32 = unchecked(genProgImm32[i]);
+
+    switch (opcode) {
+      case ISUB_R:
+        setReg(dst, getReg(dst) - getReg(src));
+        break;
+
+      case IXOR_R:
+        setReg(dst, getReg(dst) ^ getReg(src));
+        break;
+
+      case IADD_RS: {
+        const shift = (mod >> 2) & 3;
+        setReg(dst, getReg(dst) + (getReg(src) << shift));
+        break;
+      }
+
+      case IMUL_R:
+        setReg(dst, getReg(dst) * getReg(src));
+        break;
+
+      case IROR_C:
+        setReg(dst, rotr64(getReg(dst), imm32 & 63));
+        break;
+
+      case IADD_C7:
+      case IADD_C8:
+      case IADD_C9:
+        setReg(dst, getReg(dst) + signExtend(imm32));
+        break;
+
+      case IXOR_C7:
+      case IXOR_C8:
+      case IXOR_C9:
+        setReg(dst, getReg(dst) ^ signExtend(imm32));
+        break;
+
+      case IMULH_R:
+        setReg(dst, mulh(getReg(dst), getReg(src)));
+        break;
+
+      case ISMULH_R:
+        setReg(dst, smulh(getReg(dst), getReg(src)));
+        break;
+
+      case IMUL_RCP:
+        setReg(dst, getReg(dst) * reciprocal(imm32));
+        break;
+
+      default:
+        // Unknown opcode - skip
+        break;
+    }
+  }
+}
+
+/**
+ * Complete superscalar hash for a single dataset item (light mode)
+ * This generates programs on-the-fly and computes the item.
+ *
+ * @param itemNumber - Dataset item index
+ * @param seedPtr - Seed for program generation (cache key, 32-64 bytes)
+ * @param seedLen - Length of seed
+ */
+export function superscalarHash(itemNumber: u64, seedPtr: usize, seedLen: i32): void {
+  // Initialize registers
+  r0 = (itemNumber + 1) * SUPERSCALAR_MUL0;
+  r1 = r0 ^ SUPERSCALAR_ADD1;
+  r2 = r0 ^ SUPERSCALAR_ADD2;
+  r3 = r0 ^ SUPERSCALAR_ADD3;
+  r4 = r0 ^ SUPERSCALAR_ADD4;
+  r5 = r0 ^ SUPERSCALAR_ADD5;
+  r6 = r0 ^ SUPERSCALAR_ADD6;
+  r7 = r0 ^ SUPERSCALAR_ADD7;
+
+  let registerValue: u64 = itemNumber;
+
+  // Generate and execute RANDOMX_CACHE_ACCESSES programs
+  for (let access: i32 = 0; access < RANDOMX_CACHE_ACCESSES; access++) {
+    // Initialize generator for this access
+    blake2gen_init(seedPtr, seedLen, <u32>access);
+
+    // Generate program
+    generateSuperscalarProgram();
+
+    // Get cache block
+    const index: u32 = <u32>(registerValue % <u64>cacheLineCount);
+    const blockPtr = cachePtr + <usize>index * CACHE_LINE_SIZE;
+
+    // Execute program
+    executeGeneratedProgram();
+
+    // XOR cache block into registers
+    r0 ^= load<u64>(blockPtr);
+    r1 ^= load<u64>(blockPtr + 8);
+    r2 ^= load<u64>(blockPtr + 16);
+    r3 ^= load<u64>(blockPtr + 24);
+    r4 ^= load<u64>(blockPtr + 32);
+    r5 ^= load<u64>(blockPtr + 40);
+    r6 ^= load<u64>(blockPtr + 48);
+    r7 ^= load<u64>(blockPtr + 56);
+
+    // Update registerValue from address register
+    registerValue = getReg(<u8>genProgAddressReg);
+  }
+}
 
 // Working registers (8 x u64)
 let r0: u64 = 0;
@@ -91,6 +613,7 @@ function setReg(idx: u8, val: u64): void {
     case 5: r5 = val; break;
     case 6: r6 = val; break;
     case 7: r7 = val; break;
+    default: break;
   }
 }
 
@@ -239,6 +762,10 @@ export function exec_instruction(opcode: u8, dst: u8, src: u8, mod: u8, imm32: u
       // imm32 is actually the pre-computed reciprocal index or value
       // For WASM, we receive the pre-computed reciprocal directly
       setReg(dst, getReg(dst) * <u64>imm32);
+      break;
+
+    default:
+      // Unknown opcode - skip
       break;
   }
 }
@@ -434,6 +961,10 @@ function executeProgram(progIdx: u8): void {
         setReg(dst, getReg(dst) * rcp);
         break;
       }
+
+      default:
+        // Unknown opcode - skip
+        break;
     }
   }
 }

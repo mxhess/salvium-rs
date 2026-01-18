@@ -8,6 +8,11 @@
  */
 
 import { blake2b } from './blake2b';
+import {
+  superscalar_init,
+  superscalarHash,
+  get_reg as ss_get_reg
+} from './superscalar';
 
 // ============================================================================
 // Constants
@@ -141,6 +146,11 @@ let programPtr: usize = 0;
 // Mode flag: 0 = light (use superscalar), 1 = full (use dataset)
 let fullMode: u8 = 0;
 
+// Light mode: cache seed pointer and length (for superscalar program generation)
+let cacheSeedPtr: usize = 0;
+let cacheSeedLen: i32 = 0;
+let cacheItemCount: u32 = 0;
+
 // ============================================================================
 // Register Access
 // ============================================================================
@@ -171,6 +181,7 @@ function setR(idx: u8, val: u64): void {
     case 5: r5 = val; break;
     case 6: r6 = val; break;
     case 7: r7 = val; break;
+    default: break;
   }
 }
 
@@ -321,7 +332,7 @@ function spLoadF64(addr: u32): f64 {
  */
 function readDatasetItem(itemIndex: u64): void {
   if (fullMode == 1) {
-    // Mask index to stay within dataset bounds
+    // Full mode: Read from pre-computed dataset
     const maskedIndex: u64 = itemIndex % datasetItemCount;
     const offset: u32 = <u32>(maskedIndex * 64);
 
@@ -333,8 +344,20 @@ function readDatasetItem(itemIndex: u64): void {
     r5 ^= readU64(datasetPtr, offset + 40);
     r6 ^= readU64(datasetPtr, offset + 48);
     r7 ^= readU64(datasetPtr, offset + 56);
+  } else {
+    // Light mode: Compute dataset item via superscalar hash
+    superscalarHash(itemIndex, cacheSeedPtr, cacheSeedLen);
+
+    // XOR superscalar results into VM registers
+    r0 ^= ss_get_reg(0);
+    r1 ^= ss_get_reg(1);
+    r2 ^= ss_get_reg(2);
+    r3 ^= ss_get_reg(3);
+    r4 ^= ss_get_reg(4);
+    r5 ^= ss_get_reg(5);
+    r6 ^= ss_get_reg(6);
+    r7 ^= ss_get_reg(7);
   }
-  // Light mode would call superscalar here
 }
 
 // ============================================================================
@@ -534,6 +557,31 @@ export function vm_init(
  */
 export function vm_set_dataset_size(count: u64): void {
   datasetItemCount = count > 0 ? count : 1;
+}
+
+/**
+ * Initialize light mode with cache
+ * @param cachePtr - Pointer to Argon2d cache (256MB)
+ * @param cacheItems - Number of 64-byte cache items
+ * @param seedPtr - Pointer to cache seed (key)
+ * @param seedLen - Length of seed in bytes
+ */
+export function vm_init_light(
+  cachePtr: usize,
+  cacheItems: u32,
+  seedPtr: usize,
+  seedLen: i32
+): void {
+  // Initialize superscalar with cache
+  superscalar_init(cachePtr, cacheItems);
+
+  // Store seed info for superscalarHash calls
+  cacheSeedPtr = seedPtr;
+  cacheSeedLen = seedLen;
+  cacheItemCount = cacheItems;
+
+  // Set light mode
+  fullMode = 0;
 }
 
 /**

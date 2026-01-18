@@ -181,3 +181,6 @@ console.log('=== Real Address Tests ===');
 console.log('To test with real Salvium addresses, run:');
 console.log('  node -e "import(\'./src/index.js\').then(s => console.log(s.parseAddress(\'YOUR_ADDRESS\')))"');
 console.log('');
+console.log('To run all tests including transaction/wallet tests:');
+console.log('  bun test/all.js');
+console.log('');

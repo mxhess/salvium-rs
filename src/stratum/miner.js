@@ -18,8 +18,8 @@ import { randomx_init_cache, randomx_superscalarhash } from '../randomx/vendor/i
 import { RANDOMX_DATASET_ITEM_COUNT } from '../randomx/full-mode.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const WORKER_PATH_LIGHT = join(__dirname, 'mining-worker.js');
-const WORKER_PATH_ASM = join(__dirname, 'mining-worker-asm.js');
+const WORKER_PATH_LIGHT = join(__dirname, 'mining-worker-light.js');  // JIT (~7 H/s)
+const WORKER_PATH_FULL = join(__dirname, 'mining-worker-asm.js');     // WASM (~30 H/s)
 
 /**
  * Get available CPU cores
@@ -395,9 +395,9 @@ export class StratumMiner extends EventEmitter {
 
   _createWorker(workerId) {
     return new Promise((resolve, reject) => {
-      // Full mode uses the AssemblyScript WASM VM for best performance
+      // Full mode uses WASM (~30 H/s), Light mode uses JIT (~7 H/s)
       const workerPath = this.options.mode === 'full'
-        ? WORKER_PATH_ASM
+        ? WORKER_PATH_FULL
         : WORKER_PATH_LIGHT;
       const worker = new Worker(workerPath, {
         workerData: { workerId, mode: this.options.mode }

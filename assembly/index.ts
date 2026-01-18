@@ -21,7 +21,8 @@ export {
   argon2d_read_block,
   argon2d_xor_block,
   argon2d_test_index_alpha,
-  argon2d_debug_blockR_ptr
+  argon2d_debug_blockR_ptr,
+  init_cache
 } from './argon2d';
 
 // Re-export Superscalar
@@ -44,12 +45,18 @@ export {
   set_program_meta,
   init_dataset_item,
   init_dataset_batch,
-  init_dataset_batch_simd
+  init_dataset_batch_simd,
+  // Light mode - program generation in WASM
+  blake2gen_init,
+  generateSuperscalarProgram,
+  executeGeneratedProgram,
+  superscalarHash
 } from './superscalar';
 
-// Re-export VM (Full mode support)
+// Re-export VM (Full mode support + light mode)
 export {
   vm_init,
+  vm_init_light,
   vm_reset,
   vm_set_config,
   vm_set_a_registers,

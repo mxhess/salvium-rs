@@ -15,12 +15,18 @@ JavaScript library for Salvium cryptocurrency - wallet generation, address handl
 - **Key Images** - Generate and validate key images for spend detection
 - **Transaction Construction** - Pedersen commitments, CLSAG signatures, serialization
 - **Bulletproofs+ Range Proofs** - Pure JS proof generation AND verification (mobile-friendly)
-- **RandomX Proof-of-Work** - Pure JS implementation (no WASM/native) for mobile/browser
+- **RandomX Proof-of-Work** - WASM-JIT implementation with official test vectors
+- **Stratum Mining Client** - Connect to mining pools with multi-threaded hashing
+- **Wallet Class** - Unified wallet management with view-only mode support
+- **UTXO Selection** - Multiple strategies (minimize inputs, minimize change, etc.)
+- **Transaction Builder** - High-level buildTransaction() and signTransaction() API
+- **Transaction Parser** - Decode and analyze transaction data
 - **RPC Clients** - Full daemon and wallet RPC implementations
 - **Signature Verification** - Verify message signatures (V1 and V2 formats)
 - **Cryptographic Primitives** - Blake2b, Keccak-256, Ed25519, Base58
 - **Multi-Network Support** - Mainnet, Testnet, Stagenet
-- **Zero Dependencies** - Pure JavaScript, works in browsers and Node.js
+- **TypeScript Support** - Full type definitions included
+- **Minimal Dependencies** - Only @noble/curves and @noble/hashes
 
 ## Address Types Supported
 
@@ -613,7 +619,7 @@ const prefixHash = getTxPrefixHash(tx);
 
 ## RandomX Proof-of-Work
 
-Pure JavaScript implementation of RandomX for transaction verification and light mining. **No WASM, no native modules** - works in browsers, Node.js, and React Native.
+WASM-JIT accelerated RandomX implementation for mining and verification. Validated against [official test vectors](https://github.com/tevador/RandomX/blob/master/src/tests/tests.cpp).
 
 ```javascript
 import {
@@ -627,38 +633,38 @@ import {
 // === BASIC HASHING ===
 
 // One-shot hash (creates temporary context)
-const key = new TextEncoder().encode('block header hash');
-const input = new TextEncoder().encode('block blob');
-const hash = rxSlowHash(key, input);  // 32-byte hash
+const hash = await rxSlowHash('block header hash', 'block blob');
 
 // === REUSABLE CONTEXT (Recommended) ===
 
 // For multiple hashes with same key, reuse context
 const ctx = new RandomXContext();
-ctx.init(key);  // Initialize cache (takes time, ~256MB)
+await ctx.init('test key 000');  // Initialize 256MB cache
 
-const hash1 = ctx.hash(input1);
-const hash2 = ctx.hash(input2);  // Much faster, reuses cache
+const hash1 = ctx.hash('This is a test');
+const hash2 = ctx.hash('Another input');  // Much faster, reuses cache
+
+// Verify against official test vectors
+console.log(ctx.hashHex('This is a test'));
+// '639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f'
 
 // === VERIFICATION ===
 
 // Verify a hash
-const isValid = verifyHash(key, input, expectedHash);
+const isValid = await verifyHash(key, input, expectedHash);
 
 // Check if hash meets difficulty target
 const meetsDifficulty = checkDifficulty(hash, difficulty);
-// Uses: hash * difficulty <= 2^256 - 1
 
 // === MINING ===
 
 // Find nonce that meets difficulty
-const result = mine(
+const result = await mine(
   key,            // Cache key (prev block hash)
   blockBlob,      // Block blob with nonce placeholder
   nonceOffset,    // Byte offset of nonce in blob
   difficulty,     // Target difficulty (BigInt)
-  maxNonce,       // Max nonce to try (default: 2^32)
-  (nonce, rate) => console.log(`Nonce: ${nonce}, ${rate} H/s`)  // Progress
+  maxNonce        // Max nonce to try (default: 2^32)
 );
 
 if (result) {
@@ -667,15 +673,19 @@ if (result) {
 }
 ```
 
-**Components** (all pure JavaScript):
-- **Argon2d** - Cache initialization (256MB, 3 iterations)
-- **SuperscalarHash** - Dataset item generation with x86 pipeline simulation
-- **Soft AES** - Scratchpad filling without hardware acceleration
-- **RandomX VM** - Full instruction set (integer, float, memory ops)
+**Modes:**
+- **Light mode** (default) - 256MB cache per thread, suitable for verification and mining
+- **Full mode** - 2GB shared dataset, faster hashing for dedicated miners
 
-**Performance Note**: Pure JS is significantly slower than native RandomX.
-- Suitable for: transaction verification, light wallets, educational use, mobile mining (reduced hashrate)
-- For high-performance mining, use native implementations
+**Multi-threaded Mining:**
+```javascript
+import { RandomXWorkerPool, getAvailableCores } from 'salvium-js';
+
+const pool = new RandomXWorkerPool(getAvailableCores());
+await pool.init(key);
+const hash = await pool.hash(input);
+pool.terminate();
+```
 
 ## Verify Message Signatures
 
@@ -844,6 +854,56 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `argon2d(password, salt, tCost, mCost, parallelism, outLen)` | Argon2d hash function |
 | `argon2InitCache(key)` | Initialize RandomX cache with Argon2d |
 
+### Wallet Functions
+
+| Function | Description |
+|----------|-------------|
+| `Wallet` | Wallet class with full and view-only modes |
+| `createWallet(options?)` | Create new wallet with mnemonic |
+| `restoreWallet(mnemonic, options?)` | Restore wallet from mnemonic |
+| `createViewOnlyWallet(options)` | Create view-only wallet from keys |
+| `wallet.getAddress()` | Get main wallet address |
+| `wallet.getSubaddress(major, minor)` | Generate subaddress |
+| `wallet.getBalance()` | Get balance (total, unlocked, locked) |
+| `wallet.canSign()` | Check if wallet can sign transactions |
+| `wallet.canScan()` | Check if wallet can scan for outputs |
+| `wallet.toJSON(includeSecrets?)` | Serialize wallet to JSON |
+| `Wallet.fromJSON(json)` | Restore wallet from JSON |
+
+### UTXO Selection Functions
+
+| Function | Description |
+|----------|-------------|
+| `selectUTXOs(utxos, amount, options?)` | Select UTXOs for transaction |
+| `UTXO_STRATEGY.MINIMIZE_INPUTS` | Strategy to minimize number of inputs |
+| `UTXO_STRATEGY.MINIMIZE_CHANGE` | Strategy to minimize change amount |
+| `UTXO_STRATEGY.OLDEST_FIRST` | Strategy to spend oldest UTXOs first |
+| `UTXO_STRATEGY.NEWEST_FIRST` | Strategy to spend newest UTXOs first |
+| `UTXO_STRATEGY.RANDOM` | Random UTXO selection |
+
+### Transaction Builder Functions
+
+| Function | Description |
+|----------|-------------|
+| `buildTransaction(options)` | Build complete transaction with signatures |
+| `signTransaction(unsignedTx, spendSecretKey)` | Sign an unsigned transaction |
+| `prepareInputs(utxos, viewSecretKey)` | Prepare inputs with ring members |
+| `estimateTransactionFee(numInputs, numOutputs, feePerByte?)` | Estimate transaction fee |
+| `validateTransaction(tx)` | Validate transaction structure |
+| `serializeTransaction(tx)` | Serialize transaction for broadcast |
+
+### Transaction Parser Functions
+
+| Function | Description |
+|----------|-------------|
+| `parseTransaction(txData)` | Parse raw transaction bytes/hex |
+| `parseExtra(extra)` | Parse transaction extra field |
+| `extractTxPubKey(extra)` | Extract transaction public key |
+| `extractPaymentId(extra)` | Extract payment ID from extra |
+| `decodeAmount(encrypted, derivation, index)` | Decrypt encrypted amount |
+| `summarizeTransaction(tx)` | Get transaction summary |
+| `getTransactionHashFromParsed(tx)` | Compute hash from parsed transaction |
+
 ### Utility Functions
 
 | Function | Description |
@@ -853,6 +913,150 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `keccak256(data)` | Keccak-256 hash, returns Uint8Array |
 | `keccak256Hex(data)` | Keccak-256 hash, returns hex string |
 | `blake2b(data, outlen, key?)` | Blake2b hash with optional key |
+
+## Wallet Class
+
+Unified wallet management with full and view-only modes.
+
+```javascript
+import {
+  Wallet,
+  createWallet,
+  restoreWallet,
+  createViewOnlyWallet
+} from 'salvium-js';
+
+// Create a new wallet
+const { wallet, mnemonic, seed } = createWallet({ network: 'mainnet' });
+console.log('Backup:', mnemonic);  // 25 words
+console.log('Address:', wallet.getAddress());
+
+// Restore from mnemonic
+const restored = restoreWallet('abbey ability able about...');
+
+// Create view-only wallet (can scan, cannot spend)
+const viewOnly = createViewOnlyWallet({
+  network: 'mainnet',
+  viewSecretKey: '...',
+  spendPublicKey: '...'
+});
+
+console.log('Can scan:', viewOnly.canScan());   // true
+console.log('Can sign:', viewOnly.canSign());   // false
+
+// Generate subaddresses
+const sub = wallet.getSubaddress(0, 1);  // account 0, index 1
+
+// Serialize/deserialize
+const json = wallet.toJSON();
+const loaded = Wallet.fromJSON(json);
+```
+
+## UTXO Selection
+
+Multiple strategies for selecting transaction inputs.
+
+```javascript
+import { selectUTXOs, UTXO_STRATEGY } from 'salvium-js';
+
+const utxos = [
+  { txHash: 'abc...', outputIndex: 0, amount: 1000000000n, publicKey: ... },
+  { txHash: 'def...', outputIndex: 1, amount: 500000000n, publicKey: ... },
+  // ...
+];
+
+const result = selectUTXOs(utxos, 800000000n, {
+  strategy: UTXO_STRATEGY.MINIMIZE_INPUTS,  // or MINIMIZE_CHANGE, OLDEST_FIRST, etc.
+  feePerByte: 1000n
+});
+
+console.log('Selected:', result.selectedUTXOs.length);
+console.log('Total:', result.totalAmount);
+console.log('Change:', result.changeAmount);
+console.log('Fee:', result.estimatedFee);
+```
+
+## Transaction Builder
+
+High-level API for building and signing transactions.
+
+```javascript
+import { buildTransaction, signTransaction, validateTransaction } from 'salvium-js';
+
+// Build a transaction
+const tx = await buildTransaction({
+  utxos: myUTXOs,
+  destinations: [
+    { address: 'SaLv...', amount: 1000000000n }
+  ],
+  changeAddress: myChangeAddress,
+  viewSecretKey: keys.viewSecretKey,
+  spendSecretKey: keys.spendSecretKey,
+  ringSize: 16
+});
+
+console.log('TX Hash:', tx.txHash);
+console.log('Fee:', tx.fee);
+
+// Validate before broadcast
+const validation = validateTransaction(tx.tx);
+if (!validation.valid) {
+  console.error('Errors:', validation.errors);
+}
+```
+
+## Transaction Parser
+
+Decode and analyze transaction data.
+
+```javascript
+import {
+  parseTransaction,
+  parseExtra,
+  extractTxPubKey,
+  extractPaymentId,
+  summarizeTransaction
+} from 'salvium-js';
+
+// Parse raw transaction
+const tx = parseTransaction(txHex);
+
+// Get transaction summary
+const summary = summarizeTransaction(tx);
+console.log('Hash:', summary.hash);
+console.log('Inputs:', summary.numInputs);
+console.log('Outputs:', summary.numOutputs);
+console.log('Coinbase:', summary.isCoinbase);
+console.log('Key images:', summary.keyImages);
+
+// Extract extra fields
+const extra = parseExtra(tx.extra);
+const txPubKey = extractTxPubKey(extra);
+const paymentId = extractPaymentId(extra);
+```
+
+## Stratum Mining
+
+Connect to mining pools with the stratum protocol.
+
+```javascript
+import { createMiner } from 'salvium-js';
+
+const miner = createMiner({
+  host: 'pool.example.com',
+  port: 3333,
+  wallet: 'SaLv...',
+  password: 'x',
+  threads: 4
+});
+
+miner.on('hashrate', (rate) => console.log(`${rate} H/s`));
+miner.on('share', (accepted) => console.log(accepted ? 'Share accepted' : 'Share rejected'));
+
+await miner.start();
+// ... mining ...
+miner.stop();
+```
 
 ## Testing
 
@@ -867,7 +1071,7 @@ bun test/all.js --integration
 bun test/all.js --integration http://localhost:19081
 ```
 
-Test coverage: 259 tests across 13 test suites including RandomX.
+Test coverage: 18 test suites with official RandomX test vectors.
 
 ## License
 

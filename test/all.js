@@ -33,8 +33,13 @@ const tests = [
   { name: 'Transaction Scanning Tests', file: 'scanning.test.js' },
   { name: 'Key Image Tests', file: 'keyimage.test.js' },
   { name: 'Transaction Construction Tests', file: 'transaction.test.js' },
+  { name: 'Bulletproofs+ Tests', file: 'bulletproofs_plus.test.js' },
   { name: 'Mining Tests', file: 'mining.test.js' },
   { name: 'RandomX Tests', file: 'randomx.test.js' },
+  { name: 'UTXO Selection Tests', file: 'utxo-selection.test.js' },
+  { name: 'Transaction Builder Tests', file: 'transaction-builder.test.js' },
+  { name: 'Wallet Class Tests', file: 'wallet-class.test.js' },
+  { name: 'Transaction Parser Tests', file: 'transaction-parser.test.js' },
 ];
 
 if (runIntegration) {
@@ -57,10 +62,19 @@ async function runTest(testConfig) {
     const testPath = join(__dirname, testConfig.file);
     const testArgs = testConfig.args || [];
 
-    const proc = spawn('bun', [testPath, ...testArgs], {
-      stdio: 'inherit',
-      cwd: join(__dirname, '..')
-    });
+    let proc;
+    if (testConfig.vitest) {
+      // Run with vitest for tests that use describe/it/expect
+      proc = spawn('bunx', ['vitest', 'run', testPath, '--reporter=verbose'], {
+        stdio: 'inherit',
+        cwd: join(__dirname, '..')
+      });
+    } else {
+      proc = spawn('bun', [testPath, ...testArgs], {
+        stdio: 'inherit',
+        cwd: join(__dirname, '..')
+      });
+    }
 
     proc.on('close', (code) => {
       resolve(code === 0);

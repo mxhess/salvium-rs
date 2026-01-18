@@ -29,6 +29,14 @@ export * from './keyimage.js';
 export * from './transaction.js';
 export * from './bulletproofs_plus.js';
 export * from './mining.js';
+export * from './wallet.js';
+export * from './query.js';
+export * from './connection-manager.js';
+export * from './offline.js';
+export * from './multisig.js';
+export * from './wallet-store.js';
+export * from './wallet-sync.js';
+export * from './persistent-wallet.js';
 
 // RandomX proof-of-work (WASM-JIT implementation)
 export * as randomx from './randomx/index.js';
@@ -53,7 +61,15 @@ export {
   mine,
   randomx_init_cache,
   randomx_create_vm,
-  randomx_machine_id
+  randomx_machine_id,
+  // Pure JS internals (for testing)
+  RandomXCache,
+  initDatasetItem,
+  Blake2Generator,
+  generateSuperscalar,
+  executeSuperscalar,
+  reciprocal,
+  argon2d
 } from './randomx/index.js';
 
 // Wordlists available as separate imports for tree-shaking
@@ -345,7 +361,25 @@ import {
   serializeBlockHeader,
   serializeBlock,
   getBlockHash,
-  computeMerkleRoot
+  computeMerkleRoot,
+  // UTXO Selection
+  UTXO_STRATEGY,
+  selectUTXOs,
+  // Transaction Building
+  buildTransaction,
+  signTransaction,
+  prepareInputs,
+  estimateTransactionFee,
+  validateTransaction,
+  serializeTransaction,
+  // Transaction Parsing
+  parseTransaction,
+  parseExtra,
+  decodeAmount,
+  extractTxPubKey,
+  extractPaymentId,
+  summarizeTransaction,
+  getTransactionHashFromParsed
 } from './transaction.js';
 
 import {
@@ -427,6 +461,115 @@ import {
   randomx_create_vm,
   randomx_machine_id
 } from './randomx/index.js';
+
+import {
+  Wallet,
+  WalletListener,
+  Account,
+  WALLET_TYPE,
+  TX_TYPE,
+  MAX_SUBADDRESS_MAJOR_INDEX,
+  MAX_SUBADDRESS_MINOR_INDEX,
+  createWallet,
+  restoreWallet,
+  createViewOnlyWallet
+} from './wallet.js';
+
+import {
+  OutputQuery,
+  TxQuery,
+  TransferQuery,
+  createOutputQuery,
+  createTxQuery,
+  createTransferQuery,
+  unspentOutputs,
+  spentOutputs,
+  lockedOutputs,
+  unlockedOutputs,
+  stakingOutputs,
+  yieldOutputs,
+  incomingTxs,
+  outgoingTxs,
+  pendingTxs,
+  confirmedTxs,
+  stakingTxs,
+  yieldTxs
+} from './query.js';
+
+import {
+  ConnectionManager,
+  ConnectionInfo,
+  CONNECTION_STATE,
+  createDaemonConnectionManager,
+  createWalletConnectionManager
+} from './connection-manager.js';
+
+import {
+  UNSIGNED_TX_VERSION,
+  SIGNED_TX_VERSION,
+  createUnsignedTx,
+  parseUnsignedTx,
+  createSignedTx,
+  parseSignedTx,
+  exportUnsignedTx,
+  importUnsignedTx,
+  signOffline,
+  exportSignedTx,
+  importSignedTx,
+  getTxBlobHex,
+  exportKeyImages as exportKeyImagesOffline,
+  importKeyImages as importKeyImagesOffline,
+  exportOutputs,
+  importOutputs,
+  verifyUnsignedTx,
+  summarizeUnsignedTx
+} from './offline.js';
+
+import {
+  MULTISIG_MAX_SIGNERS,
+  MULTISIG_MIN_THRESHOLD,
+  MULTISIG_NONCE_COMPONENTS,
+  MULTISIG_MSG_TYPE,
+  KexMessage,
+  MultisigSigner,
+  MultisigAccount,
+  MultisigTxSet,
+  MultisigPartialSig,
+  MultisigTxBuilder,
+  MultisigWallet,
+  getMultisigBlindedSecretKey,
+  computeDHSecret,
+  kexRoundsRequired,
+  generateMultisigNonces,
+  combineMultisigNonces,
+  createMultisigWallet,
+  prepareMultisig,
+  isMultisig
+} from './multisig.js';
+
+import {
+  WalletStorage,
+  WalletOutput,
+  WalletTransaction,
+  MemoryStorage,
+  IndexedDBStorage,
+  createStorage
+} from './wallet-store.js';
+
+import {
+  WalletSync,
+  createWalletSync,
+  SYNC_STATUS,
+  DEFAULT_BATCH_SIZE,
+  SYNC_UNLOCK_BLOCKS
+} from './wallet-sync.js';
+
+import {
+  PersistentWallet,
+  createPersistentWallet,
+  restorePersistentWallet,
+  openPersistentWallet
+} from './persistent-wallet.js';
 
 // Main API object
 const salvium = {
@@ -678,6 +821,27 @@ const salvium = {
   getBlockHash,
   computeMerkleRoot,
 
+  // UTXO Selection
+  UTXO_STRATEGY,
+  selectUTXOs,
+
+  // Transaction Building
+  buildTransaction,
+  signTransaction,
+  prepareInputs,
+  estimateTransactionFee,
+  validateTransaction,
+  serializeTransaction,
+
+  // Transaction Parsing
+  parseTransaction,
+  parseExtra,
+  decodeAmount,
+  extractTxPubKey,
+  extractPaymentId,
+  summarizeTransaction,
+  getTransactionHashFromParsed,
+
   // Bulletproofs+
   bytesToScalar,
   scalarToBytes,
@@ -741,7 +905,109 @@ const salvium = {
   randomxMine,
   randomx_init_cache,
   randomx_create_vm,
-  randomx_machine_id
+  randomx_machine_id,
+
+  // Wallet
+  Wallet,
+  WalletListener,
+  Account,
+  WALLET_TYPE,
+  TX_TYPE,
+  MAX_SUBADDRESS_MAJOR_INDEX,
+  MAX_SUBADDRESS_MINOR_INDEX,
+  createWallet,
+  restoreWallet,
+  createViewOnlyWallet,
+
+  // Query/Filter Objects
+  OutputQuery,
+  TxQuery,
+  TransferQuery,
+  createOutputQuery,
+  createTxQuery,
+  createTransferQuery,
+  // Query presets
+  unspentOutputs,
+  spentOutputs,
+  lockedOutputs,
+  unlockedOutputs,
+  stakingOutputs,
+  yieldOutputs,
+  incomingTxs,
+  outgoingTxs,
+  pendingTxs,
+  confirmedTxs,
+  stakingTxs,
+  yieldTxs,
+
+  // Connection Manager
+  ConnectionManager,
+  ConnectionInfo,
+  CONNECTION_STATE,
+  createDaemonConnectionManager,
+  createWalletConnectionManager,
+
+  // Offline Signing
+  UNSIGNED_TX_VERSION,
+  SIGNED_TX_VERSION,
+  createUnsignedTx,
+  parseUnsignedTx,
+  createSignedTx,
+  parseSignedTx,
+  exportUnsignedTx,
+  importUnsignedTx,
+  signOffline,
+  exportSignedTx,
+  importSignedTx,
+  getTxBlobHex,
+  exportKeyImagesOffline,
+  importKeyImagesOffline,
+  exportOutputs,
+  importOutputs,
+  verifyUnsignedTx,
+  summarizeUnsignedTx,
+
+  // Multisig
+  MULTISIG_MAX_SIGNERS,
+  MULTISIG_MIN_THRESHOLD,
+  MULTISIG_NONCE_COMPONENTS,
+  MULTISIG_MSG_TYPE,
+  KexMessage,
+  MultisigSigner,
+  MultisigAccount,
+  MultisigTxSet,
+  MultisigPartialSig,
+  MultisigTxBuilder,
+  MultisigWallet,
+  getMultisigBlindedSecretKey,
+  computeDHSecret,
+  kexRoundsRequired,
+  generateMultisigNonces,
+  combineMultisigNonces,
+  createMultisigWallet,
+  prepareMultisig,
+  isMultisig,
+
+  // Wallet Storage
+  WalletStorage,
+  WalletOutput,
+  WalletTransaction,
+  MemoryStorage,
+  IndexedDBStorage,
+  createStorage,
+
+  // Wallet Sync
+  WalletSync,
+  createWalletSync,
+  SYNC_STATUS,
+  DEFAULT_BATCH_SIZE,
+  SYNC_UNLOCK_BLOCKS,
+
+  // Persistent Wallet
+  PersistentWallet,
+  createPersistentWallet,
+  restorePersistentWallet,
+  openPersistentWallet
 };
 
 export default salvium;
