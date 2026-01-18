@@ -40,6 +40,13 @@ const tests = [
   { name: 'Transaction Builder Tests', file: 'transaction-builder.test.js' },
   { name: 'Wallet Class Tests', file: 'wallet-class.test.js' },
   { name: 'Transaction Parser Tests', file: 'transaction-parser.test.js' },
+  { name: 'Wallet Storage Tests', file: 'wallet-store.test.js' },
+  { name: 'Wallet Sync Tests', file: 'wallet-sync.test.js' },
+  { name: 'Query System Tests', file: 'query.test.js' },
+  { name: 'Connection Manager Tests', file: 'connection-manager.test.js' },
+  { name: 'Offline Signing Tests', file: 'offline.test.js' },
+  { name: 'Multisig Tests', file: 'multisig.test.js' },
+  { name: 'Persistent Wallet Tests', file: 'persistent-wallet.test.js' },
 ];
 
 if (runIntegration) {
