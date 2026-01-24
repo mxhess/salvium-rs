@@ -74,9 +74,11 @@ export function parseAddress(address) {
   }
 
   // Decode the address
-  const decoded = decodeAddress(address);
-  if (decoded === null) {
-    result.error = 'Invalid Base58 encoding or checksum';
+  let decoded;
+  try {
+    decoded = decodeAddress(address);
+  } catch (e) {
+    result.error = e.message;
     return result;
   }
 
@@ -256,24 +258,33 @@ export function createAddress(options) {
   const { network, format, type, spendPublicKey, viewPublicKey, paymentId } = options;
 
   // Validate keys
-  if (!spendPublicKey || spendPublicKey.length !== KEY_SIZE) {
-    return null;
+  if (!spendPublicKey) {
+    throw new Error('createAddress: spendPublicKey is required');
   }
-  if (!viewPublicKey || viewPublicKey.length !== KEY_SIZE) {
-    return null;
+  if (spendPublicKey.length !== KEY_SIZE) {
+    throw new Error(`createAddress: spendPublicKey must be ${KEY_SIZE} bytes, got ${spendPublicKey.length}`);
+  }
+  if (!viewPublicKey) {
+    throw new Error('createAddress: viewPublicKey is required');
+  }
+  if (viewPublicKey.length !== KEY_SIZE) {
+    throw new Error(`createAddress: viewPublicKey must be ${KEY_SIZE} bytes, got ${viewPublicKey.length}`);
   }
 
   // Get prefix
   const prefix = getPrefix(network, format, type);
   if (prefix === null) {
-    return null;
+    throw new Error(`createAddress: invalid network/format/type combination: ${network}/${format}/${type}`);
   }
 
   // Build data
   let data;
   if (type === ADDRESS_TYPE.INTEGRATED) {
-    if (!paymentId || paymentId.length !== PAYMENT_ID_SIZE) {
-      return null;
+    if (!paymentId) {
+      throw new Error('createAddress: paymentId is required for integrated addresses');
+    }
+    if (paymentId.length !== PAYMENT_ID_SIZE) {
+      throw new Error(`createAddress: paymentId must be ${PAYMENT_ID_SIZE} bytes, got ${paymentId.length}`);
     }
     data = new Uint8Array(KEY_SIZE * 2 + PAYMENT_ID_SIZE);
     data.set(spendPublicKey, 0);
@@ -292,19 +303,23 @@ export function createAddress(options) {
  * Convert a standard address to an integrated address by adding a payment ID
  * @param {string} address - Standard address
  * @param {Uint8Array|string} paymentId - 8-byte payment ID (or 16-char hex string)
- * @returns {string|null} - Integrated address or null on error
+ * @returns {string} - Integrated address
+ * @throws {Error} If address is invalid or not a standard address
  */
 export function toIntegratedAddress(address, paymentId) {
   const parsed = parseAddress(address);
 
-  if (!parsed.valid || parsed.type !== ADDRESS_TYPE.STANDARD) {
-    return null;
+  if (!parsed.valid) {
+    throw new Error(`toIntegratedAddress: invalid address - ${parsed.error}`);
+  }
+  if (parsed.type !== ADDRESS_TYPE.STANDARD) {
+    throw new Error(`toIntegratedAddress: address must be a standard address, got ${parsed.type}`);
   }
 
   // Convert hex string to bytes if needed
   if (typeof paymentId === 'string') {
     if (paymentId.length !== 16) {
-      return null;
+      throw new Error(`toIntegratedAddress: payment ID hex string must be 16 characters, got ${paymentId.length}`);
     }
     const bytes = new Uint8Array(8);
     for (let i = 0; i < 8; i++) {
@@ -314,7 +329,7 @@ export function toIntegratedAddress(address, paymentId) {
   }
 
   if (paymentId.length !== PAYMENT_ID_SIZE) {
-    return null;
+    throw new Error(`toIntegratedAddress: payment ID must be ${PAYMENT_ID_SIZE} bytes, got ${paymentId.length}`);
   }
 
   return createAddress({
@@ -330,13 +345,17 @@ export function toIntegratedAddress(address, paymentId) {
 /**
  * Extract the standard address from an integrated address
  * @param {string} address - Integrated address
- * @returns {string|null} - Standard address or null on error
+ * @returns {string} - Standard address
+ * @throws {Error} If address is invalid or not an integrated address
  */
 export function toStandardAddress(address) {
   const parsed = parseAddress(address);
 
-  if (!parsed.valid || parsed.type !== ADDRESS_TYPE.INTEGRATED) {
-    return null;
+  if (!parsed.valid) {
+    throw new Error(`toStandardAddress: invalid address - ${parsed.error}`);
+  }
+  if (parsed.type !== ADDRESS_TYPE.INTEGRATED) {
+    throw new Error(`toStandardAddress: address must be an integrated address, got ${parsed.type}`);
   }
 
   return createAddress({
@@ -486,15 +505,12 @@ export function generateRandomPaymentId() {
 /**
  * Create an integrated address with a random payment ID
  * @param {string} address - Standard address
- * @returns {Object} { address, paymentId } - Integrated address and its payment ID
+ * @returns {Object} { address, paymentId, paymentIdHex } - Integrated address and its payment ID
+ * @throws {Error} If address is invalid or not a standard address
  */
 export function createIntegratedAddressWithRandomId(address) {
   const paymentId = genPaymentId();
   const integratedAddress = toIntegratedAddress(address, paymentId);
-
-  if (!integratedAddress) {
-    return null;
-  }
 
   return {
     address: integratedAddress,

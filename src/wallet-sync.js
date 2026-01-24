@@ -1181,14 +1181,20 @@ export class WalletSync {
     }
 
     // Scan with CARROT algorithm
-    const result = scanCarrotOutput(
-      outputForScan,
-      this.carrotKeys.viewIncomingKey,
-      this.carrotKeys.accountSpendPubkey,
-      inputContext,
-      this.carrotSubaddresses,
-      amountCommitment
-    );
+    let result;
+    try {
+      result = scanCarrotOutput(
+        outputForScan,
+        this.carrotKeys.viewIncomingKey,
+        this.carrotKeys.accountSpendPubkey,
+        inputContext,
+        this.carrotSubaddresses,
+        amountCommitment
+      );
+    } catch (e) {
+      // Missing required fields in CARROT output - skip this output
+      return null;
+    }
 
     if (!result) {
       return null;

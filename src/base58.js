@@ -76,12 +76,14 @@ function encodeBlock(block) {
 /**
  * Decode a single Base58 block to bytes
  * @param {string} block - Base58 encoded block
- * @returns {Uint8Array|null} - Decoded bytes or null on error
+ * @param {number} blockIndex - Block index for error messages
+ * @returns {Uint8Array} - Decoded bytes
+ * @throws {Error} If block is invalid
  */
-function decodeBlock(block) {
+function decodeBlock(block, blockIndex = 0) {
   const decodedSize = DECODED_BLOCK_SIZES.get(block.length);
   if (decodedSize === undefined || decodedSize < 0) {
-    return null; // Invalid block size
+    throw new Error(`Base58 decode: invalid block size ${block.length} at block ${blockIndex}`);
   }
 
   if (decodedSize === 0) {
@@ -94,14 +96,14 @@ function decodeBlock(block) {
   for (let i = 0; i < block.length; i++) {
     const digit = ALPHABET_MAP.get(block[i]);
     if (digit === undefined) {
-      return null; // Invalid character
+      throw new Error(`Base58 decode: invalid character '${block[i]}' at position ${i} in block ${blockIndex}`);
     }
     num = num * base + BigInt(digit);
   }
 
   // Check for overflow
   if (decodedSize < BASE58_FULL_BLOCK_SIZE && num >= (1n << BigInt(8 * decodedSize))) {
-    return null; // Overflow
+    throw new Error(`Base58 decode: numeric overflow in block ${blockIndex}`);
   }
 
   return uint64ToUint8BE(num, decodedSize);
@@ -144,7 +146,8 @@ export function encode(data) {
 /**
  * Decode Base58 string to binary data (CryptoNote variant)
  * @param {string} encoded - Base58 encoded string
- * @returns {Uint8Array|null} - Decoded binary data or null on error
+ * @returns {Uint8Array} - Decoded binary data
+ * @throws {Error} If string is not valid Base58
  */
 export function decode(encoded) {
   if (encoded.length === 0) {
@@ -156,7 +159,7 @@ export function decode(encoded) {
   const lastBlockDecodedSize = DECODED_BLOCK_SIZES.get(lastBlockSize);
 
   if (lastBlockDecodedSize === undefined || lastBlockDecodedSize < 0) {
-    return null; // Invalid encoded length
+    throw new Error(`Base58 decode: invalid encoded length ${encoded.length} (last block size ${lastBlockSize} is invalid)`);
   }
 
   const dataSize = fullBlockCount * BASE58_FULL_BLOCK_SIZE + lastBlockDecodedSize;
@@ -167,10 +170,7 @@ export function decode(encoded) {
   // Decode full blocks
   for (let i = 0; i < fullBlockCount; i++) {
     const block = encoded.slice(i * BASE58_FULL_ENCODED_BLOCK_SIZE, (i + 1) * BASE58_FULL_ENCODED_BLOCK_SIZE);
-    const decoded = decodeBlock(block);
-    if (decoded === null) {
-      return null;
-    }
+    const decoded = decodeBlock(block, i);
     result.set(decoded, offset);
     offset += BASE58_FULL_BLOCK_SIZE;
   }
@@ -178,10 +178,7 @@ export function decode(encoded) {
   // Decode last partial block
   if (lastBlockSize > 0) {
     const block = encoded.slice(fullBlockCount * BASE58_FULL_ENCODED_BLOCK_SIZE);
-    const decoded = decodeBlock(block);
-    if (decoded === null) {
-      return null;
-    }
+    const decoded = decodeBlock(block, fullBlockCount);
     result.set(decoded, offset);
   }
 
@@ -209,9 +206,14 @@ export function encodeVarint(value) {
 /**
  * Decode a varint from the start of data
  * @param {Uint8Array} data - Data containing varint
- * @returns {{value: BigInt, bytesRead: number}|null} - Decoded value and bytes consumed
+ * @returns {{value: BigInt, bytesRead: number}} - Decoded value and bytes consumed
+ * @throws {Error} If varint is invalid or incomplete
  */
 export function decodeVarint(data) {
+  if (!data || data.length === 0) {
+    throw new Error('decodeVarint: empty data');
+  }
+
   let value = 0n;
   let shift = 0n;
   let bytesRead = 0;
@@ -228,7 +230,7 @@ export function decodeVarint(data) {
     shift += 7n;
   }
 
-  return null; // Varint too long or incomplete
+  throw new Error(`decodeVarint: varint incomplete or too long (read ${bytesRead} bytes without termination)`);
 }
 
 /**
@@ -259,12 +261,13 @@ export function encodeAddress(tag, data) {
 /**
  * Decode an address, verifying checksum and extracting tag and data
  * @param {string} address - Base58 encoded address
- * @returns {{tag: BigInt, data: Uint8Array}|null} - Decoded tag and data, or null on error
+ * @returns {{tag: BigInt, data: Uint8Array}} - Decoded tag and data
+ * @throws {Error} If address is invalid or checksum fails
  */
 export function decodeAddress(address) {
   const decoded = decode(address);
-  if (decoded === null || decoded.length <= 4) {
-    return null;
+  if (decoded.length <= 4) {
+    throw new Error(`decodeAddress: address too short (${decoded.length} bytes, need >4)`);
   }
 
   // Extract checksum
@@ -277,17 +280,12 @@ export function decodeAddress(address) {
 
   for (let i = 0; i < 4; i++) {
     if (checksum[i] !== expectedChecksum[i]) {
-      return null; // Checksum mismatch
+      throw new Error('decodeAddress: checksum mismatch - address may be corrupted or invalid');
     }
   }
 
   // Decode varint tag
-  const varintResult = decodeVarint(payload);
-  if (varintResult === null) {
-    return null;
-  }
-
-  const { value: tag, bytesRead } = varintResult;
+  const { value: tag, bytesRead } = decodeVarint(payload);
   const data = payload.slice(bytesRead);
 
   return { tag, data };

@@ -79,6 +79,18 @@ function assertLength(value, length, message = '') {
   }
 }
 
+function assertThrows(fn, message = '') {
+  try {
+    fn();
+    throw new Error(`${message} Expected function to throw, but it did not`);
+  } catch (e) {
+    if (e.message.includes('Expected function to throw')) {
+      throw e;
+    }
+    // Function threw as expected
+  }
+}
+
 // ============================================================
 // Seed Generation Tests
 // ============================================================
@@ -178,15 +190,16 @@ test('createAddress creates valid stagenet address', () => {
   assertTrue(isStagenet(addr));
 });
 
-test('createAddress returns null for invalid keys', () => {
-  const addr = createAddress({
-    network: NETWORK.MAINNET,
-    format: ADDRESS_FORMAT.LEGACY,
-    type: ADDRESS_TYPE.STANDARD,
-    spendPublicKey: new Uint8Array(31), // Wrong length
-    viewPublicKey: testKeys.viewPublicKey
+test('createAddress throws for invalid keys', () => {
+  assertThrows(() => {
+    createAddress({
+      network: NETWORK.MAINNET,
+      format: ADDRESS_FORMAT.LEGACY,
+      type: ADDRESS_TYPE.STANDARD,
+      spendPublicKey: new Uint8Array(31), // Wrong length
+      viewPublicKey: testKeys.viewPublicKey
+    });
   });
-  assertEqual(addr, null);
 });
 
 test('createAddress round-trips correctly', () => {
@@ -255,7 +268,7 @@ test('toIntegratedAddress preserves payment ID', () => {
   assertEqual(bytesToHex(parsed.paymentId), paymentIdHex);
 });
 
-test('toIntegratedAddress returns null for integrated address input', () => {
+test('toIntegratedAddress throws for integrated address input', () => {
   const standardAddr = createAddress({
     network: NETWORK.MAINNET,
     format: ADDRESS_FORMAT.LEGACY,
@@ -264,9 +277,10 @@ test('toIntegratedAddress returns null for integrated address input', () => {
     viewPublicKey: testKeys.viewPublicKey
   });
   const integrated = toIntegratedAddress(standardAddr, 'deadbeef12345678');
-  const doubleIntegrated = toIntegratedAddress(integrated, 'abcdef0123456789');
 
-  assertEqual(doubleIntegrated, null);
+  assertThrows(() => {
+    toIntegratedAddress(integrated, 'abcdef0123456789');
+  });
 });
 
 test('toStandardAddress extracts standard from integrated', () => {
@@ -283,7 +297,7 @@ test('toStandardAddress extracts standard from integrated', () => {
   assertEqual(extracted, standardAddr);
 });
 
-test('toStandardAddress returns null for non-integrated', () => {
+test('toStandardAddress throws for non-integrated', () => {
   const standardAddr = createAddress({
     network: NETWORK.MAINNET,
     format: ADDRESS_FORMAT.LEGACY,
@@ -291,9 +305,10 @@ test('toStandardAddress returns null for non-integrated', () => {
     spendPublicKey: testKeys.spendPublicKey,
     viewPublicKey: testKeys.viewPublicKey
   });
-  const result = toStandardAddress(standardAddr);
 
-  assertEqual(result, null);
+  assertThrows(() => {
+    toStandardAddress(standardAddr);
+  });
 });
 
 test('createIntegratedAddressWithRandomId works', () => {

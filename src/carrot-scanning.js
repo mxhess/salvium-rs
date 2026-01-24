@@ -627,8 +627,14 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     console.log(`  accountSpendPubkey: ${accountSpendPubkey ? 'SET' : 'NULL'}`);
   }
 
-  if (!onetimeAddress || !viewTag || !enoteEphemeralPubkey) {
-    return null; // Missing required CARROT fields
+  if (!onetimeAddress) {
+    throw new Error('scanCarrotOutput: onetimeAddress is required');
+  }
+  if (!viewTag) {
+    throw new Error('scanCarrotOutput: viewTag is required');
+  }
+  if (!enoteEphemeralPubkey) {
+    throw new Error('scanCarrotOutput: enoteEphemeralPubkey is required');
   }
 
   // 1. Compute uncontextualized shared secret using X25519

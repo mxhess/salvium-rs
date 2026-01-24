@@ -185,8 +185,7 @@ import {
 
 import {
   verifySignature,
-  parseSignature,
-  testEd25519
+  parseSignature
 } from './signature.js';
 
 import {

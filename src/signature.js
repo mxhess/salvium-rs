@@ -12,15 +12,14 @@
 
 import { keccak256 } from './keccak.js';
 import { decode } from './base58.js';
-import { parseAddress, hexToBytes } from './address.js';
+import { parseAddress } from './address.js';
 import {
   scalarCheck,
   scalarIsNonzero,
   scalarSub,
   pointFromBytes,
   doubleScalarMultBase,
-  isIdentity,
-  scalarMultBase
+  isIdentity
 } from './ed25519.js';
 
 // Domain separator for V2 signatures (includes null terminator)
@@ -60,21 +59,8 @@ function getMessageHashV1(message) {
  * @returns {Uint8Array} 32-byte hash
  */
 function getMessageHashV2(message, spendKey, viewKey, mode) {
-  // Debug helper
-  const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
   const messageBytes = new TextEncoder().encode(message);
   const lenVarint = encodeVarint(messageBytes.length);
-
-  console.log('=== V2 Hash Construction ===');
-  console.log('Domain sep length:', HASH_KEY_MESSAGE_SIGNING.length);
-  console.log('Domain sep:', bytesToHex(HASH_KEY_MESSAGE_SIGNING));
-  console.log('Spend key:', bytesToHex(spendKey));
-  console.log('View key:', bytesToHex(viewKey));
-  console.log('Mode:', mode);
-  console.log('Message length:', messageBytes.length);
-  console.log('Len varint:', bytesToHex(lenVarint));
-  console.log('Message bytes:', bytesToHex(messageBytes));
 
   // Concatenate: domain_separator + spend_key + view_key + mode + len + message
   const totalLen = HASH_KEY_MESSAGE_SIGNING.length + 32 + 32 + 1 + lenVarint.length + messageBytes.length;
@@ -97,11 +83,7 @@ function getMessageHashV2(message, spendKey, viewKey, mode) {
 
   data.set(messageBytes, offset);
 
-  const hash = keccak256(data);
-  console.log('Total data length:', data.length);
-  console.log('V2 hash result:', bytesToHex(hash));
-
-  return hash;
+  return keccak256(data);
 }
 
 /**
@@ -116,37 +98,22 @@ function getMessageHashV2(message, spendKey, viewKey, mode) {
  * @returns {boolean} true if signature is valid
  */
 function checkSignature(hash, publicKey, sigC, sigR) {
-  // Import bytesToHex for debugging
-  const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-  console.log('=== checkSignature ===');
-  console.log('hash (message hash):', bytesToHex(hash));
-  console.log('publicKey:', bytesToHex(publicKey));
-  console.log('sigC:', bytesToHex(sigC));
-  console.log('sigR:', bytesToHex(sigR));
-
   // Validate scalars
   if (!scalarCheck(sigC) || !scalarCheck(sigR) || !scalarIsNonzero(sigC)) {
-    console.log('Scalar validation failed');
     return false;
   }
-  console.log('Scalar validation passed');
 
   // Decompress public key
   const P = pointFromBytes(publicKey);
   if (!P) {
-    console.log('Failed to decompress public key');
     return false;
   }
-  console.log('Public key decompressed successfully');
 
   // Compute R' = c*P + r*G using double scalar multiplication
   const RBytes = doubleScalarMultBase(sigC, P, sigR);
-  console.log('R\' computed:', bytesToHex(RBytes));
 
   // Check R' is not identity
   if (isIdentity(RBytes)) {
-    console.log('R\' is identity point');
     return false;
   }
 
@@ -158,19 +125,14 @@ function checkSignature(hash, publicKey, sigC, sigR) {
   buf.set(RBytes, 64);
 
   const cPrime = keccak256(buf);
-  console.log('cPrime (raw hash) H(m||P||R):', bytesToHex(cPrime));
 
   // Reduce c' mod L
   const cPrimeReduced = new Uint8Array(32);
   reduceScalar32(cPrimeReduced, cPrime);
-  console.log('cPrime (reduced):', bytesToHex(cPrimeReduced));
-  console.log('sigC (expected):', bytesToHex(sigC));
 
   // Check c' == c
   const diff = new Uint8Array(32);
   scalarSub(diff, cPrimeReduced, sigC);
-  console.log('diff:', bytesToHex(diff));
-  console.log('diff nonzero:', scalarIsNonzero(diff));
 
   return !scalarIsNonzero(diff);
 }
@@ -212,89 +174,6 @@ function reduceScalar32(r, x) {
  *   - keyType: string - 'spend' or 'view' (which key was used to sign)
  *   - error: string|null - error message if invalid
  */
-// Test function to verify Ed25519 and Keccak are working
-export function testEd25519() {
-  const bytesToHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-
-  // Test 1: Verify 2*G (this is the key test - if this works, Ed25519 is correct)
-  const two = new Uint8Array(32);
-  two[0] = 2;
-  const twoG = scalarMultBase(two);
-  const twoGHex = bytesToHex(twoG);
-  const twoGExpected = 'c9a3f86aae465f0e56513864510f3997561fa2c9e85ea21dc2292309f3cd6022';
-  console.log('2*G =', twoGHex);
-  console.log('2*G expected:', twoGExpected);
-  console.log('2*G match:', twoGHex === twoGExpected);
-
-  // Test 2: Verify Keccak-256
-  // Known test vector: Keccak256("") = c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
-  const emptyHash = keccak256(new Uint8Array(0));
-  const emptyHashHex = bytesToHex(emptyHash);
-  const emptyHashExpected = 'c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470';
-  console.log('Keccak256("") =', emptyHashHex);
-  console.log('Expected:', emptyHashExpected);
-  console.log('Keccak match:', emptyHashHex === emptyHashExpected);
-
-  // Test 3: Keccak of "test"
-  const testHash = keccak256(new TextEncoder().encode('test'));
-  const testHashHex = bytesToHex(testHash);
-  // Keccak256("test") = 9c22ff5f21f0b81b113e63f7db6da94fedef11b2119b4088b89664fb9a3cb658
-  const testHashExpected = '9c22ff5f21f0b81b113e63f7db6da94fedef11b2119b4088b89664fb9a3cb658';
-  console.log('Keccak256("test") =', testHashHex);
-  console.log('Expected:', testHashExpected);
-  console.log('Keccak test match:', testHashHex === testHashExpected);
-
-  // Test 4: Point decompression roundtrip
-  // Compress 2*G, decompress it, recompress, should match
-  const twoGDecompressed = pointFromBytes(twoG);
-  if (twoGDecompressed) {
-    // Need to access pointToBytes - let me export it
-    console.log('2*G decompression: success');
-  } else {
-    console.log('2*G decompression: FAILED');
-  }
-
-  // Test 5: Test with the actual public key from the signature test
-  const testPubKey = new Uint8Array([
-    0x28, 0x97, 0x3e, 0x82, 0x1c, 0xc2, 0xf2, 0xde,
-    0x5e, 0x68, 0x9a, 0xd6, 0x1c, 0x4d, 0xda, 0xd4,
-    0x8a, 0x1b, 0xac, 0x77, 0xf1, 0x94, 0x43, 0x97,
-    0xe0, 0x6e, 0x90, 0xf7, 0xd6, 0x5f, 0xda, 0xd1
-  ]);
-  const pubKeyPoint = pointFromBytes(testPubKey);
-  console.log('Public key decompression:', pubKeyPoint ? 'success' : 'FAILED');
-
-  // Test 6: Double scalar mult: verify 3*G + 5*G = 8*G
-  const three = new Uint8Array(32); three[0] = 3;
-  const five = new Uint8Array(32); five[0] = 5;
-  const eight = new Uint8Array(32); eight[0] = 8;
-
-  const threeG = scalarMultBase(three);
-  const threeGPoint = pointFromBytes(threeG);
-  const result = doubleScalarMultBase(three, threeGPoint, five);  // 3*(3G) + 5*G = 9G + 5G = 14G? No wait...
-
-  // Actually test: a*G + b*G = (a+b)*G using G as the point
-  // doubleScalarMultBase(a, P, b) = a*P + b*G
-  // If P = G, then a*G + b*G = (a+b)*G
-  const oneScalar = new Uint8Array(32); oneScalar[0] = 1;
-  const Gcompressed = scalarMultBase(oneScalar);
-  const Gpoint = pointFromBytes(Gcompressed);
-
-  // 3*G + 5*G should equal 8*G
-  const sumResult = doubleScalarMultBase(three, Gpoint, five);
-  const eightG = scalarMultBase(eight);
-
-  console.log('3*G + 5*G =', bytesToHex(sumResult));
-  console.log('8*G =      ', bytesToHex(eightG));
-  console.log('Double scalar mult match:', bytesToHex(sumResult) === bytesToHex(eightG));
-
-  return {
-    ed25519OK: twoGHex === twoGExpected,
-    keccakOK: emptyHashHex === emptyHashExpected && testHashHex === testHashExpected,
-    doubleScalarOK: bytesToHex(sumResult) === bytesToHex(eightG)
-  };
-}
-
 export function verifySignature(message, address, signature) {
   // Parse signature header
   const isV1 = signature.startsWith('SigV1');

@@ -129,6 +129,14 @@ export function generateKeyDerivation(txPubKey, viewSecretKey) {
     viewSecretKey = hexToBytes(viewSecretKey);
   }
 
+  // Validate inputs
+  if (!txPubKey || txPubKey.length !== 32) {
+    throw new Error(`generateKeyDerivation: txPubKey must be 32 bytes, got ${txPubKey?.length ?? 'null'}`);
+  }
+  if (!viewSecretKey || viewSecretKey.length !== 32) {
+    throw new Error(`generateKeyDerivation: viewSecretKey must be 32 bytes, got ${viewSecretKey?.length ?? 'null'}`);
+  }
+
   try {
     // Convert scalar to BigInt (little-endian)
     let scalar = 0n;
@@ -147,10 +155,16 @@ export function generateKeyDerivation(txPubKey, viewSecretKey) {
   } catch (e) {
     // Fallback to original implementation
     const result = scalarMultPoint(viewSecretKey, txPubKey);
-    if (!result) return null;
+    if (!result) {
+      throw new Error(`generateKeyDerivation: point multiplication failed - ${e.message}`);
+    }
     const eight = new Uint8Array(32);
     eight[0] = 8;
-    return scalarMultPoint(eight, result);
+    const cofactorResult = scalarMultPoint(eight, result);
+    if (!cofactorResult) {
+      throw new Error('generateKeyDerivation: cofactor multiplication failed');
+    }
+    return cofactorResult;
   }
 }
 
@@ -261,23 +275,29 @@ export function deriveSubaddressPublicKey(outputKey, derivation, outputIndex) {
   }
 
   // Validate inputs
-  if (!outputKey || !(outputKey instanceof Uint8Array) || outputKey.length !== 32) {
-    return null;
+  if (!outputKey || !(outputKey instanceof Uint8Array)) {
+    throw new Error('deriveSubaddressPublicKey: outputKey must be a Uint8Array');
   }
-  if (!derivation || !(derivation instanceof Uint8Array) || derivation.length !== 32) {
-    return null;
+  if (outputKey.length !== 32) {
+    throw new Error(`deriveSubaddressPublicKey: outputKey must be 32 bytes, got ${outputKey.length}`);
+  }
+  if (!derivation || !(derivation instanceof Uint8Array)) {
+    throw new Error('deriveSubaddressPublicKey: derivation must be a Uint8Array');
+  }
+  if (derivation.length !== 32) {
+    throw new Error(`deriveSubaddressPublicKey: derivation must be 32 bytes, got ${derivation.length}`);
   }
 
   // scalar = H_s(derivation || output_index)
   const scalar = derivationToScalar(derivation, outputIndex);
   if (!scalar) {
-    return null;
+    throw new Error('deriveSubaddressPublicKey: derivationToScalar failed');
   }
 
   // scalar * G
   const scalarG = scalarMultBase(scalar);
   if (!scalarG || scalarG.length !== 32) {
-    return null;
+    throw new Error('deriveSubaddressPublicKey: scalarMultBase failed');
   }
 
   // Negate the point (subtract instead of add)
@@ -521,27 +541,30 @@ export function checkSubaddressOwnership(outputPubKey, txPubKey, viewSecretKey, 
     outputPubKey = hexToBytes(outputPubKey);
   }
 
-  // Compute key derivation
-  const derivation = generateKeyDerivation(txPubKey, viewSecretKey);
-  if (!derivation) return null;
+  try {
+    // Compute key derivation
+    const derivation = generateKeyDerivation(txPubKey, viewSecretKey);
 
-  // For subaddress, we compute: derived = outputKey - scalar*G
-  // Then check if derived matches any known subaddress spend key
-  const derivedSpendKey = deriveSubaddressPublicKey(outputPubKey, derivation, outputIndex);
-  if (!derivedSpendKey) return null;
+    // For subaddress, we compute: derived = outputKey - scalar*G
+    // Then check if derived matches any known subaddress spend key
+    const derivedSpendKey = deriveSubaddressPublicKey(outputPubKey, derivation, outputIndex);
 
-  const derivedHex = bytesToHex(derivedSpendKey);
-  const subaddressInfo = subaddressSpendKeys.get(derivedHex);
+    const derivedHex = bytesToHex(derivedSpendKey);
+    const subaddressInfo = subaddressSpendKeys.get(derivedHex);
 
-  if (subaddressInfo) {
-    return {
-      major: subaddressInfo.major,
-      minor: subaddressInfo.minor,
-      derivation
-    };
+    if (subaddressInfo) {
+      return {
+        major: subaddressInfo.major,
+        minor: subaddressInfo.minor,
+        derivation
+      };
+    }
+
+    return null; // Not our subaddress
+  } catch (e) {
+    // Crypto operation failed - this output isn't valid for our keys
+    return null;
   }
-
-  return null;
 }
 
 // ============================================================================
@@ -559,9 +582,14 @@ export function checkSubaddressOwnership(outputPubKey, txPubKey, viewSecretKey, 
  * @returns {Object|null} Scan result with derivation, amount, etc.
  */
 export function scanOutput(output, txPubKey, viewSecretKey, spendPubKey, outputIndex) {
-  // Compute key derivation
-  const derivation = generateKeyDerivation(txPubKey, viewSecretKey);
-  if (!derivation) return null;
+  let derivation;
+  try {
+    // Compute key derivation
+    derivation = generateKeyDerivation(txPubKey, viewSecretKey);
+  } catch (e) {
+    // Key derivation failed - cannot be our output
+    return null;
+  }
 
   // Check view tag first (if available) for optimization
   if (output.view_tag !== undefined) {
@@ -572,7 +600,13 @@ export function scanOutput(output, txPubKey, viewSecretKey, spendPubKey, outputI
   }
 
   // Derive expected output public key
-  const expectedPubKey = derivePublicKey(derivation, outputIndex, spendPubKey);
+  let expectedPubKey;
+  try {
+    expectedPubKey = derivePublicKey(derivation, outputIndex, spendPubKey);
+  } catch (e) {
+    // Key derivation failed - cannot be our output
+    return null;
+  }
   if (!expectedPubKey) return null;
 
   // Compare with actual output key

@@ -11,6 +11,36 @@
  */
 
 import { keccak256, keccak256Hex } from './keccak.js';
+
+// =============================================================================
+// ERROR CLASSES
+// =============================================================================
+
+/**
+ * Error thrown when parsing fails
+ * Provides detailed context about what went wrong and where
+ */
+export class ParseError extends Error {
+  constructor(message, context = {}) {
+    super(message);
+    this.name = 'ParseError';
+    this.offset = context.offset;
+    this.field = context.field;
+    this.expected = context.expected;
+    this.actual = context.actual;
+    this.dataLength = context.dataLength;
+  }
+
+  toString() {
+    let msg = `ParseError: ${this.message}`;
+    if (this.field) msg += ` [field: ${this.field}]`;
+    if (this.offset !== undefined) msg += ` [offset: ${this.offset}]`;
+    if (this.dataLength !== undefined) msg += ` [dataLength: ${this.dataLength}]`;
+    if (this.expected !== undefined) msg += ` [expected: ${this.expected}]`;
+    if (this.actual !== undefined) msg += ` [actual: ${this.actual}]`;
+    return msg;
+  }
+}
 import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorG } from './ed25519.js';
 import { generateKeyDerivation, derivationToScalar, derivePublicKey, deriveSecretKey } from './scanning.js';
 import { hashToPoint, generateKeyImage } from './keyimage.js';
@@ -4111,14 +4141,20 @@ function parseRingCtSignature(data, startOffset, inputCount, outputCount, mixin 
   // Parse prunable data (bulletproofs + CLSAGs) with bounds checking
   // The prunable section follows the base section
   if (offset < data.length && type !== RCT_TYPE.Null) {
-    const prunable = parseRctSigPrunable(data, offset, type, inputCount, outputCount, mixin);
-    if (prunable) {
+    try {
+      const prunable = parseRctSigPrunable(data, offset, type, inputCount, outputCount, mixin);
       rct.bulletproofPlus = prunable.bulletproofPlus;
       rct.CLSAGs = prunable.CLSAGs;
       rct.TCLSAGs = prunable.TCLSAGs;
       rct.pseudoOuts = prunable.pseudoOuts;
       if (prunable._endOffset) {
         offset = prunable._endOffset;
+      }
+    } catch (e) {
+      if (e instanceof ParseError) {
+        rct.prunable_parse_error = e.toString();
+      } else {
+        rct.prunable_parse_error = `Unexpected error parsing prunable: ${e.message}`;
       }
     }
   }
@@ -4302,18 +4338,29 @@ function parseSalviumData(data, startOffset, full = true) {
 function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, mixin) {
   let offset = startOffset;
 
-  // Bounds check helper
-  const canRead = (count) => offset + count <= data.length;
-
-  const readBytes = (count) => {
-    if (!canRead(count)) return null;
+  const readBytes = (count, fieldName) => {
+    if (offset + count > data.length) {
+      throw new ParseError(`Unexpected end of data reading ${fieldName}`, {
+        field: fieldName,
+        offset,
+        expected: count,
+        actual: data.length - offset,
+        dataLength: data.length
+      });
+    }
     const result = data.slice(offset, offset + count);
     offset += count;
     return result;
   };
 
-  const readVarint = () => {
-    if (offset >= data.length) return null;
+  const readVarint = (fieldName) => {
+    if (offset >= data.length) {
+      throw new ParseError(`Unexpected end of data reading varint for ${fieldName}`, {
+        field: fieldName,
+        offset,
+        dataLength: data.length
+      });
+    }
     const { value, bytesRead } = decodeVarint(data, offset);
     offset += bytesRead;
     return value;
@@ -4323,36 +4370,44 @@ function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, m
 
   // For BulletproofPlus types (6, 7, 8, 9), parse BulletproofPlus
   if (type >= RCT_TYPE.BulletproofPlus) {
-    const nbp = readVarint();
-    if (nbp === null || nbp > 1000) return null; // Sanity check
+    const nbp = readVarint('bulletproofPlus count');
+    if (nbp > 1000) {
+      throw new ParseError('Invalid bulletproofPlus count', {
+        field: 'bulletproofPlus count',
+        offset,
+        expected: '<=1000',
+        actual: nbp
+      });
+    }
 
     result.bulletproofPlus = [];
     for (let i = 0; i < nbp; i++) {
-      const A = readBytes(32);
-      const A1 = readBytes(32);
-      const B = readBytes(32);
-      const r1 = readBytes(32);
-      const s1 = readBytes(32);
-      const d1 = readBytes(32);
-
-      if (!d1) return null; // Ran out of data
+      const A = readBytes(32, `bulletproofPlus[${i}].A`);
+      const A1 = readBytes(32, `bulletproofPlus[${i}].A1`);
+      const B = readBytes(32, `bulletproofPlus[${i}].B`);
+      const r1 = readBytes(32, `bulletproofPlus[${i}].r1`);
+      const s1 = readBytes(32, `bulletproofPlus[${i}].s1`);
+      const d1 = readBytes(32, `bulletproofPlus[${i}].d1`);
 
       // L array
-      const Lcount = readVarint();
-      if (Lcount === null || Lcount > 64) return null; // Sanity check (log2(2^64) = 64 max)
+      const Lcount = readVarint(`bulletproofPlus[${i}].L count`);
+      if (Lcount > 64) {
+        throw new ParseError('Invalid L array count in bulletproofPlus', {
+          field: `bulletproofPlus[${i}].L count`,
+          offset,
+          expected: '<=64',
+          actual: Lcount
+        });
+      }
       const L = [];
       for (let j = 0; j < Lcount; j++) {
-        const key = readBytes(32);
-        if (!key) return null;
-        L.push(key);
+        L.push(readBytes(32, `bulletproofPlus[${i}].L[${j}]`));
       }
 
       // R array (same size as L)
       const R = [];
       for (let j = 0; j < Lcount; j++) {
-        const key = readBytes(32);
-        if (!key) return null;
-        R.push(key);
+        R.push(readBytes(32, `bulletproofPlus[${i}].R[${j}]`));
       }
 
       result.bulletproofPlus.push({ A, A1, B, r1, s1, d1, L, R });
@@ -4370,22 +4425,17 @@ function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, m
       // sx array: mixin + 1 elements, NO size prefix
       const sx = [];
       for (let j = 0; j < ringSize; j++) {
-        const key = readBytes(32);
-        if (!key) return null;
-        sx.push(key);
+        sx.push(readBytes(32, `TCLSAG[${i}].sx[${j}]`));
       }
 
       // sy array: mixin + 1 elements, NO size prefix
       const sy = [];
       for (let j = 0; j < ringSize; j++) {
-        const key = readBytes(32);
-        if (!key) return null;
-        sy.push(key);
+        sy.push(readBytes(32, `TCLSAG[${i}].sy[${j}]`));
       }
 
-      const c1 = readBytes(32);
-      const D = readBytes(32);
-      if (!D) return null;
+      const c1 = readBytes(32, `TCLSAG[${i}].c1`);
+      const D = readBytes(32, `TCLSAG[${i}].D`);
 
       result.TCLSAGs.push({ sx, sy, c1, D });
     }
@@ -4396,14 +4446,11 @@ function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, m
       // s array: mixin + 1 elements, NO size prefix
       const s = [];
       for (let j = 0; j < ringSize; j++) {
-        const key = readBytes(32);
-        if (!key) return null;
-        s.push(key);
+        s.push(readBytes(32, `CLSAG[${i}].s[${j}]`));
       }
 
-      const c1 = readBytes(32);
-      const D = readBytes(32);
-      if (!D) return null;
+      const c1 = readBytes(32, `CLSAG[${i}].c1`);
+      const D = readBytes(32, `CLSAG[${i}].D`);
 
       result.CLSAGs.push({ s, c1, D });
     }
@@ -4413,9 +4460,7 @@ function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, m
   if (type >= RCT_TYPE.BulletproofPlus) {
     result.pseudoOuts = [];
     for (let i = 0; i < inputCount; i++) {
-      const key = readBytes(32);
-      if (!key) return null;
-      result.pseudoOuts.push(key);
+      result.pseudoOuts.push(readBytes(32, `pseudoOuts[${i}]`));
     }
   }
 
