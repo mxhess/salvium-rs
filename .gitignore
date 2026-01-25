@@ -2,3 +2,16 @@ bun.lock
 node_modules/
 build/
 TODO
+
+# Secrets - NEVER commit these
+.env
+.env.*
+*.env
+secrets/
+*.key
+*.pem
+wallet.json
+wallet-*.json
+*-wallet.json
+*.seed
+*.mnemonic

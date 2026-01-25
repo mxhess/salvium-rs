@@ -24,6 +24,7 @@ import { generateKeyImage } from './keyimage.js';
 import {
   buildTransaction,
   buildStakeTransaction,
+  buildBurnTransaction,
   signTransaction,
   prepareInputs,
   selectUTXOs,
@@ -1333,6 +1334,127 @@ export class Wallet {
     tx._meta.stakeAmount = stakeAmount.toString();
     tx._meta.stakeLockPeriod = stakeLockPeriod;
     tx._meta.unlockHeight = this._syncHeight + stakeLockPeriod;
+    tx._meta.assetType = assetType;
+
+    return tx;
+  }
+
+  /**
+   * Create a BURN transaction (Salvium-specific)
+   *
+   * Burns coins permanently - they are destroyed and cannot be recovered.
+   * The burned amount is recorded in amount_burnt with destination_asset_type = "BURN".
+   *
+   * @param {BigInt|number|string} amount - Amount to burn
+   * @param {Object} options - Transaction options:
+   * @param {string} options.assetType - Asset type to burn ('SAL' or 'SAL1', default 'SAL')
+   * @param {number} options.accountIndex - Account index to burn from (default 0)
+   * @param {number} options.ringSize - Ring size for CLSAG (default 16)
+   * @param {string} options.priority - Fee priority ('low', 'default', 'high')
+   * @param {Object} options.rpcClient - RPC client for fetching decoys
+   * @returns {Promise<Object>} Burn transaction ready for broadcast
+   */
+  async createBurnTransaction(amount, options = {}) {
+    if (!this.canSign()) {
+      throw new Error('Full wallet required to create burn transactions');
+    }
+
+    const {
+      assetType = 'SAL',
+      accountIndex = 0,
+      ringSize = 16,
+      priority = 'default',
+      rpcClient = null
+    } = options;
+
+    // Validate asset type
+    if (assetType !== 'SAL' && assetType !== 'SAL1') {
+      throw new Error('BURN transactions must use SAL or SAL1 asset type');
+    }
+
+    // Convert amount to bigint
+    const burnAmount = typeof amount === 'bigint' ? amount :
+                       typeof amount === 'string' ? BigInt(amount) : BigInt(Math.floor(amount));
+
+    if (burnAmount <= 0n) {
+      throw new Error('Burn amount must be positive');
+    }
+
+    // Estimate fee (BURN tx has 1 input minimum, 1 output - change only)
+    const estimatedFee = estimateTransactionFee(
+      1, // inputs
+      1, // outputs (change only)
+      { priority, ringSize }
+    );
+
+    // Select UTXOs from specified account
+    const availableUTXOs = this.getUTXOs({
+      unlockedOnly: true,
+      accountIndex,
+      assetType
+    });
+
+    if (availableUTXOs.length === 0) {
+      throw new Error(`No unlocked ${assetType} outputs available for burning`);
+    }
+
+    // Select UTXOs to cover burn amount + fee
+    const { selected, changeAmount } = selectUTXOs(
+      availableUTXOs,
+      burnAmount,
+      estimatedFee,
+      {
+        strategy: UTXO_STRATEGY.LARGEST_FIRST,
+        currentHeight: this._syncHeight,
+        dustThreshold: 1000000n
+      }
+    );
+
+    if (selected.length === 0) {
+      throw new Error(`Insufficient ${assetType} balance for burn of ${burnAmount} + fee ${estimatedFee}`);
+    }
+
+    // Prepare inputs with ring members (decoys)
+    const preparedInputs = await prepareInputs(selected, rpcClient, { ringSize });
+
+    // Recalculate fee with actual input count
+    const actualFee = estimateTransactionFee(
+      preparedInputs.length,
+      1, // Only change output
+      { priority, ringSize }
+    );
+
+    // Change address is own address
+    const changeAddress = {
+      viewPublicKey: this._viewPublicKey,
+      spendPublicKey: this._spendPublicKey,
+      isSubaddress: false
+    };
+
+    // Build the burn transaction
+    const tx = buildBurnTransaction(
+      {
+        inputs: preparedInputs,
+        burnAmount,
+        changeAddress,
+        fee: actualFee
+      },
+      {
+        assetType,
+        useCarrot: false // TODO: Support CARROT burning when needed
+      }
+    );
+
+    // Validate
+    const validation = validateTransaction(tx);
+    if (!validation.valid) {
+      throw new Error(`Burn transaction validation failed: ${validation.errors.join(', ')}`);
+    }
+
+    // Add metadata for tracking
+    tx._meta = tx._meta || {};
+    tx._meta.txType = TX_TYPE.BURN;
+    tx._meta.burnAmount = burnAmount.toString();
     tx._meta.assetType = assetType;
 
     return tx;

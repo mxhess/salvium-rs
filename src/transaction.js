@@ -3292,6 +3292,92 @@ export function buildStakeTransaction(params, options = {}) {
 }
 
 /**
+ * Build a BURN transaction
+ *
+ * BURN transactions permanently destroy coins. The burned amount goes into
+ * amount_burnt field with destination_asset_type = "BURN".
+ *
+ * Structure:
+ * - txType: BURN (5)
+ * - source_asset_type: "SAL" or "SAL1"
+ * - destination_asset_type: "BURN"
+ * - amount_burnt: burned amount
+ * - unlock_time: 0 (no lock)
+ * - outputs: only change back to sender
+ *
+ * @param {Object} params - Transaction parameters:
+ * @param {Array} params.inputs - Array of input objects with ring data
+ * @param {BigInt|number} params.burnAmount - Amount to burn
+ * @param {Object} params.changeAddress - Address for change output
+ * @param {BigInt|number} params.fee - Transaction fee
+ * @param {Object} options - Additional options:
+ * @param {string} options.assetType - Asset type to burn ('SAL' or 'SAL1', default 'SAL')
+ * @param {Uint8Array} options.txSecretKey - Optional pre-generated tx secret key
+ * @param {boolean} options.useCarrot - Use CARROT protocol
+ * @returns {Object} Complete BURN transaction ready for broadcast
+ */
+export function buildBurnTransaction(params, options = {}) {
+  const { inputs, burnAmount, changeAddress, fee } = params;
+  const {
+    assetType = 'SAL',
+    txSecretKey,
+    useCarrot = false
+  } = options;
+
+  if (!inputs || inputs.length === 0) {
+    throw new Error('At least one input is required');
+  }
+  if (!burnAmount || burnAmount <= 0n) {
+    throw new Error('Burn amount must be positive');
+  }
+  if (!changeAddress) {
+    throw new Error('Change address is required for burn transaction');
+  }
+
+  const burnAmountBig = typeof burnAmount === 'bigint' ? burnAmount : BigInt(burnAmount);
+  const feeBig = typeof fee === 'bigint' ? fee : BigInt(fee);
+
+  // Calculate total input amount
+  let totalInputAmount = 0n;
+  for (const input of inputs) {
+    const amount = typeof input.amount === 'bigint' ? input.amount : BigInt(input.amount);
+    totalInputAmount += amount;
+  }
+
+  // For BURN: burned amount goes in amount_burnt, only change output
+  const changeAmount = totalInputAmount - burnAmountBig - feeBig;
+  if (changeAmount < 0n) {
+    throw new Error(`Insufficient funds: inputs=${totalInputAmount}, burn=${burnAmountBig}, fee=${feeBig}`);
+  }
+
+  // BURN has no destinations - only change output
+  const destinations = [];
+
+  // Build using base buildTransaction with BURN options
+  return buildTransaction(
+    {
+      inputs,
+      destinations,  // Empty - BURN has no payment destinations
+      changeAddress,
+      fee
+    },
+    {
+      unlockTime: 0,  // BURN has no lock period
+      txSecretKey,
+      useCarrot,
+      txType: TX_TYPE.BURN,
+      amountBurnt: burnAmountBig,
+      sourceAssetType: assetType,
+      destinationAssetType: 'BURN',  // Special marker for BURN transactions
+      returnAddress: null,
+      returnPubkey: null,
+      protocolTxData: null,
+      amountSlippageLimit: 0n
+    }
+  );
+}
+
+/**
  * Sign an unsigned transaction
  *
  * Used when transaction was pre-built without signatures (e.g., offline signing)

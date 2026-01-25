@@ -1,0 +1,82 @@
+#!/bin/bash
+# Pre-commit hook to prevent accidental secret commits
+
+echo "Checking for potential secrets..."
+
+# Patterns to detect
+PATTERNS=(
+    # 25-word mnemonic phrases (not obviously fake like "bacon bacon...")
+    '[a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+'
+)
+
+# Allowed fake test patterns (same word repeated)
+ALLOWED_PATTERNS=(
+    "bacon bacon bacon"
+    "abbey abbey abbey"
+    "test test test"
+    "word word word"
+)
+
+# Get staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|ts|json|md|env)$')
+
+if [ -z "$STAGED_FILES" ]; then
+    exit 0
+fi
+
+FOUND_SECRETS=0
+
+for file in $STAGED_FILES; do
+    # Skip wordlist files
+    if [[ "$file" == *"wordlist"* ]]; then
+        continue
+    fi
+
+    # Check for potential 25-word phrases
+    MATCHES=$(git diff --cached "$file" | grep -E "^\+" | grep -oE "'[a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+[^']*'" | head -5)
+
+    for match in $MATCHES; do
+        # Check if it's an allowed fake pattern
+        IS_ALLOWED=0
+        for allowed in "${ALLOWED_PATTERNS[@]}"; do
+            if echo "$match" | grep -q "$allowed"; then
+                IS_ALLOWED=1
+                break
+            fi
+        done
+
+        # If not allowed and looks like 25 words, flag it
+        if [ $IS_ALLOWED -eq 0 ]; then
+            WORD_COUNT=$(echo "$match" | tr -cd ' ' | wc -c)
+            if [ "$WORD_COUNT" -ge 20 ]; then
+                echo "WARNING: Potential mnemonic in $file"
+                echo "  $match"
+                FOUND_SECRETS=1
+            fi
+        fi
+    done
+
+    # Check for 64-char hex that looks like a key (not all zeros/ones/test patterns)
+    HEX_MATCHES=$(git diff --cached "$file" | grep -E "^\+" | grep -oE "['\"][a-f0-9]{64}['\"]" | grep -v "0000000000" | grep -v "ffffffff" | grep -v "01234567" | grep -v "f5f5f5f5" | head -5)
+
+    for hex in $HEX_MATCHES; do
+        # Check if it's in a test file with TEST_ prefix nearby
+        if ! grep -B2 "$hex" "$file" 2>/dev/null | grep -qE "TEST_|test_|const test|// test"; then
+            echo "WARNING: Potential secret key in $file"
+            echo "  $hex"
+            FOUND_SECRETS=1
+        fi
+    done
+done
+
+if [ $FOUND_SECRETS -eq 1 ]; then
+    echo ""
+    echo "Potential secrets detected! Review carefully before committing."
+    echo "If these are intentional test values, you can bypass with: git commit --no-verify"
+    echo ""
+    # Warning only - don't block (use exit 1 to block)
+    exit 0
+fi
+
+echo "No secrets detected."
+exit 0

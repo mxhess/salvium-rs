@@ -3,6 +3,10 @@
  * CARROT Self-Test
  * Generates a CARROT output and verifies detection
  * This tests the entire CARROT scanning pipeline end-to-end
+ *
+ * Usage:
+ *   WALLET_SEED="your 25 word mnemonic" bun test/carrot-self-test.js
+ *   MASTER_KEY="64-char-hex" bun test/carrot-self-test.js
  */
 
 import { blake2b } from '../src/blake2b.js';
@@ -20,10 +24,34 @@ import {
 
 console.log('=== CARROT Self-Test ===\n');
 
+// Get wallet seed from environment
+if (!process.env.WALLET_SEED && !process.env.MASTER_KEY) {
+  console.error('ERROR: WALLET_SEED or MASTER_KEY environment variable required.\n');
+  console.log('Usage:');
+  console.log('  WALLET_SEED="your 25 word mnemonic" bun test/carrot-self-test.js');
+  console.log('  MASTER_KEY="64-char-hex" bun test/carrot-self-test.js');
+  process.exit(1);
+}
+
 // 1. Generate recipient wallet
 console.log('1. Generating recipient wallet...');
-const mnemonic = 'bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon';
-const seedResult = mnemonicToSeed(mnemonic, { language: 'auto' });
+
+let seedResult;
+if (process.env.WALLET_SEED) {
+  const mnemonic = process.env.WALLET_SEED.trim();
+  seedResult = mnemonicToSeed(mnemonic, { language: 'auto' });
+  if (!seedResult.valid) {
+    console.error('Invalid mnemonic:', seedResult.error);
+    process.exit(1);
+  }
+} else {
+  const masterKey = process.env.MASTER_KEY.trim();
+  if (masterKey.length !== 64) {
+    console.error('MASTER_KEY must be 64 hex characters');
+    process.exit(1);
+  }
+  seedResult = { seed: hexToBytes(masterKey), valid: true };
+}
 const cnKeys = deriveKeys(seedResult.seed);
 const recipientCarrot = deriveCarrotKeys(cnKeys.spendSecretKey);
 

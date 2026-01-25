@@ -2,6 +2,10 @@
 /**
  * Quick CARROT scanning test
  * Tests CARROT output detection on a specific block
+ *
+ * Usage:
+ *   WALLET_SEED="your 25 word mnemonic" bun test/quick-carrot-test.js
+ *   MASTER_KEY="64-char-hex" bun test/quick-carrot-test.js
  */
 
 import { DaemonRPC } from '../src/rpc/daemon.js';
@@ -10,14 +14,36 @@ import { deriveKeys, deriveCarrotKeys } from '../src/carrot.js';
 import { hexToBytes, bytesToHex } from '../src/address.js';
 import { carrotEcdhKeyExchange, computeCarrotViewTag, makeInputContextCoinbase } from '../src/carrot-scanning.js';
 
-// Test mnemonic (25 words "bacon"... just for testing)
-const mnemonic = 'bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon bacon';
+// Get wallet seed from environment
+if (!process.env.WALLET_SEED && !process.env.MASTER_KEY) {
+  console.error('ERROR: WALLET_SEED or MASTER_KEY environment variable required.\n');
+  console.log('Usage:');
+  console.log('  WALLET_SEED="your 25 word mnemonic" bun test/quick-carrot-test.js');
+  console.log('  MASTER_KEY="64-char-hex" bun test/quick-carrot-test.js');
+  process.exit(1);
+}
 
 console.log('=== Quick CARROT Scanning Test ===\n');
 
 // 1. Generate wallet keys
 console.log('Generating wallet keys...');
-const seedResult = mnemonicToSeed(mnemonic, { language: 'auto' });
+
+let seedResult;
+if (process.env.WALLET_SEED) {
+  const mnemonic = process.env.WALLET_SEED.trim();
+  seedResult = mnemonicToSeed(mnemonic, { language: 'auto' });
+  if (!seedResult.valid) {
+    console.error('Invalid mnemonic:', seedResult.error);
+    process.exit(1);
+  }
+} else {
+  const masterKey = process.env.MASTER_KEY.trim();
+  if (masterKey.length !== 64) {
+    console.error('MASTER_KEY must be 64 hex characters');
+    process.exit(1);
+  }
+  seedResult = { seed: hexToBytes(masterKey), valid: true };
+}
 const cnKeys = deriveKeys(seedResult.seed);
 
 // Derive CARROT keys - master secret is the spend secret key
