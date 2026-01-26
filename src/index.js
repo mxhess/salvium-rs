@@ -39,6 +39,33 @@ export * from './wallet-sync.js';
 export * from './persistent-wallet.js';
 export * from './consensus.js';
 
+// Oracle exports (selective to avoid COIN conflict with consensus.js)
+export {
+  PRICING_RECORD_VALID_BLOCKS,
+  PRICING_RECORD_VALID_TIME_DIFF_FROM_BLOCK,
+  CONVERSION_RATE_ROUNDING,
+  ASSET_TYPES,
+  HF_VERSION_SLIPPAGE_YIELD,
+  ORACLE_URLS,
+  ORACLE_PUBLIC_KEY_MAINNET,
+  ORACLE_PUBLIC_KEY_TESTNET,
+  createEmptyPricingRecord,
+  isPricingRecordEmpty,
+  getAssetPrice,
+  getAssetMaPrice,
+  buildSignatureMessage,
+  verifyPricingRecordSignature,
+  getOraclePublicKey,
+  validatePricingRecord,
+  getConversionRate,
+  getConvertedAmount,
+  calculateSlippage,
+  calculateConversion,
+  parsePricingRecordFromJson,
+  pricingRecordToJson,
+  fetchPricingRecord
+} from './oracle.js';
+
 // RandomX proof-of-work (WASM-JIT implementation)
 export * as randomx from './randomx/index.js';
 export {
@@ -80,6 +107,10 @@ export * as wordlists from './wordlists/index.js';
 // RPC clients available as namespace
 // Usage: import { rpc } from 'salvium-js'; or import { DaemonRPC, WalletRPC } from 'salvium-js/rpc';
 export * as rpc from './rpc/index.js';
+
+// Oracle/pricing available as namespace
+// Usage: import { oracle } from 'salvium-js';
+export * as oracle from './oracle.js';
 
 // Stratum mining client
 export * as stratum from './stratum/index.js';
@@ -649,6 +680,41 @@ import {
   validateRingSize
 } from './consensus.js';
 
+import {
+  // Constants
+  COIN as ORACLE_COIN,
+  PRICING_RECORD_VALID_BLOCKS as ORACLE_PR_VALID_BLOCKS,
+  PRICING_RECORD_VALID_TIME_DIFF_FROM_BLOCK as ORACLE_PR_TIME_DIFF,
+  CONVERSION_RATE_ROUNDING,
+  ASSET_TYPES,
+  HF_VERSION_ENABLE_ORACLE as ORACLE_HF_ENABLE,
+  HF_VERSION_SLIPPAGE_YIELD,
+  ORACLE_URLS,
+  ORACLE_PUBLIC_KEY_MAINNET,
+  ORACLE_PUBLIC_KEY_TESTNET,
+  // Data structures
+  createEmptyPricingRecord,
+  isPricingRecordEmpty,
+  getAssetPrice,
+  getAssetMaPrice,
+  // Signature verification
+  buildSignatureMessage,
+  verifyPricingRecordSignature,
+  getOraclePublicKey,
+  // Validation
+  validatePricingRecord,
+  // Conversion
+  getConversionRate,
+  getConvertedAmount,
+  calculateSlippage,
+  calculateConversion,
+  // Serialization
+  parsePricingRecordFromJson,
+  pricingRecordToJson,
+  // HTTP client
+  fetchPricingRecord
+} from './oracle.js';
+
 // Main API object
 const salvium = {
   // Constants
@@ -1085,7 +1151,34 @@ const salvium = {
   PersistentWallet,
   createPersistentWallet,
   restorePersistentWallet,
-  openPersistentWallet
+  openPersistentWallet,
+
+  // Oracle/Pricing
+  ORACLE_COIN,
+  ORACLE_PR_VALID_BLOCKS,
+  ORACLE_PR_TIME_DIFF,
+  CONVERSION_RATE_ROUNDING,
+  ASSET_TYPES,
+  ORACLE_HF_ENABLE,
+  HF_VERSION_SLIPPAGE_YIELD,
+  ORACLE_URLS,
+  ORACLE_PUBLIC_KEY_MAINNET,
+  ORACLE_PUBLIC_KEY_TESTNET,
+  createEmptyPricingRecord,
+  isPricingRecordEmpty,
+  getAssetPrice,
+  getAssetMaPrice,
+  buildSignatureMessage,
+  verifyPricingRecordSignature,
+  getOraclePublicKey,
+  validatePricingRecord,
+  getConversionRate,
+  getConvertedAmount,
+  calculateSlippage,
+  calculateConversion,
+  parsePricingRecordFromJson,
+  pricingRecordToJson,
+  fetchPricingRecord
 };
 
 export default salvium;
