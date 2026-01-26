@@ -39,6 +39,12 @@ export * from './wallet-sync.js';
 export * from './persistent-wallet.js';
 export * from './consensus.js';
 
+// Validation exports
+export * from './validation.js';
+
+// Validation namespace
+export * as validation from './validation.js';
+
 // Oracle exports (selective to avoid COIN conflict with consensus.js)
 export {
   PRICING_RECORD_VALID_BLOCKS,

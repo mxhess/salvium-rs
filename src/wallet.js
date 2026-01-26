@@ -1822,8 +1822,19 @@ export class Wallet {
    * @returns {Promise<Object>} Sweep transaction
    */
   async sweepDust(address, dustThreshold = 100000000n, options = {}) {
-    const { accountIndex = 0, assetType = 'SAL' } = options;
+    if (!this.canSign()) {
+      throw new Error('Full wallet required to sweep dust');
+    }
 
+    const {
+      accountIndex = 0,
+      assetType = 'SAL',
+      ringSize = 16,
+      priority = 'low',
+      rpcClient = null
+    } = options;
+
+    // Get all unlocked UTXOs for account
     const utxos = this.getUTXOs({ unlockedOnly: true, accountIndex, assetType });
     const dustOutputs = utxos.filter(u => BigInt(u.amount) < dustThreshold);
 
@@ -1831,16 +1842,70 @@ export class Wallet {
       throw new Error('No dust outputs to sweep');
     }
 
+    // Calculate total amount from dust
     const totalAmount = dustOutputs.reduce((sum, u) => sum + BigInt(u.amount), 0n);
-    const fee = estimateTransactionFee(dustOutputs.length, 1, { priority: 'low' });
 
-    if (totalAmount <= fee) {
-      throw new Error('Dust amount insufficient to cover fee');
+    // Estimate fee for sweeping all dust outputs
+    const estimatedFee = estimateTransactionFee(
+      dustOutputs.length,
+      1, // single output (sweep to destination)
+      { priority, ringSize }
+    );
+
+    if (totalAmount <= estimatedFee) {
+      throw new Error(`Dust amount (${totalAmount}) insufficient to cover fee (${estimatedFee})`);
     }
 
-    // Build transaction with only dust outputs
-    // TODO: Implement selective UTXO transaction building
-    throw new Error('Sweep dust not yet fully implemented');
+    // Prepare inputs with ring members (decoys)
+    const preparedInputs = await prepareInputs(dustOutputs, rpcClient, { ringSize });
+
+    // Recalculate fee with actual input count
+    const actualFee = estimateTransactionFee(
+      preparedInputs.length,
+      1,
+      { priority, ringSize }
+    );
+
+    // Amount to sweep = total - fee
+    const sweepAmount = totalAmount - actualFee;
+
+    if (sweepAmount <= 0n) {
+      throw new Error(`Dust amount insufficient after fee calculation`);
+    }
+
+    // Parse destination address
+    const parsedDest = parseAddress(address);
+    if (!parsedDest.valid) {
+      throw new Error(`Invalid destination address: ${address}`);
+    }
+
+    // Build the sweep transaction
+    const tx = buildTransaction(
+      {
+        inputs: preparedInputs,
+        destinations: [{
+          address: parsedDest,
+          amount: sweepAmount
+        }],
+        fee: actualFee,
+        // No change output - we're sweeping everything
+        changeAddress: null
+      },
+      {
+        txType: TX_TYPE.TRANSFER,
+        sourceAssetType: assetType,
+        destinationAssetType: assetType,
+        useCarrot: parsedDest.format === ADDRESS_FORMAT.CARROT
+      }
+    );
+
+    // Validate
+    const validation = validateTransaction(tx);
+    if (!validation.valid) {
+      throw new Error(`Sweep transaction validation failed: ${validation.errors.join(', ')}`);
+    }
+
+    return tx;
   }
 
   // ===========================================================================
