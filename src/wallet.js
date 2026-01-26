@@ -36,7 +36,7 @@ import {
   UTXO_STRATEGY
 } from './transaction.js';
 import { NETWORK, ADDRESS_FORMAT } from './constants.js';
-import { getNetworkConfig } from './consensus.js';
+import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID } from './consensus.js';
 import { seedToMnemonic, mnemonicToSeed, validateMnemonic } from './mnemonic.js';
 
 // ============================================================================
@@ -300,6 +300,7 @@ export class Wallet {
     this._lastBlockHash = null;
     this._syncing = false;
     this._syncInterval = null;
+    this._hfVersion = HF_VERSION.CARROT; // Fallback for pre-sync state (overridden by height-based detection during sync)
 
     // Event listeners
     this._listeners = [];
@@ -1320,7 +1321,7 @@ export class Wallet {
       {
         stakeLockPeriod,
         assetType,
-        useCarrot: false // TODO: Support CARROT staking when needed
+        useCarrot: this.isCarrotEnabled()
       }
     );
 
@@ -1443,7 +1444,7 @@ export class Wallet {
       },
       {
         assetType,
-        useCarrot: false // TODO: Support CARROT burning when needed
+        useCarrot: this.isCarrotEnabled()
       }
     );
 
@@ -1603,7 +1604,7 @@ export class Wallet {
         fee: actualFee
       },
       {
-        useCarrot: false // TODO: Support CARROT conversion when needed
+        useCarrot: this.isCarrotEnabled()
       }
     );
 
@@ -1922,6 +1923,56 @@ export class Wallet {
   isSynced(targetHeight = null) {
     if (targetHeight === null) return true; // No target specified
     return this._syncHeight >= targetHeight;
+  }
+
+  /**
+   * Map wallet network string to NETWORK_ID integer
+   * @returns {number} NETWORK_ID constant
+   * @private
+   */
+  _getNetworkId() {
+    switch (this.network) {
+      case 'mainnet': return NETWORK_ID.MAINNET;
+      case 'testnet': return NETWORK_ID.TESTNET;
+      case 'stagenet': return NETWORK_ID.STAGENET;
+      default: return NETWORK_ID.MAINNET;
+    }
+  }
+
+  /**
+   * Set the current hard fork version (deprecated - use sync height instead)
+   * This is kept for backward compatibility but the HF version is now
+   * automatically determined from the sync height and network.
+   * @param {number} version - Hard fork version
+   * @deprecated Use sync height to determine HF version automatically
+   */
+  setHfVersion(version) { this._hfVersion = version; }
+
+  /**
+   * Get the current hard fork version based on sync height and network
+   * @returns {number} Hard fork version
+   */
+  getHfVersion() {
+    // Use height-based detection if we have a sync height
+    if (this._syncHeight > 0) {
+      return getHfVersionForHeight(this._syncHeight, this._getNetworkId());
+    }
+    // Fall back to stored version (for pre-sync state)
+    return this._hfVersion;
+  }
+
+  /**
+   * Check if CARROT outputs are enabled at the current sync height
+   * CARROT is enabled at HF version 10 (mainnet: 334750, testnet: 1100)
+   * @returns {boolean} True if CARROT outputs should be used
+   */
+  isCarrotEnabled() {
+    // Use height-based detection if we have a sync height
+    if (this._syncHeight > 0) {
+      return isCarrotActive(this._syncHeight, this._getNetworkId());
+    }
+    // Fall back to stored version (for pre-sync state)
+    return this._hfVersion >= HF_VERSION.CARROT;
   }
 
   // ===========================================================================

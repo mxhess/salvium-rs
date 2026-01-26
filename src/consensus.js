@@ -160,6 +160,19 @@ export const MAINNET_CONFIG = {
   STAKE_LOCK_PERIOD: 30 * 24 * 30, // blocks
   TREASURY_SAL1_MINT_PERIOD: 30 * 24 * 30,
   TREASURY_ADDRESS: 'SaLvdZR6w1A21sf2Wh6jYEh1wzY4GSbT7RX6FjyPsnLsffWLrzFQeXUXJcmBLRWDzZC2YXeYe5t7qKsnrg9FpmxmEcxPHsEYfqA',
+  // Hard fork heights (from hardforks.cpp)
+  HARD_FORK_HEIGHTS: {
+    1: 1,        // Genesis
+    2: 89800,    // November 4, 2024
+    3: 121100,   // December 19, 2024
+    4: 121800,   // December 20, 2024
+    5: 136100,   // January 9, 2025
+    6: 154750,   // February 4, 2025 (AUDIT1)
+    7: 161900,   // February 14, 2025 (AUDIT1_PAUSE)
+    8: 172000,   // February 28, 2025 (AUDIT2)
+    9: 179200,   // March 10, 2025 (AUDIT2_PAUSE)
+    10: 334750,  // October 13, 2025 (CARROT)
+  },
 };
 
 export const TESTNET_CONFIG = {
@@ -177,6 +190,19 @@ export const TESTNET_CONFIG = {
   STAKE_LOCK_PERIOD: 20,
   TREASURY_SAL1_MINT_PERIOD: 20,
   TREASURY_ADDRESS: 'SaLvTyLFta9BiAXeUfFkKvViBkFt4ay5nEUBpWyDKewYggtsoxBbtCUVqaBjtcCDyY1euun8Giv7LLEgvztuurLo5a6Km1zskZn36',
+  // Hard fork heights (from hardforks.cpp)
+  HARD_FORK_HEIGHTS: {
+    1: 1,      // Genesis
+    2: 250,
+    3: 500,
+    4: 600,
+    5: 800,
+    6: 815,    // AUDIT1
+    7: 900,    // AUDIT1_PAUSE
+    8: 950,    // AUDIT2
+    9: 1000,   // AUDIT2_PAUSE
+    10: 1100,  // CARROT
+  },
 };
 
 export const STAGENET_CONFIG = {
@@ -194,6 +220,19 @@ export const STAGENET_CONFIG = {
   STAKE_LOCK_PERIOD: 20,
   TREASURY_SAL1_MINT_PERIOD: 20,
   TREASURY_ADDRESS: 'fuLMowH85abK8nz9BBMEem7MAfUbQu4aSHHUV9j5Z86o6Go9Lv2U5ZQiJCWPY9R9HA8p5idburazjAhCqDngLo7fYPCD9ciM9ee1A',
+  // Hard fork heights - stagenet matches testnet
+  HARD_FORK_HEIGHTS: {
+    1: 1,      // Genesis
+    2: 250,
+    3: 500,
+    4: 600,
+    5: 800,
+    6: 815,
+    7: 900,
+    8: 950,
+    9: 1000,
+    10: 1100,  // CARROT
+  },
 };
 
 /**
@@ -213,6 +252,57 @@ export function getNetworkConfig(network) {
     default:
       throw new Error(`Invalid network type: ${network}`);
   }
+}
+
+/**
+ * Get hard fork version for a given block height
+ *
+ * Reference: ~/github/salvium/src/hardforks/hardforks.cpp
+ *
+ * @param {number} height - Block height
+ * @param {number} network - Network type (MAINNET, TESTNET, STAGENET)
+ * @returns {number} Hard fork version active at this height
+ */
+export function getHfVersionForHeight(height, network = NETWORK_ID.MAINNET) {
+  const config = getNetworkConfig(network);
+  const hfHeights = config.HARD_FORK_HEIGHTS;
+
+  if (!hfHeights) {
+    return 1; // Default to version 1 if no HF heights defined
+  }
+
+  // Find the highest HF version that has been activated at this height
+  let activeVersion = 1;
+  for (const [version, activationHeight] of Object.entries(hfHeights)) {
+    if (height >= activationHeight && parseInt(version) > activeVersion) {
+      activeVersion = parseInt(version);
+    }
+  }
+
+  return activeVersion;
+}
+
+/**
+ * Check if a specific hard fork is active at a given height
+ *
+ * @param {number} hfVersion - Hard fork version to check
+ * @param {number} height - Block height
+ * @param {number} network - Network type
+ * @returns {boolean} True if the hard fork is active
+ */
+export function isHfActive(hfVersion, height, network = NETWORK_ID.MAINNET) {
+  return getHfVersionForHeight(height, network) >= hfVersion;
+}
+
+/**
+ * Check if CARROT outputs are enabled at a given height
+ *
+ * @param {number} height - Block height
+ * @param {number} network - Network type
+ * @returns {boolean} True if CARROT is active
+ */
+export function isCarrotActive(height, network = NETWORK_ID.MAINNET) {
+  return isHfActive(HF_VERSION.CARROT, height, network);
 }
 
 // =============================================================================
