@@ -40,208 +40,36 @@ import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NE
 import { seedToMnemonic, mnemonicToSeed, validateMnemonic } from './mnemonic.js';
 
 // ============================================================================
-// SALVIUM-SPECIFIC CONSTANTS
+// IMPORTS FROM WALLET SUBMODULES
 // ============================================================================
 
-/**
- * Subaddress index limits (32-bit unsigned integers)
- * No practical limit - use as many accounts/subaddresses as needed
- */
-export const MAX_SUBADDRESS_MAJOR_INDEX = 0xFFFFFFFF;
-export const MAX_SUBADDRESS_MINOR_INDEX = 0xFFFFFFFF;
+// Import from wallet submodules and re-export for backward compatibility
+import {
+  MAX_SUBADDRESS_MAJOR_INDEX as _MAX_SUBADDRESS_MAJOR_INDEX,
+  MAX_SUBADDRESS_MINOR_INDEX as _MAX_SUBADDRESS_MINOR_INDEX,
+  DEFAULT_UNLOCK_BLOCKS as _DEFAULT_UNLOCK_BLOCKS,
+  WALLET_TYPE as _WALLET_TYPE,
+  TX_TYPE as _TX_TYPE
+} from './wallet/constants.js';
 
-/**
- * Salvium transaction types (from cryptonote_protocol/enums.h)
- */
-export const TX_TYPE = {
-  UNSET: 0,
-  MINER: 1,      // Mining reward
-  PROTOCOL: 2,   // Per-block protocol tx (yield payouts, burn refunds)
-  TRANSFER: 3,   // Regular transfer
-  CONVERT: 4,    // Asset conversion
-  BURN: 5,       // Coin burn
-  STAKE: 6,      // Staking transaction
-  RETURN: 7,     // Return payment
-  AUDIT: 8       // Audit transaction
-};
+import {
+  WalletListener as _WalletListener,
+  ConsoleListener,
+  CallbackListener
+} from './wallet/listener.js';
 
-/**
- * Default unlock time in blocks
- */
-export const DEFAULT_UNLOCK_BLOCKS = 10;
+import { Account as _Account } from './wallet/account.js';
 
-/**
- * Wallet types
- */
-export const WALLET_TYPE = {
-  FULL: 'full',           // Full wallet with spend key
-  VIEW_ONLY: 'view_only', // View-only (no spend key)
-  WATCH: 'watch'          // Watch-only (public keys only)
-};
+// Re-export for backward compatibility
+export const MAX_SUBADDRESS_MAJOR_INDEX = _MAX_SUBADDRESS_MAJOR_INDEX;
+export const MAX_SUBADDRESS_MINOR_INDEX = _MAX_SUBADDRESS_MINOR_INDEX;
+export const DEFAULT_UNLOCK_BLOCKS = _DEFAULT_UNLOCK_BLOCKS;
+export const WALLET_TYPE = _WALLET_TYPE;
+export const TX_TYPE = _TX_TYPE;
+export const WalletListener = _WalletListener;
+export const Account = _Account;
+export { ConsoleListener, CallbackListener };
 
-// ============================================================================
-// EVENT LISTENER SYSTEM
-// ============================================================================
-
-/**
- * Base class for wallet event listeners
- * Extend this class and override methods to receive wallet events
- */
-export class WalletListener {
-  /**
-   * Called when sync progress updates
-   * @param {number} height - Current sync height
-   * @param {number} startHeight - Sync start height
-   * @param {number} endHeight - Target end height
-   * @param {number} percentDone - Percentage complete (0-100)
-   * @param {string} message - Optional status message
-   */
-  onSyncProgress(height, startHeight, endHeight, percentDone, message) {}
-
-  /**
-   * Called when a new block is processed
-   * @param {number} height - Block height
-   * @param {string} hash - Block hash
-   */
-  onNewBlock(height, hash) {}
-
-  /**
-   * Called when wallet balance changes
-   * @param {bigint} newBalance - New total balance
-   * @param {bigint} newUnlockedBalance - New unlocked balance
-   * @param {string} assetType - Asset type (default: 'SAL')
-   */
-  onBalanceChanged(newBalance, newUnlockedBalance, assetType = 'SAL') {}
-
-  /**
-   * Called when an output is received (called up to 3 times per output)
-   * @param {Object} output - Output details
-   * @param {string} status - 'unconfirmed', 'confirmed', or 'unlocked'
-   */
-  onOutputReceived(output, status) {}
-
-  /**
-   * Called when an output is spent (called up to 2 times per output)
-   * @param {Object} output - Output details
-   * @param {string} status - 'confirmed' or 'unlocked'
-   */
-  onOutputSpent(output, status) {}
-
-  /**
-   * Called when a stake payout is received
-   * @param {Object} payout - Payout details (amount, stakeOrigin, etc.)
-   */
-  onStakePayout(payout) {}
-
-  /**
-   * Called when sync completes
-   * @param {number} height - Final sync height
-   */
-  onSyncComplete(height) {}
-
-  /**
-   * Called on sync error
-   * @param {Error} error - Error that occurred
-   */
-  onSyncError(error) {}
-}
-
-// ============================================================================
-// ACCOUNT CLASS
-// ============================================================================
-
-/**
- * Represents a wallet account (major index in subaddress system)
- */
-export class Account {
-  constructor(wallet, index, label = '') {
-    this._wallet = wallet;
-    this._index = index;
-    this._label = label;
-    this._subaddressLabels = new Map(); // minor index -> label
-  }
-
-  /** Get account index */
-  get index() { return this._index; }
-
-  /** Get/set account label */
-  get label() { return this._label; }
-  set label(value) { this._label = value; }
-
-  /**
-   * Get the primary address for this account
-   * @returns {string}
-   */
-  getPrimaryAddress() {
-    return this._wallet.getSubaddress(this._index, 0);
-  }
-
-  /**
-   * Get a subaddress in this account
-   * @param {number} minor - Subaddress index
-   * @returns {string}
-   */
-  getSubaddress(minor) {
-    return this._wallet.getSubaddress(this._index, minor);
-  }
-
-  /**
-   * Create a new subaddress in this account
-   * @param {string} label - Optional label
-   * @returns {Object} { index, address }
-   */
-  createSubaddress(label = '') {
-    const minor = this._wallet._getNextSubaddressIndex(this._index);
-    const address = this._wallet.getSubaddress(this._index, minor);
-    if (label) {
-      this._subaddressLabels.set(minor, label);
-    }
-    return { index: minor, address };
-  }
-
-  /**
-   * Get all subaddresses in this account
-   * @returns {Array<Object>} Array of { index, address, label }
-   */
-  getSubaddresses() {
-    const result = [];
-    for (let minor = 0; minor < this._wallet._getNextSubaddressIndex(this._index); minor++) {
-      result.push({
-        index: minor,
-        address: this._wallet.getSubaddress(this._index, minor),
-        label: this._subaddressLabels.get(minor) || ''
-      });
-    }
-    return result;
-  }
-
-  /**
-   * Get balance for this account only
-   * @param {string} assetType - Asset type (default: 'SAL')
-   * @returns {Object} { balance, unlockedBalance, lockedBalance }
-   */
-  getBalance(assetType = 'SAL') {
-    return this._wallet.getBalance({ accountIndex: this._index, assetType });
-  }
-
-  /**
-   * Get label for a subaddress
-   * @param {number} minor - Subaddress index
-   * @returns {string}
-   */
-  getSubaddressLabel(minor) {
-    return this._subaddressLabels.get(minor) || '';
-  }
-
-  /**
-   * Set label for a subaddress
-   * @param {number} minor - Subaddress index
-   * @param {string} label - Label
-   */
-  setSubaddressLabel(minor, label) {
-    this._subaddressLabels.set(minor, label);
-  }
-}
 
 // ============================================================================
 // WALLET CLASS
