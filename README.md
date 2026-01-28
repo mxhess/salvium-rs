@@ -13,7 +13,7 @@ JavaScript library for Salvium cryptocurrency - wallet generation, address handl
 - **Address Validation** - Parse and validate any Salvium address
 - **Transaction Scanning** - Detect owned outputs, decrypt amounts, view tags
 - **Key Images** - Generate and validate key images for spend detection
-- **Transaction Construction** - Pedersen commitments, CLSAG signatures, serialization
+- **Transaction Construction** - Pedersen commitments, CLSAG/TCLSAG signatures, serialization
 - **Bulletproofs+ Range Proofs** - Pure JS proof generation AND verification (mobile-friendly)
 - **RandomX Proof-of-Work** - WASM-JIT implementation with official test vectors
 - **Stratum Mining Client** - Connect to mining pools with multi-threaded hashing
@@ -491,7 +491,7 @@ const keyImageMap = importKeyImages(exported);
 
 ## Transaction Construction
 
-Build transactions with Pedersen commitments and CLSAG ring signatures.
+Build transactions with Pedersen commitments and CLSAG/TCLSAG ring signatures.
 
 ```javascript
 import {
@@ -501,8 +501,9 @@ import {
   commit, zeroCommit, genCommitmentMask,
   // Output creation
   generateOutputKeys, createOutput,
-  // Signing
+  // Signing (CLSAG for standard, TCLSAG for SalviumOne)
   clsagSign, clsagVerify,
+  tclsagSign, tclsagVerify,
   // Serialization
   serializeTxPrefix, getTxPrefixHash, encodeVarint
 } from 'salvium-js';
@@ -526,7 +527,7 @@ const commitment = commit(1000000000n, mask);
 // Zero commitment for fees (public amount)
 const feeCommitment = zeroCommit(10000000n);  // 0.1 SAL fee
 
-// CLSAG ring signature (simplified)
+// CLSAG ring signature (standard RingCT)
 const signature = clsagSign(
   message,           // Pre-MLSAG hash
   ring,              // Array of public keys (decoys + real)
@@ -537,8 +538,24 @@ const signature = clsagSign(
   secretIndex        // Your position in ring
 );
 
-// Verify signature
+// Verify CLSAG signature
 const valid = clsagVerify(message, signature, ring, commitments, pseudoCommitment);
+
+// TCLSAG ring signature (SalviumOne - uses dual generators G and T)
+const tclsagSig = tclsagSign(
+  message,           // Pre-MLSAG hash
+  ring,              // Array of public keys
+  secretKeyX,        // Spend secret key component
+  secretKeyY,        // Auxiliary secret key component
+  commitments,       // Ring member commitments
+  maskDiff,          // Commitment mask difference
+  pseudoCommitment,  // Pseudo output commitment
+  secretIndex        // Your position in ring
+);
+// Returns { sx: [], sy: [], c1, I, D } - dual scalar arrays
+
+// Verify TCLSAG signature
+const tclsagValid = tclsagVerify(message, tclsagSig, ring, commitments, pseudoCommitment);
 ```
 
 ## Bulletproofs+ Range Proofs
@@ -811,6 +828,8 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `createOutput(txSec, viewPub, spendPub, amount, index)` | Create full transaction output |
 | `clsagSign(message, ring, secret, commitments, mask, pseudo, index)` | Generate CLSAG signature |
 | `clsagVerify(message, sig, ring, commitments, pseudo)` | Verify CLSAG signature |
+| `tclsagSign(message, ring, secretX, secretY, commitments, mask, pseudo, index)` | Generate TCLSAG signature (SalviumOne) |
+| `tclsagVerify(message, sig, ring, commitments, pseudo)` | Verify TCLSAG signature |
 | `serializeTxPrefix(tx)` | Serialize transaction prefix |
 | `getTxPrefixHash(tx)` | Compute transaction prefix hash |
 | `encodeVarint(value)` | Encode integer as varint |
@@ -1071,7 +1090,7 @@ bun test/all.js --integration
 bun test/all.js --integration http://localhost:19081
 ```
 
-Test coverage: 18 test suites with official RandomX test vectors.
+Test coverage: 19 test suites including CLSAG/TCLSAG signing and official RandomX test vectors.
 
 ## Contributing
 
