@@ -1073,10 +1073,6 @@ bun test/all.js --integration http://localhost:19081
 
 Test coverage: 18 test suites with official RandomX test vectors.
 
-## License
-
-MIT
-
 ## Contributing
 
 Contributions welcome! Please read the Salvium source code for reference:
