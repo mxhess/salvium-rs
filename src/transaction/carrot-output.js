@@ -15,137 +15,104 @@
  */
 
 import { blake2b } from '../blake2b.js';
-import { hexToBytes } from '../address.js';
+import { hexToBytes, bytesToHex } from '../address.js';
 import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../ed25519.js';
+import { edwardsToMontgomeryU, x25519ScalarMult } from '../carrot-scanning.js';
 
 import { CARROT_DOMAIN, CARROT_ENOTE_TYPE } from './constants.js';
 import { scReduce32, bigIntToBytes, commit } from './serialization.js';
 
 // =============================================================================
 // CARROT HASH FUNCTIONS
+//
+// Matches C++ hash_base(): blake2b(out, outLen, transcript, transcriptLen, key, keyLen)
+// Transcript uses SpFixedTranscript format: [domain_length_byte] || [domain_bytes] || [data...]
+// The key (shared secret / sender-receiver secret) is passed as the Blake2b key.
 // =============================================================================
 
 /**
- * Hash data with domain separation using Blake2b
+ * Build SpFixedTranscript: [domain_length_byte] || [domain_bytes] || [data...]
  * @param {string} domain - Domain separator string
- * @param {...(Uint8Array|string)} data - Data to hash
- * @returns {Uint8Array} 32-byte hash
+ * @param {Array<Uint8Array>} dataItems - Transcript data items
+ * @returns {Uint8Array} Transcript bytes
  */
-function carrotHash32(domain, ...data) {
+function buildTranscript(domain, dataItems) {
   const domainBytes = new TextEncoder().encode(domain);
-  let totalLen = domainBytes.length;
-
-  const processed = data.map(item => {
-    if (typeof item === 'string') item = hexToBytes(item);
+  let totalLen = 1 + domainBytes.length; // 1 for length prefix byte
+  for (const item of dataItems) {
     totalLen += item.length;
-    return item;
-  });
-
-  const combined = new Uint8Array(totalLen);
+  }
+  const transcript = new Uint8Array(totalLen);
   let offset = 0;
-  combined.set(domainBytes, offset);
+  transcript[offset++] = domainBytes.length; // Length prefix byte
+  transcript.set(domainBytes, offset);
   offset += domainBytes.length;
-  for (const item of processed) {
-    combined.set(item, offset);
+  for (const item of dataItems) {
+    transcript.set(item, offset);
     offset += item.length;
   }
-
-  return blake2b(combined, 32);
+  return transcript;
 }
 
 /**
- * Hash to scalar with domain separation (CARROT)
- * @param {string} domain - Domain separator
- * @param {...(Uint8Array|string)} data - Data to hash
- * @returns {Uint8Array} 32-byte scalar < L
+ * Normalize data arguments (hex strings to Uint8Array)
  */
-function carrotHashToScalar(domain, ...data) {
-  const hash = carrotHash32(domain, ...data);
-  return scReduce32(hash);
+function normalizeData(data) {
+  return data.map(item => {
+    if (typeof item === 'string') return hexToBytes(item);
+    return item;
+  });
 }
 
 /**
- * Hash to 16 bytes (for anchor, etc.)
- * @param {string} domain - Domain separator
- * @param {...(Uint8Array|string)} data - Data to hash
- * @returns {Uint8Array} 16-byte hash
+ * Keyed Blake2b hash with SpFixedTranscript (C++ hash_base equivalent)
+ * @param {string} domain - Domain separator string
+ * @param {Uint8Array|null} key - Blake2b key (32 bytes), or null for unkeyed
+ * @param {number} outLen - Output length in bytes
+ * @param {...(Uint8Array|string)} data - Transcript data items
+ * @returns {Uint8Array} Hash output
  */
-function carrotHash16(domain, ...data) {
-  const domainBytes = new TextEncoder().encode(domain);
-  let totalLen = domainBytes.length;
-
-  const processed = data.map(item => {
-    if (typeof item === 'string') item = hexToBytes(item);
-    totalLen += item.length;
-    return item;
-  });
-
-  const combined = new Uint8Array(totalLen);
-  let offset = 0;
-  combined.set(domainBytes, offset);
-  offset += domainBytes.length;
-  for (const item of processed) {
-    combined.set(item, offset);
-    offset += item.length;
-  }
-
-  return blake2b(combined, 16);
+function carrotHashBase(domain, key, outLen, ...data) {
+  const transcript = buildTranscript(domain, normalizeData(data));
+  return blake2b(transcript, outLen, key || null);
 }
 
 /**
- * Hash to 8 bytes (for amount/payment ID encryption)
- * @param {string} domain - Domain separator
- * @param {...(Uint8Array|string)} data - Data to hash
- * @returns {Uint8Array} 8-byte hash
+ * Hash to 32 bytes with optional key (keyed Blake2b + SpFixedTranscript)
  */
-function carrotHash8(domain, ...data) {
-  const domainBytes = new TextEncoder().encode(domain);
-  let totalLen = domainBytes.length;
-
-  const processed = data.map(item => {
-    if (typeof item === 'string') item = hexToBytes(item);
-    totalLen += item.length;
-    return item;
-  });
-
-  const combined = new Uint8Array(totalLen);
-  let offset = 0;
-  combined.set(domainBytes, offset);
-  offset += domainBytes.length;
-  for (const item of processed) {
-    combined.set(item, offset);
-    offset += item.length;
-  }
-
-  return blake2b(combined, 8);
+function carrotHash32(domain, key, ...data) {
+  return carrotHashBase(domain, key, 32, ...data);
 }
 
 /**
- * Hash to 3 bytes (for view tag)
- * @param {string} domain - Domain separator
- * @param {...(Uint8Array|string)} data - Data to hash
- * @returns {Uint8Array} 3-byte hash
+ * Hash to scalar with optional key
+ * H_n: 64-byte hash then reduce mod L
  */
-function carrotHash3(domain, ...data) {
-  const domainBytes = new TextEncoder().encode(domain);
-  let totalLen = domainBytes.length;
+function carrotHashToScalar(domain, key, ...data) {
+  const transcript = buildTranscript(domain, normalizeData(data));
+  const hash64 = blake2b(transcript, 64, key || null);
+  return scReduce32(hash64);
+}
 
-  const processed = data.map(item => {
-    if (typeof item === 'string') item = hexToBytes(item);
-    totalLen += item.length;
-    return item;
-  });
+/**
+ * Hash to 16 bytes with key
+ */
+function carrotHash16(domain, key, ...data) {
+  return carrotHashBase(domain, key, 16, ...data);
+}
 
-  const combined = new Uint8Array(totalLen);
-  let offset = 0;
-  combined.set(domainBytes, offset);
-  offset += domainBytes.length;
-  for (const item of processed) {
-    combined.set(item, offset);
-    offset += item.length;
-  }
+/**
+ * Hash to 8 bytes with key
+ */
+function carrotHash8(domain, key, ...data) {
+  return carrotHashBase(domain, key, 8, ...data);
+}
 
-  return blake2b(combined, 3);
+/**
+ * Hash to 3 bytes with key
+ */
+function carrotHash3(domain, key, ...data) {
+  return carrotHashBase(domain, key, 3, ...data);
 }
 
 // =============================================================================
@@ -222,6 +189,7 @@ export function buildCoinbaseInputContext(blockHeight) {
 export function deriveCarrotEphemeralPrivkey(anchor, inputContext, addressSpendPubkey, paymentId) {
   return carrotHashToScalar(
     CARROT_DOMAIN.EPHEMERAL_PRIVKEY,
+    null, // unkeyed (C++ passes nullptr)
     anchor,
     inputContext,
     addressSpendPubkey,
@@ -230,25 +198,25 @@ export function deriveCarrotEphemeralPrivkey(anchor, inputContext, addressSpendP
 }
 
 /**
- * Compute CARROT ephemeral public key
- * For main address: D_e = d_e * G (on X25519 curve)
+ * Compute CARROT ephemeral public key (on X25519/Montgomery curve)
+ * For main address: D_e = d_e * B (X25519 base point, u=9)
  * For subaddress: D_e = d_e * ConvertPointE(K_s)
- *
- * For simplicity, we use Ed25519 scalar multiplication
- * (full X25519 conversion would be needed for production)
  *
  * @param {Uint8Array} ephemeralPrivkey - Ephemeral private key (d_e)
  * @param {Uint8Array} addressSpendPubkey - Address spend pubkey (for subaddress)
  * @param {boolean} isSubaddress - Whether target is a subaddress
- * @returns {Uint8Array} 32-byte ephemeral public key
+ * @returns {Uint8Array} 32-byte ephemeral public key (X25519 u-coordinate)
  */
 export function computeCarrotEphemeralPubkey(ephemeralPrivkey, addressSpendPubkey, isSubaddress = false) {
   if (isSubaddress) {
-    // D_e = d_e * K_s
-    return scalarMultPoint(ephemeralPrivkey, addressSpendPubkey);
+    // D_e = d_e * ConvertPointE(K_s)
+    const spendPubX25519 = edwardsToMontgomeryU(addressSpendPubkey);
+    return x25519ScalarMult(ephemeralPrivkey, spendPubX25519);
   } else {
-    // D_e = d_e * G
-    return scalarMultBase(ephemeralPrivkey);
+    // D_e = d_e * B (X25519 base point u=9)
+    const basePoint = new Uint8Array(32);
+    basePoint[0] = 9;
+    return x25519ScalarMult(ephemeralPrivkey, basePoint);
   }
 }
 
@@ -258,15 +226,18 @@ export function computeCarrotEphemeralPubkey(ephemeralPrivkey, addressSpendPubke
 
 /**
  * Compute CARROT sender-receiver shared secret (un-contextualized)
- * s_sr = d_e * K_v (sender side)
- * s_sr = k_v * D_e (receiver side)
+ * s_sr = d_e * ConvertPointE(K_v)  (sender side, on X25519)
+ * s_sr = k_vi * D_e                (receiver side, on X25519)
  *
  * @param {Uint8Array} ephemeralPrivkey - Ephemeral private key
- * @param {Uint8Array} addressViewPubkey - Address view public key
+ * @param {Uint8Array} addressViewPubkey - Address view public key (Ed25519)
  * @returns {Uint8Array} 32-byte shared secret
  */
 export function computeCarrotSharedSecret(ephemeralPrivkey, addressViewPubkey) {
-  return scalarMultPoint(ephemeralPrivkey, addressViewPubkey);
+  // Convert Ed25519 view pubkey to X25519 u-coordinate
+  const viewPubX25519 = edwardsToMontgomeryU(addressViewPubkey);
+  // X25519 scalar multiplication: s_sr = d_e * D^j_v
+  return x25519ScalarMult(ephemeralPrivkey, viewPubX25519);
 }
 
 /**
@@ -281,9 +252,9 @@ export function computeCarrotSharedSecret(ephemeralPrivkey, addressViewPubkey) {
 export function deriveCarrotSenderReceiverSecret(sharedSecret, ephemeralPubkey, inputContext) {
   return carrotHash32(
     CARROT_DOMAIN.SENDER_RECEIVER_SECRET,
+    sharedSecret, // key = s_sr_unctx
     ephemeralPubkey,
-    inputContext,
-    sharedSecret
+    inputContext
   );
 }
 
@@ -303,13 +274,13 @@ export function deriveCarrotSenderReceiverSecret(sharedSecret, ephemeralPubkey, 
 export function deriveCarrotOnetimeExtensions(senderReceiverSecret, amountCommitment) {
   const extensionG = carrotHashToScalar(
     CARROT_DOMAIN.ONETIME_EXTENSION_G,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     amountCommitment
   );
 
   const extensionT = carrotHashToScalar(
     CARROT_DOMAIN.ONETIME_EXTENSION_T,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     amountCommitment
   );
 
@@ -358,7 +329,7 @@ export function deriveCarrotAmountBlindingFactor(senderReceiverSecret, amount, a
 
   return carrotHashToScalar(
     CARROT_DOMAIN.COMMITMENT_MASK,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     amountBytes,
     addressSpendPubkey,
     typeBytes
@@ -381,7 +352,7 @@ export function deriveCarrotAmountBlindingFactor(senderReceiverSecret, amount, a
 export function deriveCarrotViewTag(sharedSecret, inputContext, onetimeAddress) {
   return carrotHash3(
     CARROT_DOMAIN.VIEW_TAG,
-    sharedSecret,
+    sharedSecret, // key = s_sr_unctx
     inputContext,
     onetimeAddress
   );
@@ -403,7 +374,7 @@ export function deriveCarrotViewTag(sharedSecret, inputContext, onetimeAddress) 
 export function encryptCarrotAnchor(anchor, senderReceiverSecret, onetimeAddress) {
   const mask = carrotHash16(
     CARROT_DOMAIN.ENCRYPTION_MASK_ANCHOR,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     onetimeAddress
   );
 
@@ -426,7 +397,7 @@ export function encryptCarrotAnchor(anchor, senderReceiverSecret, onetimeAddress
 export function encryptCarrotAmount(amount, senderReceiverSecret, onetimeAddress) {
   const mask = carrotHash8(
     CARROT_DOMAIN.ENCRYPTION_MASK_AMOUNT,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     onetimeAddress
   );
 
@@ -457,7 +428,7 @@ export function encryptCarrotAmount(amount, senderReceiverSecret, onetimeAddress
 export function encryptCarrotPaymentId(paymentId, senderReceiverSecret, onetimeAddress) {
   const mask = carrotHash8(
     CARROT_DOMAIN.ENCRYPTION_MASK_PAYMENT_ID,
-    senderReceiverSecret,
+    senderReceiverSecret, // key = s^ctx_sr
     onetimeAddress
   );
 
@@ -495,7 +466,8 @@ export function createCarrotOutput(params) {
     paymentId = new Uint8Array(8),
     enoteType = CARROT_ENOTE_TYPE.PAYMENT,
     isSubaddress = false,
-    anchor = generateJanusAnchor()
+    anchor = generateJanusAnchor(),
+    isCoinbase = false
   } = params;
 
   // 1. Derive ephemeral private key
@@ -524,12 +496,19 @@ export function createCarrotOutput(params) {
   );
 
   // 5. Derive amount blinding factor
-  const amountBlindingFactor = deriveCarrotAmountBlindingFactor(
-    senderReceiverSecret,
-    amount,
-    addressSpendPubkey,
-    enoteType
-  );
+  // For coinbase: k_a = 1 (scalar 1), matching C++ sc_1()
+  let amountBlindingFactor;
+  if (isCoinbase) {
+    amountBlindingFactor = new Uint8Array(32);
+    amountBlindingFactor[0] = 1;
+  } else {
+    amountBlindingFactor = deriveCarrotAmountBlindingFactor(
+      senderReceiverSecret,
+      amount,
+      addressSpendPubkey,
+      enoteType
+    );
+  }
 
   // 6. Create amount commitment
   const amountCommitment = commit(amount, amountBlindingFactor);
@@ -591,9 +570,9 @@ export function createCarrotOutput(params) {
 export function computeCarrotSpecialAnchor(ephemeralPubkey, inputContext, onetimeAddress, viewSecretKey) {
   return carrotHash16(
     CARROT_DOMAIN.JANUS_ANCHOR_SPECIAL,
+    viewSecretKey, // key = k_v
     ephemeralPubkey,
     inputContext,
-    onetimeAddress,
-    viewSecretKey
+    onetimeAddress
   );
 }

@@ -116,6 +116,9 @@ export class WalletOutput {
     // Subaddress
     this.subaddressIndex = data.subaddressIndex || { major: 0, minor: 0 };
 
+    // CARROT flag
+    this.isCarrot = data.isCarrot || false;
+
     // Spending status
     this.isSpent = data.isSpent || false;
     this.spentHeight = data.spentHeight || null;
@@ -192,6 +195,7 @@ export class WalletOutput {
       spentTxHash: this.spentTxHash,
       unlockTime: this.unlockTime.toString(),
       txType: this.txType,
+      isCarrot: this.isCarrot,
       isFrozen: this.isFrozen,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt

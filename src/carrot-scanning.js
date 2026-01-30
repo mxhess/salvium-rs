@@ -615,18 +615,6 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     : output.enoteEphemeralPubkey;
   const encryptedAmount = output.encryptedAmount;
 
-  // Debug: trace entry (temporary)
-  if (globalThis._scanCarrotDebugCount === undefined) globalThis._scanCarrotDebugCount = 0;
-  globalThis._scanCarrotDebugCount++;
-  if (globalThis._scanCarrotDebugCount <= 3) {
-    console.log(`[scanCarrotOutput ENTRY #${globalThis._scanCarrotDebugCount}]`);
-    console.log(`  onetimeAddress: ${onetimeAddress ? 'SET' : 'NULL'}`);
-    console.log(`  viewTag: ${viewTag ? (Array.isArray(viewTag) || viewTag instanceof Uint8Array ? Array.from(viewTag).join(',') : viewTag) : 'NULL'}`);
-    console.log(`  enoteEphemeralPubkey: ${enoteEphemeralPubkey ? 'SET' : 'NULL'}`);
-    console.log(`  viewIncomingKey: ${viewIncomingKey ? 'SET' : 'NULL'}`);
-    console.log(`  accountSpendPubkey: ${accountSpendPubkey ? 'SET' : 'NULL'}`);
-  }
-
   if (!onetimeAddress) {
     throw new Error('scanCarrotOutput: onetimeAddress is required');
   }
@@ -645,21 +633,6 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
   const viewTagMatch = expectedViewTag[0] === viewTag[0] &&
                        expectedViewTag[1] === viewTag[1] &&
                        expectedViewTag[2] === viewTag[2];
-
-  // Debug view tag comparison (temporary)
-  if (globalThis._carrotDebugCount === undefined) globalThis._carrotDebugCount = 0;
-  globalThis._carrotDebugCount++;
-  if (globalThis._carrotDebugCount <= 3) {
-    console.log(`[CARROT VIEW TAG DEBUG #${globalThis._carrotDebugCount}]`);
-    console.log(`  expected: ${expectedViewTag[0]},${expectedViewTag[1]},${expectedViewTag[2]}`);
-    console.log(`  received: ${viewTag[0]},${viewTag[1]},${viewTag[2]}`);
-    console.log(`  match: ${viewTagMatch}`);
-    console.log(`  viewIncomingKey: ${bytesToHex(viewIncomingKey)}`);
-    console.log(`  enoteEphemeralPubkey: ${bytesToHex(enoteEphemeralPubkey)}`);
-    console.log(`  senderReceiverUnctx: ${bytesToHex(senderReceiverUnctx)}`);
-    console.log(`  inputContext (${inputContext.length} bytes): ${bytesToHex(inputContext)}`);
-    console.log(`  onetimeAddress: ${bytesToHex(onetimeAddress)}`);
-  }
 
   if (!viewTagMatch) {
     return null; // View tag mismatch - not our output

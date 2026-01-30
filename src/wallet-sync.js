@@ -27,6 +27,7 @@ import { generateKeyImage } from './keyimage.js';
 import { parseTransaction, extractTxPubKey, extractPaymentId } from './transaction.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { TX_TYPE } from './wallet.js';
+import { commit as pedersonCommit } from './transaction/serialization.js';
 
 // ============================================================================
 // CONSTANTS
@@ -1125,10 +1126,6 @@ export class WalletSync {
       // CARROT outputs have: 3-byte view tag, enote ephemeral pubkey
       const isCarrotOutput = this._isCarrotOutput(output);
 
-      // Debug: log CARROT detection after hardfork
-      if (header.height >= 334750 && header.height <= 334760) {
-        console.log(`[DEBUG CARROT] height=${header.height} output=${i} isCarrot=${isCarrotOutput} viewTag=${output.viewTag} type=${output.type} target.type=${output.target?.type}`);
-      }
 
       if (isCarrotOutput && this.carrotKeys) {
         // CARROT scanning - pass txPubKey (D_e) from tx_extra
@@ -1156,9 +1153,6 @@ export class WalletSync {
           txType,
           isCarrot: scanResult.isCarrot || false
         });
-
-        // Debug: log key image for found outputs
-        console.log(`[OUTPUT] Found at height ${header.height}: keyImage=${walletOutput.keyImage ? walletOutput.keyImage.slice(0,16) + '...' : 'NULL'} amount=${walletOutput.amount}`);
 
         await this.storage.putOutput(walletOutput);
         ownedOutputs.push(walletOutput);
@@ -1239,11 +1233,24 @@ export class WalletSync {
     }
 
     // Get amount commitment from RingCT
-    const amountCommitment = tx.rct?.outPk?.[outputIndex]
+    let amountCommitment = tx.rct?.outPk?.[outputIndex]
       ? (typeof tx.rct.outPk[outputIndex] === 'string'
           ? hexToBytes(tx.rct.outPk[outputIndex])
           : tx.rct.outPk[outputIndex])
       : null;
+
+    // For coinbase (RCTTypeNull), compute zeroCommit(amount) = G + amount*H
+    // This matches C++ rct::zeroCommit() used during coinbase scanning
+    const rctType = tx.rct?.type ?? 0;
+    if (!amountCommitment && rctType === 0 && output.amount !== undefined) {
+      const clearAmount = typeof output.amount === 'bigint'
+        ? output.amount
+        : BigInt(output.amount || 0);
+      // Blinding factor = 1 (scalar 1 in LE)
+      const scalarOne = new Uint8Array(32);
+      scalarOne[0] = 1;
+      amountCommitment = pedersonCommit(clearAmount, scalarOne);
+    }
 
     // Use the passed txPubKey (D_e) as the enote ephemeral pubkey
     // It was extracted from tx_extra by the caller
@@ -1340,8 +1347,16 @@ export class WalletSync {
       }
     }
 
+    // For coinbase (RCTTypeNull), amount is clear-text on the output, not encrypted
+    let amount = result.amount;
+    if (amount === 0n && rctType === 0 && output.amount !== undefined) {
+      amount = typeof output.amount === 'bigint'
+        ? output.amount
+        : BigInt(output.amount || 0);
+    }
+
     return {
-      amount: result.amount,
+      amount,
       mask: result.mask,
       subaddressIndex: result.subaddressIndex,
       keyImage,
@@ -1421,15 +1436,21 @@ export class WalletSync {
     let amount = 0n;
     let mask = null;
 
-    const ecdhInfo = tx.rct?.ecdhInfo?.[outputIndex];
-    if (ecdhInfo?.amount) {
-      const sharedSecret = computeSharedSecret(derivation, outputIndex);
-      const encryptedAmount = typeof ecdhInfo.amount === 'string'
-        ? hexToBytes(ecdhInfo.amount)
-        : ecdhInfo.amount;
-      const decoded = ecdhDecodeFull(encryptedAmount, sharedSecret);
-      amount = decoded.amount;
-      mask = decoded.mask;
+    const rctType = tx.rct?.type ?? 0;
+    if (rctType === 0) {
+      // RCTTypeNull (coinbase): amount is in clear text on the output
+      amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount || 0);
+    } else {
+      const ecdhInfo = tx.rct?.ecdhInfo?.[outputIndex];
+      if (ecdhInfo?.amount) {
+        const sharedSecret = computeSharedSecret(derivation, outputIndex);
+        const encryptedAmount = typeof ecdhInfo.amount === 'string'
+          ? hexToBytes(ecdhInfo.amount)
+          : ecdhInfo.amount;
+        const decoded = ecdhDecodeFull(encryptedAmount, sharedSecret);
+        amount = decoded.amount;
+        mask = decoded.mask;
+      }
     }
 
     // Generate key image if we have spend key
