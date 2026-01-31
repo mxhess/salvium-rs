@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 blake2b_simd = "1.0"
 wasm-bindgen = "0.2"
+curve25519-dalek = { version = "4", features = ["alloc"] }
 
 [profile.release]
 opt-level = 3

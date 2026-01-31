@@ -14,6 +14,10 @@ export {
   getCurrentBackendType,
   keccak256,
   blake2b,
+  scAdd, scSub, scMul, scMulAdd, scMulSub,
+  scReduce32, scReduce64, scInvert, scCheck, scIsZero,
+  scalarMultBase, scalarMultPoint, pointAddCompressed,
+  pointSubCompressed, pointNegate, doubleScalarMultBase,
 } from './provider.js';
 
 // Backends (for direct access / testing)

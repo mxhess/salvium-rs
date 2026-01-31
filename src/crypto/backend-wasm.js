@@ -56,4 +56,24 @@ export class WasmCryptoBackend {
     }
     return this.wasm.blake2b_hash(data, outLen);
   }
+
+  // Scalar ops
+  scAdd(a, b) { return this.wasm.sc_add(a, b); }
+  scSub(a, b) { return this.wasm.sc_sub(a, b); }
+  scMul(a, b) { return this.wasm.sc_mul(a, b); }
+  scMulAdd(a, b, c) { return this.wasm.sc_mul_add(a, b, c); }
+  scMulSub(a, b, c) { return this.wasm.sc_mul_sub(a, b, c); }
+  scReduce32(s) { return this.wasm.sc_reduce32(s); }
+  scReduce64(s) { return this.wasm.sc_reduce64(s); }
+  scInvert(a) { return this.wasm.sc_invert(a); }
+  scCheck(s) { return this.wasm.sc_check(s); }
+  scIsZero(s) { return this.wasm.sc_is_zero(s); }
+
+  // Point ops
+  scalarMultBase(s) { return this.wasm.scalar_mult_base(s); }
+  scalarMultPoint(s, p) { return this.wasm.scalar_mult_point(s, p); }
+  pointAddCompressed(p, q) { return this.wasm.point_add_compressed(p, q); }
+  pointSubCompressed(p, q) { return this.wasm.point_sub_compressed(p, q); }
+  pointNegate(p) { return this.wasm.point_negate(p); }
+  doubleScalarMultBase(a, p, b) { return this.wasm.double_scalar_mult_base(a, p, b); }
 }

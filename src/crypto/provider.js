@@ -68,3 +68,23 @@ export function keccak256(data) {
 export function blake2b(data, outLen, key) {
   return getCryptoBackend().blake2b(data, outLen, key);
 }
+
+// Scalar ops
+export function scAdd(a, b) { return getCryptoBackend().scAdd(a, b); }
+export function scSub(a, b) { return getCryptoBackend().scSub(a, b); }
+export function scMul(a, b) { return getCryptoBackend().scMul(a, b); }
+export function scMulAdd(a, b, c) { return getCryptoBackend().scMulAdd(a, b, c); }
+export function scMulSub(a, b, c) { return getCryptoBackend().scMulSub(a, b, c); }
+export function scReduce32(s) { return getCryptoBackend().scReduce32(s); }
+export function scReduce64(s) { return getCryptoBackend().scReduce64(s); }
+export function scInvert(a) { return getCryptoBackend().scInvert(a); }
+export function scCheck(s) { return getCryptoBackend().scCheck(s); }
+export function scIsZero(s) { return getCryptoBackend().scIsZero(s); }
+
+// Point ops
+export function scalarMultBase(s) { return getCryptoBackend().scalarMultBase(s); }
+export function scalarMultPoint(s, p) { return getCryptoBackend().scalarMultPoint(s, p); }
+export function pointAddCompressed(p, q) { return getCryptoBackend().pointAddCompressed(p, q); }
+export function pointSubCompressed(p, q) { return getCryptoBackend().pointSubCompressed(p, q); }
+export function pointNegate(p) { return getCryptoBackend().pointNegate(p); }
+export function doubleScalarMultBase(a, p, b) { return getCryptoBackend().doubleScalarMultBase(a, p, b); }
