@@ -9,7 +9,7 @@
 
 import { ed25519, ed25519_hasher } from '@noble/curves/ed25519.js';
 import { mod, invert, Field } from '@noble/curves/abstract/modular.js';
-import { keccak256 } from './keccak.js';
+import { keccak256 } from './crypto/index.js';
 
 // Ed25519 curve order (L)
 const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');

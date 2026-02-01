@@ -11,7 +11,7 @@
  * @module transaction/analysis
  */
 
-import { keccak256 } from '../keccak.js';
+import { keccak256 } from '../crypto/index.js';
 import { hexToBytes } from '../address.js';
 
 import { TXIN_TYPE } from './constants.js';

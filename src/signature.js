@@ -10,7 +10,7 @@
  * V2: hash = Keccak256(domain_separator + spend_key + view_key + mode + varint(len) + message)
  */
 
-import { keccak256 } from './keccak.js';
+import { keccak256 } from './crypto/index.js';
 import { decode } from './base58.js';
 import { parseAddress } from './address.js';
 import {

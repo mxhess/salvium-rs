@@ -15,7 +15,7 @@ import { MemoryStorage } from '../wallet-store.js';
 import { WalletSync } from '../wallet-sync.js';
 import { NETWORK_ID, CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW } from '../consensus.js';
 import { generateSeed, deriveKeys, deriveCarrotKeys } from '../carrot.js';
-import { generateKeyDerivation, deriveSecretKey } from '../scanning.js';
+import { generateKeyDerivation, deriveSecretKey } from '../crypto/index.js';
 import { selectUTXOs } from '../transaction/utxo.js';
 import {
   buildTransaction,

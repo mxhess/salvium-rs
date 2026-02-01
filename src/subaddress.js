@@ -5,13 +5,10 @@
  * plus integrated address creation.
  */
 
-import { keccak256 } from './keccak.js';
-import { blake2b } from './blake2b.js';
 import {
-  scalarMultBase,
-  scalarMultPoint,
-  pointAddCompressed
-} from './ed25519.js';
+  keccak256, blake2b,
+  scalarMultBase, scalarMultPoint, pointAddCompressed,
+} from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;

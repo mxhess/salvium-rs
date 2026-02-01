@@ -19,8 +19,8 @@
 import { generateSeed, deriveKeys, deriveCarrotKeys } from './carrot.js';
 import { createAddress, parseAddress, hexToBytes, bytesToHex } from './address.js';
 import { cnSubaddress } from './subaddress.js';
-import { generateKeyDerivation, derivationToScalar, deriveSecretKey, scanTransaction } from './scanning.js';
-import { generateKeyImage } from './keyimage.js';
+import { derivationToScalar, scanTransaction } from './scanning.js';
+import { generateKeyDerivation, deriveSecretKey, generateKeyImage, scalarMultBase } from './crypto/index.js';
 import {
   buildTransaction,
   buildStakeTransaction,
@@ -259,7 +259,6 @@ export class Wallet {
       : spendPublicKey;
 
     // Derive view public key from view secret key
-    const { scalarMultBase } = require('./ed25519.js');
     wallet._viewPublicKey = scalarMultBase(wallet._viewSecretKey);
 
     return wallet;

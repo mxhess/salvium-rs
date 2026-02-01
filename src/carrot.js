@@ -3,10 +3,9 @@
  * Implements key derivation as per Salvium specification
  */
 
-import { blake2b } from './blake2b.js';
-import { keccak256 } from './keccak.js';
 import { hexToBytes, bytesToHex } from './address.js';
-import { scalarMultBase, computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey } from './ed25519.js';
+import { computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey } from './ed25519.js';
+import { blake2b, keccak256, scalarMultBase } from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;

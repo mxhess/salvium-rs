@@ -12,7 +12,7 @@
  */
 
 import { bytesToHex, hexToBytes } from './address.js';
-import { keccak256 } from './keccak.js';
+import { keccak256 } from './crypto/index.js';
 import {
   signTransaction,
   serializeTransaction,

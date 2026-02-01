@@ -15,10 +15,9 @@
  * - Salvium carrot_core/enote_utils.cpp
  */
 
-import { blake2b } from './blake2b.js';
-import { keccak256 } from './keccak.js';
 import { hexToBytes, bytesToHex } from './address.js';
-import { scalarMultPoint, pointFromBytes, pointToBytes } from './ed25519.js';
+import { pointFromBytes, pointToBytes } from './ed25519.js';
+import { blake2b, keccak256, scalarMultPoint } from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
@@ -698,8 +697,7 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
 // Import additional ed25519 functions
 // ============================================================================
 
-import { scalarMultBase, pointAddCompressed } from './ed25519.js';
-import { hashToPoint } from './keyimage.js';
+import { scalarMultBase, pointAddCompressed, hashToPoint } from './crypto/index.js';
 
 // Group order L for scalar reduction (also defined at top for clarity)
 const L_ORDER = (1n << 252n) + 27742317777372353535851937790883648493n;

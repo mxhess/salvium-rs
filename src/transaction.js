@@ -10,10 +10,14 @@
  * Reference: Salvium/Monero src/ringct/rctOps.cpp, src/ringct/rctSigs.cpp
  */
 
-import { keccak256, keccak256Hex } from './keccak.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorG, getGeneratorT } from './ed25519.js';
-import { generateKeyDerivation, derivationToScalar, derivePublicKey, deriveSecretKey } from './scanning.js';
-import { hashToPoint, generateKeyImage } from './keyimage.js';
+import { keccak256Hex } from './keccak.js';
+import { getGeneratorG, getGeneratorT } from './ed25519.js';
+import { derivationToScalar } from './scanning.js';
+import {
+  keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed,
+  generateKeyDerivation, derivePublicKey, deriveSecretKey,
+  hashToPoint, generateKeyImage,
+} from './crypto/index.js';
 import { bytesToHex, hexToBytes } from './address.js';
 
 // =============================================================================

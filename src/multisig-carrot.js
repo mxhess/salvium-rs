@@ -13,9 +13,8 @@
  */
 
 import { bytesToHex, hexToBytes } from './address.js';
-import { keccak256 } from './keccak.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed } from './ed25519.js';
 import { computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey } from './ed25519.js';
+import { keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed } from './crypto/index.js';
 import { scAdd } from './transaction.js';
 import { MultisigAccount } from './multisig.js';
 import {

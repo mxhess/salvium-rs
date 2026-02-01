@@ -14,13 +14,16 @@
  * @module transaction/carrot-output
  */
 
-import { blake2b } from '../blake2b.js';
 import { hexToBytes, bytesToHex } from '../address.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../ed25519.js';
+import { getGeneratorT } from '../ed25519.js';
 import { edwardsToMontgomeryU, x25519ScalarMult } from '../carrot-scanning.js';
+import {
+  blake2b, scalarMultBase, scalarMultPoint, pointAddCompressed,
+  scReduce32, commit,
+} from '../crypto/index.js';
 
 import { CARROT_DOMAIN, CARROT_ENOTE_TYPE } from './constants.js';
-import { scReduce32, bigIntToBytes, commit } from './serialization.js';
+import { bigIntToBytes } from './serialization.js';
 
 // =============================================================================
 // CARROT HASH FUNCTIONS

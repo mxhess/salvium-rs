@@ -9,7 +9,7 @@
  */
 
 import { BASE58_ALPHABET, BASE58_FULL_BLOCK_SIZE, BASE58_FULL_ENCODED_BLOCK_SIZE, BASE58_ENCODED_BLOCK_SIZES } from './constants.js';
-import { keccak256 } from './keccak.js';
+import { keccak256 } from './crypto/index.js';
 
 // Build reverse alphabet lookup
 const ALPHABET_MAP = new Map();

@@ -8,7 +8,8 @@
  * Reference: cryptonote_basic/miner.cpp, cryptonote_basic/difficulty.cpp
  */
 
-import { keccak256, cnFastHash } from './keccak.js';
+import { cnFastHash } from './keccak.js';
+import { keccak256 } from './crypto/index.js';
 import { encodeVarint, serializeBlockHeader, HF_VERSION_ENABLE_ORACLE } from './transaction.js';
 
 // =============================================================================
