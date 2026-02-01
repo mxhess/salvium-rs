@@ -25,3 +25,4 @@ export {
 
 // Backends (for direct access / testing)
 export { JsCryptoBackend } from './backend-js.js';
+export { WasmCryptoBackend } from './backend-wasm.js';
