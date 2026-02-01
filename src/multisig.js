@@ -18,9 +18,7 @@
  */
 
 import { bytesToHex, hexToBytes } from './address.js';
-import { randomScalar } from './ed25519.js';
-import { keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed } from './crypto/index.js';
-import { scReduce32, scAdd, scMul, scMulAdd } from './transaction.js';
+import { keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, randomScalar, scReduce32, scAdd, scMul, scMulAdd } from './crypto/index.js';
 import { encode as base58Encode, decode as base58Decode } from './base58.js';
 
 // ============================================================================

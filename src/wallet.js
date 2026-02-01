@@ -19,8 +19,8 @@
 import { generateSeed, deriveKeys, deriveCarrotKeys } from './carrot.js';
 import { createAddress, parseAddress, hexToBytes, bytesToHex } from './address.js';
 import { cnSubaddress } from './subaddress.js';
-import { derivationToScalar, scanTransaction } from './scanning.js';
-import { generateKeyDerivation, deriveSecretKey, generateKeyImage, scalarMultBase } from './crypto/index.js';
+import { scanTransaction } from './scanning.js';
+import { generateKeyDerivation, deriveSecretKey, generateKeyImage, scalarMultBase, derivationToScalar } from './crypto/index.js';
 import {
   buildTransaction,
   buildStakeTransaction,

@@ -4,8 +4,10 @@
  */
 
 import { hexToBytes, bytesToHex } from './address.js';
-import { computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey } from './ed25519.js';
-import { blake2b, keccak256, scalarMultBase } from './crypto/index.js';
+import {
+  blake2b, keccak256, scalarMultBase,
+  computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey,
+} from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;

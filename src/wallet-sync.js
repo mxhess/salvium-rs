@@ -11,13 +11,6 @@
  */
 
 import { WalletOutput, WalletTransaction } from './wallet-store.js';
-import {
-  deriveViewTag,
-  computeSharedSecret,
-  ecdhDecodeFull,
-  deriveSubaddressPublicKey,
-  scalarAdd
-} from './scanning.js';
 import { cnSubaddressSecretKey, carrotIndexExtensionGenerator, carrotSubaddressScalar } from './subaddress.js';
 import { scanCarrotOutput, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage } from './carrot-scanning.js';
 import { parseTransaction, extractTxPubKey, extractPaymentId } from './transaction.js';
@@ -26,6 +19,8 @@ import { TX_TYPE } from './wallet.js';
 import {
   generateKeyDerivation, derivePublicKey, deriveSecretKey,
   generateKeyImage, commit as pedersonCommit,
+  deriveViewTag, computeSharedSecret, ecdhDecodeFull,
+  deriveSubaddressPublicKey, scalarAdd,
 } from './crypto/index.js';
 
 // ============================================================================

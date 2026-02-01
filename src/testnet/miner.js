@@ -10,7 +10,7 @@
 import { RandomXContext } from '../randomx/index.js';
 import { constructBlockHashingBlob, findNonceOffset, setNonce, checkHash } from '../mining.js';
 import { getBlockHash, serializeBlockHeader } from '../block/serialization.js';
-import { cnFastHash } from '../keccak.js';
+import { cnFastHash } from '../crypto/index.js';
 import { serializeTxPrefix } from '../transaction/serialization.js';
 import { bytesToHex, hexToBytes } from '../address.js';
 import { createMinerTransaction, createEmptyProtocolTransaction } from './miner-tx.js';

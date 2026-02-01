@@ -13,9 +13,10 @@
  */
 
 import { bytesToHex, hexToBytes } from './address.js';
-import { computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey } from './ed25519.js';
-import { keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed } from './crypto/index.js';
-import { scAdd } from './transaction.js';
+import {
+  keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, scAdd,
+  computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey,
+} from './crypto/index.js';
 import { MultisigAccount } from './multisig.js';
 import {
   makeViewBalanceSecret,

@@ -15,11 +15,10 @@
  */
 
 import { hexToBytes, bytesToHex } from '../address.js';
-import { getGeneratorT } from '../ed25519.js';
 import { edwardsToMontgomeryU, x25519ScalarMult } from '../carrot-scanning.js';
 import {
   blake2b, scalarMultBase, scalarMultPoint, pointAddCompressed,
-  scReduce32, commit,
+  scReduce32, commit, getGeneratorT,
 } from '../crypto/index.js';
 
 import { CARROT_DOMAIN, CARROT_ENOTE_TYPE } from './constants.js';

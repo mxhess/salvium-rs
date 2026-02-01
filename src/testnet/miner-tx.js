@@ -11,10 +11,10 @@
  * @module testnet/miner-tx
  */
 
-import { randomScalar } from '../ed25519.js';
-import { deriveViewTag } from '../scanning.js';
-import { scalarMultBase, generateKeyDerivation, derivePublicKey } from '../crypto/index.js';
-import { cnFastHash } from '../keccak.js';
+import {
+  scalarMultBase, generateKeyDerivation, derivePublicKey,
+  randomScalar, deriveViewTag, cnFastHash,
+} from '../crypto/index.js';
 import { serializeTxPrefix, encodeVarint } from '../transaction/serialization.js';
 import { bytesToHex, hexToBytes } from '../address.js';
 import { TX_TYPE, RCT_TYPE } from '../transaction/constants.js';
