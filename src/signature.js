@@ -10,17 +10,9 @@
  * V2: hash = Keccak256(domain_separator + spend_key + view_key + mode + varint(len) + message)
  */
 
-import { keccak256 } from './crypto/index.js';
+import { keccak256, scCheck, scIsZero, scSub, scReduce32, doubleScalarMultBase, isIdentity } from './crypto/index.js';
 import { decode } from './base58.js';
 import { parseAddress } from './address.js';
-import {
-  scalarCheck,
-  scalarIsNonzero,
-  scalarSub,
-  pointFromBytes,
-  doubleScalarMultBase,
-  isIdentity
-} from './ed25519.js';
 
 // Domain separator for V2 signatures (includes null terminator)
 const HASH_KEY_MESSAGE_SIGNING = new TextEncoder().encode('MoneroMessageSignature\0');
@@ -99,67 +91,28 @@ function getMessageHashV2(message, spendKey, viewKey, mode) {
  */
 function checkSignature(hash, publicKey, sigC, sigR) {
   // Validate scalars
-  if (!scalarCheck(sigC) || !scalarCheck(sigR) || !scalarIsNonzero(sigC)) {
-    return false;
-  }
-
-  // Decompress public key
-  const P = pointFromBytes(publicKey);
-  if (!P) {
+  if (!scCheck(sigC) || !scCheck(sigR) || scIsZero(sigC)) {
     return false;
   }
 
   // Compute R' = c*P + r*G using double scalar multiplication
-  const RBytes = doubleScalarMultBase(sigC, P, sigR);
-
-  // Check R' is not identity
-  if (isIdentity(RBytes)) {
+  // doubleScalarMultBase takes compressed bytes; returns null if publicKey is invalid
+  const RBytes = doubleScalarMultBase(sigC, publicKey, sigR);
+  if (!RBytes || isIdentity(RBytes)) {
     return false;
   }
 
   // Recompute challenge: c' = H(hash || publicKey || R')
-  // CryptoNote signature uses: c = H(m || P || R) where m is the message hash
   const buf = new Uint8Array(32 + 32 + 32);
   buf.set(hash, 0);
   buf.set(publicKey, 32);
   buf.set(RBytes, 64);
 
-  const cPrime = keccak256(buf);
-
-  // Reduce c' mod L
-  const cPrimeReduced = new Uint8Array(32);
-  reduceScalar32(cPrimeReduced, cPrime);
+  const cPrimeReduced = scReduce32(keccak256(buf));
 
   // Check c' == c
-  const diff = new Uint8Array(32);
-  scalarSub(diff, cPrimeReduced, sigC);
-
-  return !scalarIsNonzero(diff);
-}
-
-// Group order L
-const L = (1n << 252n) + 27742317777372353535851937790883648493n;
-
-/**
- * Reduce a 32-byte value modulo L using BigInt
- * @param {Uint8Array} r - 32-byte output
- * @param {Uint8Array} x - 32-byte input
- */
-function reduceScalar32(r, x) {
-  // Convert to BigInt (little-endian)
-  let n = 0n;
-  for (let i = 31; i >= 0; i--) {
-    n = (n << 8n) | BigInt(x[i]);
-  }
-
-  // Reduce mod L
-  n = n % L;
-
-  // Convert back to bytes (little-endian)
-  for (let i = 0; i < 32; i++) {
-    r[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
+  const diff = scSub(cPrimeReduced, sigC);
+  return scIsZero(diff);
 }
 
 /**

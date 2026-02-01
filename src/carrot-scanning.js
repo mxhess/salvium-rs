@@ -16,7 +16,6 @@
  */
 
 import { hexToBytes, bytesToHex } from './address.js';
-import { pointFromBytes, pointToBytes } from './ed25519.js';
 import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint } from './crypto/index.js';
 
 // Group order L for scalar reduction
