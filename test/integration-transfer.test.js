@@ -14,22 +14,47 @@
  *        DRY_RUN=0 bun test/integration-transfer.test.js
  */
 
+import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
 import { Wallet } from '../src/wallet.js';
 import { createWalletSync } from '../src/wallet-sync.js';
 import { MemoryStorage } from '../src/wallet-store.js';
 import { transfer, sweep, stake } from '../src/wallet/transfer.js';
 
+import { existsSync } from 'node:fs';
+
+// Initialize WASM backend for correct hash-to-point (matches C++ ge_fromfe_frombytes_vartime)
+await setCryptoBackend('wasm');
+
 const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
 const WALLET_FILE = process.env.WALLET_FILE || `${process.env.HOME}/testnet-wallet/wallet.json`;
 const NETWORK = process.env.NETWORK || 'testnet';
 const DRY_RUN = process.env.DRY_RUN !== '0';
+// Optional sync cache — set to a file path to persist wallet sync state between runs.
+// Set SYNC_CACHE=0 to disable. Default: alongside wallet file.
+const SYNC_CACHE = process.env.SYNC_CACHE === '0' ? null
+  : (process.env.SYNC_CACHE || WALLET_FILE.replace(/\.json$/, '-sync.json'));
 
 let daemon;
 
-async function syncWallet(label, keys) {
-  console.log(`Syncing ${label}...`);
+async function syncWallet(label, keys, cacheFile = null) {
   const storage = new MemoryStorage();
+
+  // Try loading cached sync state
+  let cachedHeight = 0;
+  if (cacheFile && existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(await Bun.file(cacheFile).text());
+      storage.load(cached);
+      cachedHeight = await storage.getSyncHeight();
+      console.log(`Syncing ${label}... (resuming from block ${cachedHeight})`);
+    } catch (e) {
+      console.log(`Syncing ${label}... (cache unreadable, starting fresh)`);
+    }
+  } else {
+    console.log(`Syncing ${label}...`);
+  }
+
   const sync = createWalletSync({
     daemon,
     keys,
@@ -38,6 +63,15 @@ async function syncWallet(label, keys) {
   });
 
   await sync.start();
+
+  // Save sync state for next run
+  if (cacheFile) {
+    await Bun.write(cacheFile, JSON.stringify(storage.dump()));
+    const newHeight = await storage.getSyncHeight();
+    if (newHeight > cachedHeight) {
+      console.log(`  Synced ${newHeight - cachedHeight} new blocks (saved to ${cacheFile})`);
+    }
+  }
 
   const infoResp = await daemon.getInfo();
   const currentHeight = infoResp.result?.height || infoResp.data?.height || 0;
@@ -49,8 +83,17 @@ async function syncWallet(label, keys) {
   let spendableBalance = 0n;
   for (const o of spendable) spendableBalance += o.amount;
 
+  // Detect dominant asset type
+  const assetCounts = {};
+  for (const o of spendable) {
+    const a = o.assetType || 'SAL';
+    assetCounts[a] = (assetCounts[a] || 0) + 1;
+  }
+  const detectedAsset = Object.entries(assetCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'SAL';
+
   console.log(`  ${allOutputs.length} unspent (${spendable.length} spendable)`);
-  console.log(`  Balance: ${Number(balance) / 1e8} SAL (${Number(spendableBalance) / 1e8} SAL spendable)`);
+  console.log(`  Asset types: ${JSON.stringify(assetCounts)}`);
+  console.log(`  Balance: ${Number(balance) / 1e8} ${detectedAsset} (${Number(spendableBalance) / 1e8} ${detectedAsset} spendable)`);
 
   return { sync, storage, balance, spendableBalance, outputs: allOutputs, spendable };
 }
@@ -65,7 +108,7 @@ async function testTransfer(keys, storage, toAddress, amount, label) {
       wallet: { keys, storage },
       daemon,
       destinations: [{ address: toAddress, amount }],
-      options: { priority: 'default', dryRun: DRY_RUN }
+      options: { priority: 'default', network: NETWORK, dryRun: DRY_RUN }
     });
 
     console.log(`  TX Hash: ${result.txHash}`);
@@ -73,6 +116,14 @@ async function testTransfer(keys, storage, toAddress, amount, label) {
     console.log(`  Inputs: ${result.inputCount}, Outputs: ${result.outputCount}`);
     console.log(`  Serialized: ${result.serializedHex.length / 2} bytes`);
     console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);
+
+    // Mark spent outputs so subsequent transfers don't re-use them
+    if (!DRY_RUN && result.spentKeyImages) {
+      for (const keyImage of result.spentKeyImages) {
+        await storage.markOutputSpent(keyImage);
+      }
+    }
+
     return result;
   } catch (e) {
     console.error(`  FAILED: ${e.message}`);
@@ -118,7 +169,7 @@ async function main() {
   console.log(`  Address: ${addressB}\n`);
 
   // Sync wallet A
-  const syncA = await syncWallet('Wallet A', keysA);
+  const syncA = await syncWallet('Wallet A', keysA, SYNC_CACHE);
 
   if (syncA.spendableBalance === 0n) {
     console.log('\nWallet A has no spendable balance. Mine more blocks.');
@@ -162,6 +213,33 @@ async function main() {
     console.log(`  Lock: ${stakeResult.lockPeriod} blocks`);
     console.log(`  Inputs: ${stakeResult.inputCount}, Outputs: ${stakeResult.outputCount}`);
     console.log(`  Serialized: ${stakeResult.serializedHex.length / 2} bytes`);
+    console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);
+
+    // Mark spent outputs so sweep doesn't re-use them
+    if (!DRY_RUN && stakeResult.spentKeyImages) {
+      for (const keyImage of stakeResult.spentKeyImages) {
+        await syncA.storage.markOutputSpent(keyImage);
+      }
+    }
+  } catch (e) {
+    console.error(`  FAILED: ${e.message}`);
+    if (e.stack) console.error(e.stack.split('\n').slice(1, 4).join('\n'));
+  }
+
+  // Test 4: Sweep all back to self (wallet A)
+  console.log('\n=== Sweep Test (A → A) ===');
+  try {
+    const sweepResult = await sweep({
+      wallet: { keys: keysA, storage: syncA.storage },
+      daemon,
+      address: walletAJson.address,
+      options: { priority: 'default', network: NETWORK, dryRun: DRY_RUN }
+    });
+    console.log(`  TX Hash: ${sweepResult.txHash}`);
+    console.log(`  Fee: ${Number(sweepResult.fee) / 1e8} SAL`);
+    console.log(`  Amount: ${Number(sweepResult.amount) / 1e8} SAL`);
+    console.log(`  Inputs: ${sweepResult.inputCount}`);
+    console.log(`  Serialized: ${sweepResult.serializedHex.length / 2} bytes`);
     console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);
   } catch (e) {
     console.error(`  FAILED: ${e.message}`);

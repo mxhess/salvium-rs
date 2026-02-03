@@ -26,7 +26,7 @@ export { UTXO_STRATEGY };
  * @param {number} options.minConfirmations - Minimum confirmations required (default: 10)
  * @param {number} options.currentHeight - Current blockchain height (for confirmation check)
  * @param {bigint} options.dustThreshold - Minimum output value to consider (default: 1000000n)
- * @param {number} options.maxInputs - Maximum inputs to use (default: 150)
+ * @param {number} options.maxInputs - Maximum inputs to use (default: 16 for TCLSAG tx size limit)
  * @returns {Object} { selected: Array<Object>, totalAmount: bigint, changeAmount: bigint, estimatedFee: bigint }
  */
 export function selectUTXOs(utxos, targetAmount, feePerInput, options = {}) {
@@ -35,7 +35,10 @@ export function selectUTXOs(utxos, targetAmount, feePerInput, options = {}) {
     minConfirmations = CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE,
     currentHeight = 0,
     dustThreshold = 1000000n,
-    maxInputs = 150
+    // Max inputs limited by daemon's tx weight limit (149400 bytes).
+    // Each TCLSAG input adds ~2KB (ring 16 × 2 × 32B responses + commitments + offsets).
+    // With 2 outputs + BP+ proof (~800B) + salvium_data (~200B), safe limit is ~16 inputs.
+    maxInputs = 16
   } = options;
 
   if (typeof targetAmount === 'number') {

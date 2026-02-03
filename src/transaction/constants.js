@@ -128,7 +128,9 @@ export const TXOUT_TYPE = {
   ToKey: 0x02,
   KEY: 0x02,          // Alias
   ToTaggedKey: 0x03,
-  TAGGED_KEY: 0x03    // Alias
+  TAGGED_KEY: 0x03,   // Alias
+  ToCarrotV1: 0x04,
+  CARROT_V1: 0x04     // Alias
 };
 
 /**
@@ -181,9 +183,10 @@ export const HF_VERSION_ENABLE_ORACLE = 255;
 export const FEE_PER_KB = 200000n; // 2 * 10^5 atomic units
 
 /**
- * Fee per byte
+ * Fee per byte (daemon reports 490 as of 2026-02)
+ * This should ideally be fetched dynamically from the daemon.
  */
-export const FEE_PER_BYTE = 30n;
+export const FEE_PER_BYTE = 490n;
 
 /**
  * Dynamic fee base fee per KB

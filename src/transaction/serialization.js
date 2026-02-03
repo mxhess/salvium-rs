@@ -298,7 +298,10 @@ export function genCommitmentMask(sharedSecret) {
  * @returns {Uint8Array} Encoded varint
  */
 export function encodeVarint(value) {
-  if (typeof value === 'number') value = BigInt(value);
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) throw new RangeError(`encodeVarint: not an integer: ${value}`);
+    value = BigInt(value);
+  }
 
   const bytes = [];
   while (value >= 0x80n) {
@@ -387,16 +390,43 @@ export function serializeTxOutput(output) {
   // Amount (varint, usually 0 for RingCT)
   chunks.push(encodeVarint(output.amount || 0n));
 
-  // Output type + target
-  if (output.viewTag !== undefined) {
+  if (output.type === TXOUT_TYPE.ToCarrotV1) {
+    // CARROT v1 output (HF10+)
+    chunks.push(new Uint8Array([TXOUT_TYPE.ToCarrotV1]));
+    // key (32 bytes)
+    chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    // asset_type (length-prefixed string)
+    const assetBytes = new TextEncoder().encode(output.assetType || 'SAL1');
+    chunks.push(encodeVarint(assetBytes.length));
+    chunks.push(assetBytes);
+    // view_tag (3 bytes)
+    const vt = output.carrotViewTag || new Uint8Array(3);
+    chunks.push(typeof vt === 'string' ? hexToBytes(vt) : vt);
+    // encrypted_janus_anchor (16 bytes)
+    const anchor = output.encryptedJanusAnchor || new Uint8Array(16);
+    chunks.push(typeof anchor === 'string' ? hexToBytes(anchor) : anchor);
+  } else if (output.viewTag !== undefined) {
     // Tagged key output (post-view-tag era)
     chunks.push(new Uint8Array([TXOUT_TYPE.ToTaggedKey]));
     chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    // asset_type (length-prefixed string)
+    const assetBytes = new TextEncoder().encode(output.assetType || 'SAL');
+    chunks.push(encodeVarint(assetBytes.length));
+    chunks.push(assetBytes);
+    // unlock_time (varint)
+    chunks.push(encodeVarint(output.unlockTime || 0n));
+    // view_tag (1 byte)
     chunks.push(new Uint8Array([output.viewTag & 0xff]));
   } else {
-    // Regular key output
+    // Regular key output (txout_to_key)
     chunks.push(new Uint8Array([TXOUT_TYPE.ToKey]));
     chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    // asset_type (length-prefixed string)
+    const assetBytes = new TextEncoder().encode(output.assetType || 'SAL');
+    chunks.push(encodeVarint(assetBytes.length));
+    chunks.push(assetBytes);
+    // unlock_time (varint)
+    chunks.push(encodeVarint(output.unlockTime || 0n));
   }
 
   return concatBytes(chunks);
@@ -423,6 +453,11 @@ export function serializeTxInput(input) {
 
   // Amount (varint)
   chunks.push(encodeVarint(input.amount || 0n));
+
+  // asset_type (length-prefixed string) — Salvium-specific field
+  const assetBytes = new TextEncoder().encode(input.assetType || 'SAL');
+  chunks.push(encodeVarint(assetBytes.length));
+  chunks.push(assetBytes);
 
   // Key offsets (varint count + varint values)
   chunks.push(encodeVarint(input.keyOffsets.length));
@@ -672,6 +707,100 @@ export function serializeCLSAG(sig) {
 }
 
 /**
+ * Serialize a TCLSAG signature (used for SalviumOne / HF10+)
+ *
+ * TCLSAG has sx[], sy[], c1, D (vs CLSAG which has s[], c1, D)
+ * Reference: Salvium rctTypes.h lines 560-600
+ *
+ * @param {Object} sig - TCLSAG signature { sx: Array, sy: Array, c1, D }
+ * @returns {Uint8Array} Serialized TCLSAG
+ */
+export function serializeTCLSAG(sig) {
+  const chunks = [];
+
+  // sx values (no length prefix, determined by ring size)
+  for (const s of sig.sx) {
+    chunks.push(typeof s === 'string' ? hexToBytes(s) : s);
+  }
+
+  // sy values (same count as sx)
+  for (const s of sig.sy) {
+    chunks.push(typeof s === 'string' ? hexToBytes(s) : s);
+  }
+
+  // c1
+  chunks.push(typeof sig.c1 === 'string' ? hexToBytes(sig.c1) : sig.c1);
+
+  // D (commitment key image)
+  chunks.push(typeof sig.D === 'string' ? hexToBytes(sig.D) : sig.D);
+
+  return concatBytes(chunks);
+}
+
+/**
+ * Serialize a zk_proof (Schnorr proof: R + z1 + z2 = 96 bytes)
+ *
+ * @param {Object} proof - { R: Uint8Array, z1: Uint8Array, z2: Uint8Array }
+ * @returns {Uint8Array} 96-byte serialized proof
+ */
+export function serializeZkProof(proof) {
+  const chunks = [];
+  chunks.push(typeof proof.R === 'string' ? hexToBytes(proof.R) : proof.R);
+  chunks.push(typeof proof.z1 === 'string' ? hexToBytes(proof.z1) : proof.z1);
+  chunks.push(typeof proof.z2 === 'string' ? hexToBytes(proof.z2) : proof.z2);
+  return concatBytes(chunks);
+}
+
+/**
+ * Serialize salvium_data_t for SalviumZero/SalviumOne RCT types.
+ *
+ * Reference: Salvium rctTypes.h lines 400-412
+ *
+ * @param {Object} data - salvium_data object
+ * @param {number} data.salvium_data_type - 0=SalviumZero, 1=SalviumZeroAudit, 2=SalviumOne
+ * @param {Object} data.pr_proof - { R, z1, z2 }
+ * @param {Object} data.sa_proof - { R, z1, z2 }
+ * @returns {Uint8Array} Serialized salvium_data
+ */
+export function serializeSalviumData(data) {
+  const chunks = [];
+
+  // salvium_data_type (varint)
+  chunks.push(encodeVarint(data.salvium_data_type || 0));
+
+  // pr_proof (96 bytes)
+  chunks.push(serializeZkProof(data.pr_proof || { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }));
+
+  // sa_proof (96 bytes)
+  chunks.push(serializeZkProof(data.sa_proof || { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }));
+
+  // SalviumZeroAudit-specific fields
+  if (data.salvium_data_type === 1) {
+    // cz_proof (96 bytes)
+    chunks.push(serializeZkProof(data.cz_proof || { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }));
+
+    // input_verification_data (vector)
+    const ivd = data.input_verification_data || [];
+    chunks.push(encodeVarint(ivd.length));
+    for (const item of ivd) {
+      chunks.push(typeof item === 'string' ? hexToBytes(item) : item);
+    }
+
+    // spend_pubkey (32 bytes)
+    const spk = data.spend_pubkey || new Uint8Array(32);
+    chunks.push(typeof spk === 'string' ? hexToBytes(spk) : spk);
+
+    // enc_view_privkey_str (length-prefixed string)
+    const evpStr = data.enc_view_privkey_str || '';
+    const evpBytes = new TextEncoder().encode(evpStr);
+    chunks.push(encodeVarint(evpBytes.length));
+    if (evpBytes.length > 0) chunks.push(evpBytes);
+  }
+
+  return concatBytes(chunks);
+}
+
+/**
  * Serialize RingCT base (type + fee)
  *
  * @param {Object} rct - RingCT data
@@ -688,6 +817,36 @@ export function serializeRctBase(rct) {
   // Fee (varint, only for non-coinbase)
   if (rct.type !== RCT_TYPE.Null) {
     chunks.push(encodeVarint(rct.fee || 0n));
+  }
+
+  // ecdhInfo (8 bytes per output — compact format for BP+ types)
+  if (rct.ecdhInfo) {
+    chunks.push(serializeEcdhInfo(rct.ecdhInfo));
+  }
+
+  // outPk (32 bytes per output)
+  if (rct.outPk) {
+    chunks.push(serializeOutPk(rct.outPk));
+  }
+
+  // p_r (32 bytes) — always present in Salvium
+  const pR = rct.p_r
+    ? (typeof rct.p_r === 'string' ? hexToBytes(rct.p_r) : rct.p_r)
+    : new Uint8Array(32);
+  chunks.push(pR);
+
+  // salvium_data — depends on RCT type
+  const rctType = rct.type;
+  if (rctType === 8 || rctType === 9) {
+    chunks.push(serializeSalviumData(rct.salvium_data || {
+      salvium_data_type: 0,
+      pr_proof: { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) },
+      sa_proof: { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }
+    }));
+  } else if (rctType === 7) {
+    const sd = rct.salvium_data || {};
+    chunks.push(serializeZkProof(sd.pr_proof || { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }));
+    chunks.push(serializeZkProof(sd.sa_proof || { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }));
   }
 
   return concatBytes(chunks);
@@ -737,11 +896,9 @@ export function serializeTransaction(tx) {
   // Adapt prefix structure for serializeTxPrefix
   // (buildTransaction uses vin/vout, serializeTxPrefix expects inputs/outputs)
   const prefixForSerialization = {
-    version: tx.prefix.version,
-    unlockTime: tx.prefix.unlockTime,
+    ...tx.prefix,
     inputs: tx.prefix.vin,
-    outputs: tx.prefix.vout,
-    extra: tx.prefix.extra
+    outputs: tx.prefix.vout
   };
 
   const chunks = [];
@@ -749,13 +906,11 @@ export function serializeTransaction(tx) {
   // 1. TX prefix
   chunks.push(serializeTxPrefix(prefixForSerialization));
 
-  // 2. RCT base: type + fee + ecdhInfo + outPk
+  // 2. RCT base: type + fee + ecdhInfo + outPk + p_r + salvium_data
   //    (matches Salvium serialize_rctsig_base)
   chunks.push(serializeRctBase(tx.rct));
-  chunks.push(serializeEcdhInfo(tx.rct.ecdhInfo));
-  chunks.push(serializeOutPk(tx.rct.outPk));
 
-  // 3. RCT prunable: BP+ proofs, CLSAGs, pseudoOuts
+  // 3. RCT prunable: BP+ proofs, signatures, pseudoOuts
   //    (matches Salvium serialize_rctsig_prunable)
 
   // BP+ proofs (varint count + proof data)
@@ -766,9 +921,15 @@ export function serializeTransaction(tx) {
     chunks.push(encodeVarint(0));
   }
 
-  // CLSAGs
-  for (const sig of tx.rct.CLSAGs) {
-    chunks.push(serializeCLSAG(sig));
+  // Ring signatures: TCLSAG for SalviumOne (9), CLSAG for all others
+  if (tx.rct.type === 9 && tx.rct.TCLSAGs) {
+    for (const sig of tx.rct.TCLSAGs) {
+      chunks.push(serializeTCLSAG(sig));
+    }
+  } else if (tx.rct.CLSAGs) {
+    for (const sig of tx.rct.CLSAGs) {
+      chunks.push(serializeCLSAG(sig));
+    }
   }
 
   // pseudoOuts (in prunable section for BP+ types)

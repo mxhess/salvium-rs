@@ -968,7 +968,8 @@ export class WalletSync {
           unlockTime: tx.prefix?.unlockTime || 0n,
           txType,
           txPubKey: txPubKey ? bytesToHex(txPubKey) : null,
-          isCarrot: scanResult.isCarrot || false
+          isCarrot: scanResult.isCarrot || false,
+          assetType: output.assetType || 'SAL'
         });
 
         await this.storage.putOutput(walletOutput);
@@ -1240,7 +1241,10 @@ export class WalletSync {
     if (this.keys.spendSecretKey && this.keys.viewSecretKey) {
       try {
         // For subaddresses (not main address), compute the subaddress secret key
-        let baseSpendSecretKey = this.keys.spendSecretKey;
+        // Always convert to bytes for deriveSecretKey
+        let baseSpendSecretKey = typeof this.keys.spendSecretKey === 'string'
+          ? hexToBytes(this.keys.spendSecretKey)
+          : this.keys.spendSecretKey;
         if (subaddressIndex.major !== 0 || subaddressIndex.minor !== 0) {
           // m = H_s("SubAddr\0" || k_view || major || minor)
           const subaddrScalar = cnSubaddressSecretKey(

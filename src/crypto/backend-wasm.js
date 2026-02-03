@@ -103,8 +103,26 @@ export class WasmCryptoBackend {
 
   // Hash-to-point & key derivation
   hashToPoint(data) { return this.wasm.hash_to_point(data); }
-  generateKeyImage(pubKey, secKey) { return this.wasm.generate_key_image(pubKey, secKey); }
-  generateKeyDerivation(pubKey, secKey) { return this.wasm.generate_key_derivation(pubKey, secKey); }
+  generateKeyImage(pubKey, secKey) {
+    // Normalize inputs: convert hex strings to Uint8Array
+    if (typeof pubKey === 'string') {
+      pubKey = new Uint8Array(pubKey.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+    }
+    if (typeof secKey === 'string') {
+      secKey = new Uint8Array(secKey.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+    }
+    return this.wasm.generate_key_image(pubKey, secKey);
+  }
+  generateKeyDerivation(pubKey, secKey) {
+    // Normalize inputs: convert hex strings to Uint8Array
+    if (typeof pubKey === 'string') {
+      pubKey = new Uint8Array(pubKey.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+    }
+    if (typeof secKey === 'string') {
+      secKey = new Uint8Array(secKey.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+    }
+    return this.wasm.generate_key_derivation(pubKey, secKey);
+  }
   derivePublicKey(derivation, outputIndex, basePub) { return this.wasm.derive_public_key(derivation, outputIndex, basePub); }
   deriveSecretKey(derivation, outputIndex, baseSec) { return this.wasm.derive_secret_key(derivation, outputIndex, baseSec); }
 

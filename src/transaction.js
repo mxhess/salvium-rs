@@ -14,11 +14,13 @@ import {
   keccak256, keccak256Hex, scalarMultBase, scalarMultPoint, pointAddCompressed,
   getGeneratorG, getGeneratorT,
   generateKeyDerivation, derivePublicKey, deriveSecretKey,
-  derivationToScalar,
+  derivationToScalar, deriveViewTag,
   hashToPoint, generateKeyImage,
 } from './crypto/index.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { bulletproofPlusProve, serializeProof as serializeBpPlus } from './bulletproofs_plus.js';
+import { getTxVersion, getRctType } from './consensus.js';
+import { zeroCommit } from './transaction/serialization.js';
 
 // =============================================================================
 // RE-EXPORTS FROM SUBMODULES
@@ -107,7 +109,7 @@ import {
 import {
   bytesToBigInt as _bytesToBigInt, bigIntToBytes as _bigIntToBytes,
   scReduce32 as _scReduce32,
-  scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scRandom as _scRandom,
+  scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scMulAdd as _scMulAdd, scRandom as _scRandom,
   commit as _commit, genCommitmentMask as _genCommitmentMask,
   serializeTxPrefix as _serializeTxPrefix, getTxPrefixHash as _getTxPrefixHash,
   serializeRctBase as _serializeRctBase
@@ -134,6 +136,7 @@ const scReduce32 = _scReduce32;
 const scAdd = _scAdd;
 const scSub = _scSub;
 const scMul = _scMul;
+const scMulAdd = _scMulAdd;
 const scRandom = _scRandom;
 const commit = _commit;
 const genCommitmentMask = _genCommitmentMask;
@@ -232,13 +235,17 @@ export function createOutput(txSecretKey, viewPublicKey, spendPublicKey, amount,
   const amountKey = deriveAmountKey(scalar);
   const encryptedAmount = encryptAmount(amount, amountKey);
 
+  // Derive view tag for tagged key outputs
+  const viewTag = deriveViewTag(derivation, outputIndex);
+
   return {
     outputPublicKey,
     txPublicKey,
     commitment,
     encryptedAmount,
     mask,
-    derivation
+    derivation,
+    viewTag
   };
 }
 
@@ -303,13 +310,96 @@ function hashToScalar(...data) {
   return scReduce32(hash);
 }
 
+// =============================================================================
+// SALVIUM p_r AND pr_proof (RETURN ADDRESS PROOF)
+// =============================================================================
+
+/**
+ * Compute p_r: the blinding factor remainder commitment.
+ *
+ * p_r = difference * G where difference = sum(pseudoOut_masks) - sum(output_masks)
+ *
+ * Reference: Salvium rctSigs.cpp lines 1816-1818
+ *   sc_sub(difference.bytes, sumpouts.bytes, sumout.bytes);
+ *   genC(rv.p_r, difference, 0);   // commitment with amount=0
+ *
+ * @param {Array<Uint8Array>} pseudoMasks - Pseudo output mask scalars
+ * @param {Array<Uint8Array>} outputMasks - Output mask scalars
+ * @returns {{ p_r: Uint8Array, difference: Uint8Array }} p_r point (32 bytes) and difference scalar
+ */
+export function computePR(pseudoMasks, outputMasks) {
+  // Sum pseudo output masks
+  let sumPseudo = new Uint8Array(32);
+  for (const m of pseudoMasks) {
+    const mask = typeof m === 'string' ? hexToBytes(m) : m;
+    sumPseudo = scAdd(sumPseudo, mask);
+  }
+
+  // Sum output masks
+  let sumOut = new Uint8Array(32);
+  for (const m of outputMasks) {
+    const mask = typeof m === 'string' ? hexToBytes(m) : m;
+    sumOut = scAdd(sumOut, mask);
+  }
+
+  // difference = sumPseudo - sumOut
+  const difference = scSub(sumPseudo, sumOut);
+
+  // p_r = difference * G (genC with amount=0 is just scalarmultBase)
+  const p_r = scalarMultBase(difference);
+
+  return { p_r, difference };
+}
+
+/**
+ * Generate a Schnorr proof of knowledge of the discrete log of p_r.
+ *
+ * Proves: "I know `difference` such that p_r = difference * G"
+ *
+ * Reference: Salvium rctSigs.cpp PRProof_Gen (lines 680-701)
+ *   r = random scalar
+ *   R = r * G
+ *   c = H(R || p_r)
+ *   z1 = r + c * difference
+ *   z2 = 0
+ *
+ * @param {Uint8Array} difference - The scalar whose DL we're proving
+ * @param {Uint8Array} p_r - The commitment point (= difference * G)
+ * @returns {{ R: Uint8Array, z1: Uint8Array, z2: Uint8Array }} zk_proof
+ */
+export function generatePRProof(difference, p_r) {
+  // Random nonce
+  const r = scRandom();
+
+  // R = r * G
+  const R = scalarMultBase(r);
+
+  // c = H(R || p_r)  — hash two points to scalar
+  const c = hashToScalar(R, p_r);
+
+  // z1 = r + c * difference
+  const z1 = scMulAdd(c, difference, r);
+
+  // z2 = 0 (unused)
+  const z2 = new Uint8Array(32);
+
+  return { R, z1, z2 };
+}
+
 /**
  * Domain separator for CLSAG
+ * C++ pads these to 32 bytes (sc_0 then memcpy)
+ * Reference: rctSigs.cpp lines 1242-1245, 1266-1267
  */
-const CLSAG_DOMAIN = new TextEncoder().encode('CLSAG_');
-const CLSAG_AGG_0 = new Uint8Array([...CLSAG_DOMAIN, ...new TextEncoder().encode('agg_0')]);
-const CLSAG_AGG_1 = new Uint8Array([...CLSAG_DOMAIN, ...new TextEncoder().encode('agg_1')]);
-const CLSAG_ROUND = new Uint8Array([...CLSAG_DOMAIN, ...new TextEncoder().encode('round')]);
+function padDomain(str) {
+  const bytes = new Uint8Array(32);
+  const encoded = new TextEncoder().encode(str);
+  bytes.set(encoded.slice(0, 32)); // Copy up to 32 bytes, rest stays zero
+  return bytes;
+}
+const CLSAG_AGG_0 = padDomain('CLSAG_agg_0');
+const CLSAG_AGG_1 = padDomain('CLSAG_agg_1');
+const CLSAG_ROUND = padDomain('CLSAG_round');
 
 /**
  * Generate a CLSAG signature
@@ -338,27 +428,48 @@ export function clsagSign(message, ring, secretKey, commitments, commitmentMask,
   ring = ring.map(k => typeof k === 'string' ? hexToBytes(k) : k);
   commitments = commitments.map(c => typeof c === 'string' ? hexToBytes(c) : c);
 
+  // Validate ring data
+  for (let _i = 0; _i < ring.length; _i++) {
+    if (!ring[_i] || ring[_i].length !== 32) {
+      throw new Error(`clsagSign: invalid ring member at index ${_i} (${ring[_i]?.length || 'null'})`);
+    }
+  }
+  for (let _i = 0; _i < commitments.length; _i++) {
+    if (!commitments[_i] || commitments[_i].length !== 32) {
+      throw new Error(`clsagSign: invalid commitment at index ${_i} (${commitments[_i]?.length || 'null'})`);
+    }
+  }
+
   // Compute commitment differences: C_i - C' (should be commitment to 0 for real input)
   // C[i] = commitment[i] - pseudoOutputCommitment
   const C = commitments.map(c => pointSub(c, pseudoOutputCommitment));
 
   // Compute key image: I = x * H_p(P)
   const P_l = ring[secretIndex];
+  if (!P_l) throw new Error(`clsagSign: ring[${secretIndex}] (P_l) is null/undefined`);
   const I = generateKeyImage(P_l, secretKey);
+  if (!I) throw new Error('clsagSign: generateKeyImage returned null');
 
   // Compute commitment key image: D = z * H_p(P)
   // where z = commitmentMask - pseudoOutputMask
   const H_P = hashToPoint(P_l);
+  if (!H_P) throw new Error('clsagSign: hashToPoint returned null');
   const D = scalarMultPoint(commitmentMask, H_P);
+  if (!D) throw new Error('clsagSign: scalarMultPoint returned null for D');
+
+  // D_8 = D * (1/8) — stored in signature and used in aggregation hash
+  // Matches C++ CLSAG_Gen line 278: scalarmultKey(sig.D, D, INV_EIGHT)
+  const INV_EIGHT_SCALAR = hexToBytes('792fdce229e50661d0da1c7db39dd30700000000000000000000000000000006');
+  const D_8 = scalarMultPoint(INV_EIGHT_SCALAR, D);
 
   // Compute aggregate coefficients mu_P and mu_C
-  // mu_P = H_agg(H_agg_domain, P_1, ..., P_n, I, D, C_1, ..., C_n)
-  // mu_C = H_agg(H_agg_domain_2, P_1, ..., P_n, I, D, C_1, ..., C_n)
+  // C++ order: [domain, P[0..n-1], C_nonzero[0..n-1], I, D_8, C_offset]
   const aggData = [
     ...ring,
+    ...commitments,  // C_nonzero (original commitments, NOT differences)
     I,
-    D,
-    ...C
+    D_8,
+    pseudoOutputCommitment  // C_offset
   ];
   const mu_P = hashToScalar(CLSAG_AGG_0, ...aggData);
   const mu_C = hashToScalar(CLSAG_AGG_1, ...aggData);
@@ -374,10 +485,9 @@ export function clsagSign(message, ring, secretKey, commitments, commitmentMask,
   const aH = scalarMultPoint(alpha, H_P);
 
   // Build the base hash data (matches Salvium C++ rctSigs.cpp:305-320)
-  // c_to_hash = [domain, P[0..n-1], C[0..n-1], C_offset, message, L, R]
-  // We'll update L and R for each round
+  // c_to_hash = [domain, P[0..n-1], C_nonzero[0..n-1], C_offset, message, L, R]
   const buildChallengeHash = (L, R) => {
-    return hashToScalar(CLSAG_ROUND, ...ring, ...C, pseudoOutputCommitment, message, L, R);
+    return hashToScalar(CLSAG_ROUND, ...ring, ...commitments, pseudoOutputCommitment, message, L, R);
   };
 
   // Start the ring: first challenge from alpha commitments
@@ -468,7 +578,7 @@ export function clsagSign(message, ring, secretKey, commitments, commitmentMask,
     s: s.map(si => bytesToHex(si)),
     c1: bytesToHex(c1),
     I: bytesToHex(I),
-    D: bytesToHex(D)
+    D: bytesToHex(D_8)  // Store D*INV_EIGHT as per C++ CLSAG_Gen
   };
 }
 
@@ -524,13 +634,14 @@ export function tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, c
   const H_P = hashToPoint(P_l);
   const D = scalarMultPoint(commitmentMask, H_P);
 
-  // Note: For TCLSAG, we use D directly (not D_8) to maintain symmetry
-  // between the L equation (uses C = z*G) and R equation (uses D = z*Hp)
-  // This matches CLSAG behavior and ensures the signing equations are consistent
+  // D_8 = D * (1/8) — stored in signature and used in aggregation hash
+  // Matches C++ TCLSAG_Gen line 416: scalarmultKey(sig.D, D, INV_EIGHT)
+  const INV_EIGHT_SCALAR = hexToBytes('792fdce229e50661d0da1c7db39dd30700000000000000000000000000000006');
+  const D_8 = scalarMultPoint(INV_EIGHT_SCALAR, D);
 
   // Compute aggregate coefficients mu_P and mu_C
-  // For TCLSAG, aggregation uses C_nonzero (not C differences) plus I, D, C_offset
-  const aggData = [...ring, ...commitments, I, D, pseudoOutputCommitment];
+  // For TCLSAG, aggregation uses C_nonzero (not C differences) plus I, D_8, C_offset
+  const aggData = [...ring, ...commitments, I, D_8, pseudoOutputCommitment];
   const mu_P = hashToScalar(CLSAG_AGG_0, ...aggData);
   const mu_C = hashToScalar(CLSAG_AGG_1, ...aggData);
 
@@ -622,8 +733,11 @@ export function tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, c
   const c_sum_x = scMul(c, sum_x);
   sx[secretIndex] = scSub(a, c_sum_x);
 
-  // sy[l] = b (no secret key component for T generator)
-  sy[secretIndex] = b;
+  // sy[l] = b - c * (mu_P * y) — matches C++ clsag_sign_y
+  // For non-CARROT inputs, y=0, so this simplifies to sy = b
+  const mu_P_y = scMul(mu_P, secretKeyY);
+  const c_mu_P_y = scMul(c, mu_P_y);
+  sy[secretIndex] = scSub(b, c_mu_P_y);
 
   // If c1 wasn't captured, compute it now
   if (c1 === null) {
@@ -655,7 +769,7 @@ export function tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, c
     sy: sy.map(si => bytesToHex(si)),
     c1: bytesToHex(c1),
     I: bytesToHex(I),
-    D: bytesToHex(D)
+    D: bytesToHex(D_8)  // Store D*INV_EIGHT as per C++ TCLSAG_Gen
   };
 }
 
@@ -794,12 +908,16 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
   // Compute commitment differences: C[i] = C_nonzero[i] - C_offset
   const C = commitments.map(c => pointSub(c, pseudoOutputCommitment));
 
-  // Note: We use D directly (not D_8) to maintain symmetry with the L equation
-  // which uses C = z*G. This ensures signing equations are consistent.
+  // D from signature is D_8 (D * INV_EIGHT). For R computation we need full D.
+  // D_full = D_8 * 8 = sig.D * 8
+  // Use doubling 3 times to match C++ scalarmult8
+  let D_full = pointAddCompressed(D, D);         // 2D
+  D_full = pointAddCompressed(D_full, D_full);   // 4D
+  D_full = pointAddCompressed(D_full, D_full);   // 8D
 
-  // Compute aggregate coefficients mu_P and mu_C
-  // mu_P = H_n("CLSAG_agg_0", P[0..n-1], C_nonzero[0..n-1], I, D, C_offset)
-  // mu_C = H_n("CLSAG_agg_1", P[0..n-1], C_nonzero[0..n-1], I, D, C_offset)
+  // Aggregation hash uses D_8 (sig.D), matching C++ verification
+  // mu_P = H_n("CLSAG_agg_0", P[0..n-1], C_nonzero[0..n-1], I, D_8, C_offset)
+  // mu_C = H_n("CLSAG_agg_1", P[0..n-1], C_nonzero[0..n-1], I, D_8, C_offset)
   const aggData = [...ring, ...commitments, I, D, pseudoOutputCommitment];
   const mu_P = hashToScalar(CLSAG_AGG_0, ...aggData);
   const mu_C = hashToScalar(CLSAG_AGG_1, ...aggData);
@@ -830,10 +948,11 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
     L = pointAddCompressed(L, c_mu_P_Pi);
     L = pointAddCompressed(L, c_mu_C_Ci);
 
-    // R = sx[i]*H(P[i]) + c*mu_P*I + c*mu_C*D
+    // R = sx[i]*H(P[i]) + c*mu_P*I + c*mu_C*D_full
+    // Note: We use D_full (sig.D * 8) here, matching C++ verification
     const sxH = scalarMultPoint(sx[i], H_P_i);
     const c_mu_P_I = scalarMultPoint(c_mu_P, I);
-    const c_mu_C_D = scalarMultPoint(c_mu_C, D);
+    const c_mu_C_D = scalarMultPoint(c_mu_C, D_full);
 
     let R = pointAddCompressed(sxH, c_mu_P_I);
     R = pointAddCompressed(R, c_mu_C_D);
@@ -843,7 +962,9 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
   }
 
   // After going around the ring, c should equal c1
-  return bytesToHex(c) === bytesToHex(c1);
+  const cHex = bytesToHex(c);
+  const c1Hex = bytesToHex(c1);
+  return cHex === c1Hex;
 }
 
 // =============================================================================
@@ -852,36 +973,68 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
 
 /**
  * Compute the pre-MLSAG/CLSAG hash (message to sign)
- * This is H(txPrefixHash || ss || pseudoOuts)
+ * Matches C++ get_pre_mlsag_hash: H(message || H(rctSigBase) || H(bp_components))
  *
- * @param {Uint8Array|string} txPrefixHash - Hash of transaction prefix
- * @param {Uint8Array|string} ss - Serialized bulletproof/rangeproof data
- * @param {Array<Uint8Array>} pseudoOuts - Pseudo output commitments
+ * @param {Uint8Array|string} txPrefixHash - Hash of transaction prefix (hashes[0])
+ * @param {Uint8Array|string} rctBaseSerialized - Full serialized rctSigBase (hashed to get hashes[1])
+ * @param {Object} bpProof - Bulletproof+ proof object with A, A1, B, r1, s1, d1, L, R fields
  * @returns {Uint8Array} 32-byte message hash
  */
-export function getPreMlsagHash(txPrefixHash, ss, pseudoOuts) {
+export function getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof) {
   if (typeof txPrefixHash === 'string') txPrefixHash = hexToBytes(txPrefixHash);
-  if (typeof ss === 'string') ss = hexToBytes(ss);
+  if (typeof rctBaseSerialized === 'string') rctBaseSerialized = hexToBytes(rctBaseSerialized);
 
-  let totalLen = txPrefixHash.length + ss.length;
-  pseudoOuts = pseudoOuts.map(p => {
-    if (typeof p === 'string') p = hexToBytes(p);
-    totalLen += p.length;
-    return p;
-  });
+  // hashes[0] = message (tx prefix hash)
+  const hash0 = txPrefixHash;
+  console.log(`  [PRE-MLSAG] rctBase len: ${rctBaseSerialized.length}`);
+  console.log(`  [PRE-MLSAG] hash0 (prefixHash): ${[...hash0].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,32)}...`);
 
-  const data = new Uint8Array(totalLen);
-  let offset = 0;
-  data.set(txPrefixHash, offset);
-  offset += txPrefixHash.length;
-  data.set(ss, offset);
-  offset += ss.length;
-  for (const p of pseudoOuts) {
-    data.set(p, offset);
-    offset += p.length;
+  // hashes[1] = H(serialized rctSigBase)
+  const hash1 = keccak256(rctBaseSerialized);
+
+  // hashes[2] = H(bp+ components: A, A1, B, r1, s1, d1, L[], R[])
+  // Each component is a 32-byte key, concatenated then hashed
+  const bpChunks = [];
+  if (bpProof) {
+    const toBytes = (v) => {
+      if (typeof v === 'string') return hexToBytes(v);
+      if (v && typeof v.toBytes === 'function') return v.toBytes();
+      if (typeof v === 'bigint') {
+        // Scalar: convert to 32-byte little-endian
+        const bytes = new Uint8Array(32);
+        let n = v;
+        for (let i = 0; i < 32; i++) { bytes[i] = Number(n & 0xFFn); n >>= 8n; }
+        return bytes;
+      }
+      if (v instanceof Uint8Array) return v;
+      return v;
+    };
+    bpChunks.push(toBytes(bpProof.A));
+    bpChunks.push(toBytes(bpProof.A1));
+    bpChunks.push(toBytes(bpProof.B));
+    bpChunks.push(toBytes(bpProof.r1));
+    bpChunks.push(toBytes(bpProof.s1));
+    bpChunks.push(toBytes(bpProof.d1));
+    for (const l of bpProof.L) bpChunks.push(toBytes(l));
+    for (const r of bpProof.R) bpChunks.push(toBytes(r));
   }
+  let bpDataLen = 0;
+  for (const c of bpChunks) bpDataLen += c.length;
+  const bpData = new Uint8Array(bpDataLen);
+  let off = 0;
+  for (const c of bpChunks) { bpData.set(c, off); off += c.length; }
+  const hash2 = keccak256(bpData);
 
-  return keccak256(data);
+  const _hex = b => [...b].map(x=>x.toString(16).padStart(2,'0')).join('');
+  console.log(`  [PRE-MLSAG] hash1 (H(rctBase)): ${_hex(hash1).slice(0,32)}...`);
+  console.log(`  [PRE-MLSAG] bp components: ${bpChunks.length} chunks, ${bpDataLen} bytes`);
+  console.log(`  [PRE-MLSAG] hash2 (H(bp)): ${_hex(hash2).slice(0,32)}...`);
+  // prehash = H(hashes[0] || hashes[1] || hashes[2])
+  const combined = new Uint8Array(96);
+  combined.set(hash0, 0);
+  combined.set(hash1, 32);
+  combined.set(hash2, 64);
+  return keccak256(combined);
 }
 
 /**
@@ -1514,7 +1667,13 @@ export function buildTransaction(params, options = {}) {
     returnAddress = null,
     returnPubkey = null,
     protocolTxData = null,
-    amountSlippageLimit = 0n
+    amountSlippageLimit = 0n,
+    // HF-aware options
+    height = 0,
+    network = 0,
+    // Wallet keys needed for v3 return_address_list F-point computation
+    viewSecretKey = null,
+    spendSecretKey = null
   } = options;
 
   if (!inputs || inputs.length === 0) {
@@ -1546,10 +1705,10 @@ export function buildTransaction(params, options = {}) {
     totalOutputAmount += amount;
   }
 
-  // Verify balance
-  const changeAmount = totalInputAmount - totalOutputAmount - feeBig;
+  // Verify balance (amountBurnt covers STAKE/BURN/CONVERT amounts)
+  const changeAmount = totalInputAmount - totalOutputAmount - feeBig - amountBurnt;
   if (changeAmount < 0n) {
-    throw new Error(`Insufficient funds: inputs=${totalInputAmount}, outputs=${totalOutputAmount}, fee=${feeBig}`);
+    throw new Error(`Insufficient funds: inputs=${totalInputAmount}, outputs=${totalOutputAmount}, fee=${feeBig}, burnt=${amountBurnt}`);
   }
 
   // Generate transaction secret key
@@ -1580,7 +1739,8 @@ export function buildTransaction(params, options = {}) {
       publicKey: output.outputPublicKey,
       commitment: output.commitment,
       encryptedAmount: output.encryptedAmount,
-      mask: output.mask
+      mask: output.mask,
+      viewTag: output.viewTag
     });
     outputMasks.push(output.mask);
     outputIndex++;
@@ -1603,6 +1763,7 @@ export function buildTransaction(params, options = {}) {
       commitment: changeOutput.commitment,
       encryptedAmount: changeOutput.encryptedAmount,
       mask: changeOutput.mask,
+      viewTag: changeOutput.viewTag,
       isChange: true
     });
     outputMasks.push(changeOutput.mask);
@@ -1613,24 +1774,85 @@ export function buildTransaction(params, options = {}) {
     return generateKeyImage(input.publicKey, input.secretKey);
   });
 
+  // Determine TX version and RCT type based on hard fork
+  const txVersion = height > 0 ? getTxVersion(txType, height, network) : TX_VERSION.V2;
+  const rctType = height > 0 ? getRctType(height, network) : RCT_TYPE.BulletproofPlus;
+
+  // Sort outputs by public key (lexicographic) for CARROT (HF10+)
+  // C++ sorts enotes by K_o: output_set_finalization.cpp:311-314
+  if (rctType >= 9) {
+    // Build sort permutation
+    const indices = outputs.map((_, i) => i);
+    indices.sort((a, b) => {
+      const ka = typeof outputs[a].publicKey === 'string' ? outputs[a].publicKey : bytesToHex(outputs[a].publicKey);
+      const kb = typeof outputs[b].publicKey === 'string' ? outputs[b].publicKey : bytesToHex(outputs[b].publicKey);
+      // memcmp comparison (byte-by-byte, big endian in hex)
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+    const sortedOutputs = indices.map(i => outputs[i]);
+    const sortedMasks = indices.map(i => outputMasks[i]);
+    outputs.length = 0;
+    outputMasks.length = 0;
+    for (let i = 0; i < sortedOutputs.length; i++) {
+      outputs.push(sortedOutputs[i]);
+      outputMasks.push(sortedMasks[i]);
+    }
+  }
+
+  // Sort inputs by key image (descending memcmp) — C++ cryptonote_tx_utils.cpp:937-946
+  {
+    const insOrder = inputs.map((_, i) => i);
+    insOrder.sort((a, b) => {
+      const ka = bytesToHex(keyImages[a]);
+      const kb = bytesToHex(keyImages[b]);
+      // descending: memcmp > 0 means a comes first
+      return ka > kb ? -1 : ka < kb ? 1 : 0;
+    });
+    const sortedInputs = insOrder.map(i => inputs[i]);
+    const sortedKeyImages = insOrder.map(i => keyImages[i]);
+    inputs.length = 0;
+    keyImages.length = 0;
+    for (let i = 0; i < sortedInputs.length; i++) {
+      inputs.push(sortedInputs[i]);
+      keyImages.push(sortedKeyImages[i]);
+    }
+  }
+  console.log(`  [DEBUG buildTx] height=${height}, network=${network}, txType=${txType}, txVersion=${txVersion}, rctType=${rctType}`);
+
   // Build transaction prefix
   const txPrefix = {
-    version: TX_VERSION.RCT_2,
+    version: txVersion,
     unlockTime,
     vin: inputs.map((input, i) => ({
       type: TXIN_TYPE.KEY,
       amount: 0n, // RingCT: always 0
-      keyOffsets: indicesToOffsets(input.ring.map((_, j) => {
-        // Convert ring to global indices
-        return input.ringIndices ? input.ringIndices[j] : j;
-      })),
+      assetType: sourceAssetType,
+      keyOffsets: indicesToOffsets(input.ringIndices
+        ? input.ringIndices.slice(0, input.ring.length)
+        : input.ring.map((_, j) => j)),
       keyImage: keyImages[i]
     })),
-    vout: outputs.map(output => ({
-      type: TXOUT_TYPE.KEY,
-      amount: 0n, // RingCT: always 0
-      target: output.publicKey  // 'target' for serialization compatibility
-    })),
+    vout: outputs.map(output => {
+      if (rctType === 9) {
+        // CARROT v1 output for SalviumOne (HF10+)
+        return {
+          type: TXOUT_TYPE.CARROT_V1,
+          amount: 0n,
+          target: output.publicKey,
+          assetType: destinationAssetType,
+          carrotViewTag: output.carrotViewTag || new Uint8Array(3),
+          encryptedJanusAnchor: output.encryptedJanusAnchor || new Uint8Array(16)
+        };
+      }
+      return {
+        type: TXOUT_TYPE.TAGGED_KEY,
+        amount: 0n,
+        target: output.publicKey,
+        assetType: destinationAssetType,
+        unlockTime: 0n,
+        viewTag: output.viewTag
+      };
+    }),
     extra: {
       txPubKey: getTxPublicKey(txSecretKey)
     },
@@ -1639,11 +1861,24 @@ export function buildTransaction(params, options = {}) {
     amount_burnt: amountBurnt,
     source_asset_type: sourceAssetType,
     destination_asset_type: destinationAssetType,
-    return_address: returnAddress,
-    return_pubkey: returnPubkey,
-    protocol_tx_data: protocolTxData,
     amount_slippage_limit: amountSlippageLimit
   };
+
+  // Set return address fields based on TX version
+  if (txVersion >= 3 && txType === TX_TYPE.TRANSFER) {
+    // v3+: return_address_list (F-points) + return_address_change_mask
+    // For now, use null F-points — full implementation requires wallet secret keys
+    // to compute F = (y^-1) * a * P_change for each output
+    const fPoints = outputs.map(() => new Uint8Array(32)); // placeholder zeros
+    const changeMask = outputs.map(() => 0); // placeholder zeros
+    txPrefix.return_address_list = fPoints;
+    txPrefix.return_address_change_mask = new Uint8Array(changeMask);
+  } else if (txVersion >= 4 && txType === TX_TYPE.STAKE) {
+    txPrefix.protocol_tx_data = protocolTxData;
+  } else if (txType !== TX_TYPE.MINER && txType !== TX_TYPE.UNSET && txType !== TX_TYPE.PROTOCOL) {
+    txPrefix.return_address = returnAddress;
+    txPrefix.return_pubkey = returnPubkey;
+  }
 
   // Calculate transaction prefix hash
   const txPrefixHash = getTxPrefixHash(txPrefix);
@@ -1660,45 +1895,34 @@ export function buildTransaction(params, options = {}) {
 
   const { pseudoOuts, pseudoMasks } = computePseudoOutputs(inputsForPseudo, outputsForPseudo, feeBig);
 
-  // Build RingCT base (needed for pre-MLSAG hash)
-  const rctBase = {
-    type: RCT_TYPE.BulletproofPlus,
-    fee: feeBig,
-    pseudoOuts: pseudoOuts.map(p => bytesToHex(p)),
-    ecdhInfo: outputs.map(o => bytesToHex(o.encryptedAmount)),
-    outPk: outputs.map(o => bytesToHex(o.commitment))
-  };
+  // Compute p_r for ALL RCT types — Salvium always includes p_r in the sum check.
+  // Reference: rctSigs.cpp genRctSimple always calls genC(rv.p_r, difference, 0)
+  // and verRctSemanticsSimple always does addKeys(sumOutpks, rv.p_r, sumOutpks)
+  const { p_r, difference: prDifference } = computePR(pseudoMasks, outputMasks);
 
-  // Serialize RCT base for pre-MLSAG hash
-  const rctBaseSerialized = serializeRctBase(rctBase);
+  // Generate pr_proof and salvium_data for FullProofs/SalviumZero/SalviumOne (types 7-9)
+  let salvium_data = null;
+  if (rctType >= 7) {
+    const prProof = generatePRProof(prDifference, p_r);
 
-  // Calculate pre-MLSAG hash (message to sign)
-  const preMLsagHash = getPreMlsagHash(txPrefixHash, rctBaseSerialized, pseudoOuts);
-
-  // Sign each input with CLSAG
-  const clsags = [];
-  for (let i = 0; i < inputs.length; i++) {
-    const input = inputs[i];
-
-    // The mask for signing is the difference between pseudo output mask and real mask
-    // signingMask = pseudoMask - inputMask (so commitment - pseudoOut = 0)
-    const inputMask = typeof input.mask === 'string' ? hexToBytes(input.mask) : input.mask;
-    const signingMask = scSub(pseudoMasks[i], inputMask);
-
-    const sig = clsagSign(
-      preMLsagHash,
-      input.ring,
-      input.secretKey,
-      input.ringCommitments,
-      signingMask,
-      pseudoOuts[i],
-      input.realIndex
-    );
-
-    clsags.push(sig);
+    if (rctType === 8 || rctType === 9) {
+      // Full salvium_data_t for SalviumZero/SalviumOne
+      salvium_data = {
+        salvium_data_type: 0, // SalviumZero
+        pr_proof: prProof,
+        sa_proof: { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) } // zeros for SalviumZero
+      };
+    } else {
+      // FullProofs (7): just the two proofs, no type wrapper
+      salvium_data = {
+        pr_proof: prProof,
+        sa_proof: { R: new Uint8Array(32), z1: new Uint8Array(32), z2: new Uint8Array(32) }
+      };
+    }
   }
 
-  // Generate Bulletproofs+ range proofs for outputs
+  // Generate Bulletproofs+ range proofs BEFORE pre-MLSAG hash
+  // (C++ genRctSimple generates BP+ first, then hashes components for CLSAG message)
   const bpAmounts = outputs.map(o => o.amount);
   const bpMasks = outputMasks.map(m => {
     const bytes = typeof m === 'string' ? hexToBytes(m) : m;
@@ -1710,18 +1934,162 @@ export function buildTransaction(params, options = {}) {
     serialized: serializeBpPlus(bpProof)
   };
 
+  // Build RingCT base (needed for pre-MLSAG hash)
+  // Must include ecdhInfo, outPk, p_r, and salvium_data — matches C++ serialize_rctsig_base
+  const rctBase = {
+    type: rctType,
+    fee: feeBig,
+    ecdhInfo: outputs.map(o => bytesToHex(o.encryptedAmount)),
+    outPk: outputs.map(o => bytesToHex(o.commitment)),
+    p_r: p_r,
+    salvium_data: salvium_data
+  };
+
+  // Debug: dump rctBase hex for comparison
+  const rctBaseSerialized = serializeRctBase(rctBase);
+  const _h = b => [...b].map(x=>x.toString(16).padStart(2,'0')).join('');
+  console.log(`  [DEBUG] rctBase hex (first 100 chars): ${_h(rctBaseSerialized).slice(0, 100)}`);
+  console.log(`  [DEBUG] rctBase total bytes: ${rctBaseSerialized.length}`);
+
+  // Calculate pre-MLSAG hash: H(prefixHash || H(rctSigBase) || H(bp+ components))
+  const preMLsagHash = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof);
+
+  // Sign each input: CLSAG for types 6-8, TCLSAG for type 9
+  const clsags = [];
+  const tclsags = [];
+
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i];
+    const inputMask = typeof input.mask === 'string' ? hexToBytes(input.mask) : input.mask;
+    // z = inputMask - pseudoMask, so that C[l] = z*G (commitment difference = z*G)
+    const signingMask = scSub(inputMask, pseudoMasks[i]);
+
+    if (rctType === 9) {
+      // TCLSAG for SalviumOne — y=zero for non-carrot inputs (see tx_builder.cpp:1145)
+      const secretKeyY = input.secretKeyY || new Uint8Array(32);
+
+      // Debug: verify ring contains the expected public key
+      const expectedPk = input.ring[input.realIndex];
+      const expectedPkHex = typeof expectedPk === 'string' ? expectedPk : bytesToHex(expectedPk);
+      const inputPkHex = typeof input.publicKey === 'string' ? input.publicKey : bytesToHex(input.publicKey);
+      if (expectedPkHex !== inputPkHex) {
+        console.log(`[TCLSAG DEBUG] WARNING: ring[${input.realIndex}] != input.publicKey`);
+        console.log(`  ring[${input.realIndex}]: ${expectedPkHex.slice(0, 32)}...`);
+        console.log(`  input.publicKey: ${inputPkHex.slice(0, 32)}...`);
+      }
+
+      const sig = tclsagSign(
+        preMLsagHash,
+        input.ring,
+        input.secretKey,
+        secretKeyY,
+        input.ringCommitments,
+        signingMask,
+        pseudoOuts[i],
+        input.realIndex
+      );
+
+      // Debug: verify signature key image matches expected
+      const expectedKI = typeof keyImages[i] === 'string' ? keyImages[i] : bytesToHex(keyImages[i]);
+      const sigIHex = typeof sig.I === 'string' ? sig.I : bytesToHex(sig.I);
+      if (sigIHex !== expectedKI) {
+        console.log(`[TCLSAG DEBUG] WARNING: sig.I != keyImages[${i}]`);
+        console.log(`  sig.I: ${sigIHex.slice(0, 32)}...`);
+        console.log(`  keyImages[${i}]: ${expectedKI.slice(0, 32)}...`);
+      }
+
+      // Debug: self-verify signature
+      const verifyResult = tclsagVerify(
+        preMLsagHash,
+        sig,
+        input.ring,
+        input.ringCommitments,
+        pseudoOuts[i]
+      );
+      console.log(`[TCLSAG DEBUG] Self-verify input ${i}: ${verifyResult ? 'PASS' : 'FAIL'}`);
+
+      tclsags.push(sig);
+    } else {
+      // CLSAG for all other types
+      const sig = clsagSign(
+        preMLsagHash,
+        input.ring,
+        input.secretKey,
+        input.ringCommitments,
+        signingMask,
+        pseudoOuts[i],
+        input.realIndex
+      );
+      clsags.push(sig);
+    }
+  }
+
   // Assemble complete transaction
+  const rctObj = {
+    type: rctType,
+    fee: feeBig,
+    pseudoOuts: pseudoOuts.map(p => bytesToHex(p)),
+    ecdhInfo: outputs.map(o => bytesToHex(o.encryptedAmount)),
+    outPk: outputs.map(o => bytesToHex(o.commitment)),
+    bulletproofPlus
+  };
+
+  // p_r is always set (computed for all RCT types)
+  rctObj.p_r = p_r;
+  if (salvium_data) rctObj.salvium_data = salvium_data;
+
+  // Add signatures
+  if (rctType === 9) {
+    rctObj.TCLSAGs = tclsags;
+  } else {
+    rctObj.CLSAGs = clsags;
+  }
+
+  // === SELF-VERIFICATION (DEBUG) ===
+  {
+    const _toBytes = v => typeof v === 'string' ? hexToBytes(v) : v;
+    const _hex = b => bytesToHex(b instanceof Uint8Array ? b : hexToBytes(b));
+
+    // 1. Sum check: sum(pseudoOuts) == sum(outPk) + fee*H + amount_burnt*H + p_r
+    let sumPseudo = null;
+    for (const po of pseudoOuts) {
+      const pt = _toBytes(po);
+      sumPseudo = sumPseudo ? pointAddCompressed(sumPseudo, pt) : pt;
+    }
+
+    let sumOut = null;
+    for (const c of outputs.map(o => o.commitment)) {
+      const pt = _toBytes(c);
+      sumOut = sumOut ? pointAddCompressed(sumOut, pt) : pt;
+    }
+    // Add fee*H
+    const feeH = zeroCommit(feeBig);
+    sumOut = pointAddCompressed(sumOut, feeH);
+    // Add amount_burnt*H
+    if (amountBurnt > 0n) {
+      const burntH = zeroCommit(amountBurnt);
+      sumOut = pointAddCompressed(sumOut, burntH);
+    }
+    // Add p_r
+    sumOut = pointAddCompressed(sumOut, p_r);
+
+    const sumMatch = _hex(sumPseudo) === _hex(sumOut);
+    console.log(`  [VERIFY] Sum check: ${sumMatch ? 'PASS' : 'FAIL'}`);
+    if (!sumMatch) {
+      console.log(`    sumPseudo: ${_hex(sumPseudo)}`);
+      console.log(`    sumOut:    ${_hex(sumOut)}`);
+    }
+
+    // 2. PR proof: log info
+    if (salvium_data?.pr_proof) {
+      console.log(`  [VERIFY] PR proof: present, p_r=${_hex(p_r).slice(0,16)}...`);
+    }
+  }
+  // === END SELF-VERIFICATION ===
+
   const transaction = {
     prefix: txPrefix,
-    rct: {
-      type: RCT_TYPE.BulletproofPlus,
-      fee: feeBig,
-      pseudoOuts: pseudoOuts.map(p => bytesToHex(p)),
-      ecdhInfo: outputs.map(o => bytesToHex(o.encryptedAmount)),
-      outPk: outputs.map(o => bytesToHex(o.commitment)),
-      CLSAGs: clsags,
-      bulletproofPlus
-    },
+    rct: rctObj,
     // Additional metadata (not serialized to chain)
     _meta: {
       txSecretKey: bytesToHex(txSecretKey),
@@ -1763,7 +2131,9 @@ export function buildStakeTransaction(params, options = {}) {
     stakeLockPeriod = 21600, // Mainnet default
     assetType = 'SAL',
     txSecretKey,
-    useCarrot = false
+    useCarrot = false,
+    height = 0,
+    network = 0
   } = options;
 
   if (!inputs || inputs.length === 0) {
@@ -1843,7 +2213,9 @@ export function buildStakeTransaction(params, options = {}) {
       returnAddress: returnAddressBytes,
       returnPubkey: returnPubkeyBytes,
       protocolTxData,
-      amountSlippageLimit: 0n
+      amountSlippageLimit: 0n,
+      height,
+      network
     }
   );
 }
@@ -2262,7 +2634,8 @@ export function signTransaction(unsignedTx, secrets) {
 
     const inputMask = typeof secret.mask === 'string' ? hexToBytes(secret.mask) : secret.mask;
     const pseudoMask = typeof pseudoMasks[i] === 'string' ? hexToBytes(pseudoMasks[i]) : pseudoMasks[i];
-    const signingMask = scSub(pseudoMask, inputMask);
+    // z = inputMask - pseudoMask, so that C[l] = z*G (commitment difference = z*G)
+    const signingMask = scSub(inputMask, pseudoMask);
 
     const sig = clsagSign(
       preMLsagHash,
@@ -2305,12 +2678,16 @@ export function signTransaction(unsignedTx, secrets) {
  * @returns {Promise<Array<Object>>} Prepared inputs ready for buildTransaction
  */
 export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
-  const { ringSize = DEFAULT_RING_SIZE, rctOffsets } = options;
+  const { ringSize = DEFAULT_RING_SIZE, rctOffsets, assetType = 'SAL' } = options;
+
+  // When asset_type is provided, use asset-type-local indices for decoy selection
+  // and getOuts calls (matching C++ wallet2::get_outs behavior).
+  // The output distribution and getOuts both work in asset-type-local index space.
 
   // Fetch output distribution once (not per-input)
   let offsets = rctOffsets;
   if (!offsets && rpcClient) {
-    const distResp = await rpcClient.getOutputDistribution([0], { cumulative: true });
+    const distResp = await rpcClient.getOutputDistribution([0], { cumulative: true, rct_asset_type: assetType });
     const dist = distResp.result?.distributions?.[0] || distResp.distributions?.[0];
     offsets = dist?.distribution || [];
   }
@@ -2319,19 +2696,24 @@ export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
 
   for (const output of ownedOutputs) {
 
-    // Select decoy indices
+    // Use asset-type-local index for decoy selection when available
+    // (C++ wallet2 uses m_asset_type_output_index, not m_global_output_index)
+    const outputIndex = output.assetTypeIndex != null ? output.assetTypeIndex : output.globalIndex;
+
+    // Select decoy indices (in asset-type-local index space)
     const decoyIndices = selectDecoys(
       offsets,
-      output.globalIndex,
+      outputIndex,
       ringSize,
-      new Set([output.globalIndex])
+      new Set([outputIndex])
     );
 
     // Fetch ring member keys and commitments
     let ring, ringCommitments;
     if (rpcClient) {
       const outsResponse = await rpcClient.getOuts(
-        decoyIndices.map(i => ({ amount: 0, index: i }))
+        decoyIndices.map(i => ({ amount: 0, index: i })),
+        { asset_type: assetType }
       );
 
       const outs = outsResponse.result?.outs || outsResponse.outs || [];
@@ -2345,7 +2727,7 @@ export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
 
     // Find real index in sorted ring
     const sortedIndices = [...decoyIndices].sort((a, b) => a - b);
-    const realIndex = sortedIndices.indexOf(output.globalIndex);
+    const realIndex = sortedIndices.indexOf(outputIndex);
 
     // Insert real output at correct position
     ring[realIndex] = typeof output.publicKey === 'string'
@@ -2361,6 +2743,7 @@ export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
       amount: output.amount,
       mask: output.mask,
       globalIndex: output.globalIndex,
+      assetTypeIndex: outputIndex,
       ring,
       ringCommitments,
       ringIndices: sortedIndices,

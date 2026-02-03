@@ -100,6 +100,7 @@ export class WalletOutput {
     this.txHash = data.txHash || null;              // Transaction hash
     this.outputIndex = data.outputIndex || 0;       // Output index in transaction
     this.globalIndex = data.globalIndex || null;    // Global output index
+    this.assetTypeIndex = data.assetTypeIndex ?? null; // Asset-type-local output index
 
     // Block info
     this.blockHeight = data.blockHeight || null;    // Block height
@@ -186,6 +187,7 @@ export class WalletOutput {
       txHash: this.txHash,
       outputIndex: this.outputIndex,
       globalIndex: this.globalIndex,
+      assetTypeIndex: this.assetTypeIndex,
       blockHeight: this.blockHeight,
       blockTimestamp: this.blockTimestamp,
       amount: this.amount.toString(),
@@ -540,6 +542,64 @@ export class MemoryStorage extends WalletStorage {
     if (query.maxHeight !== undefined && (tx.blockHeight === null || tx.blockHeight > query.maxHeight)) return false;
     if (query.txHash && tx.txHash !== query.txHash) return false;
     return true;
+  }
+
+  /**
+   * Dump all storage state to a plain JSON-serializable object.
+   * Useful for persisting MemoryStorage to a file or any key-value store.
+   * @returns {Object} Serializable snapshot of all storage data
+   */
+  dump() {
+    return {
+      version: 1,
+      syncHeight: this._syncHeight,
+      outputs: Array.from(this._outputs.values()).map(o => o.toJSON()),
+      transactions: Array.from(this._transactions.values()).map(t => t.toJSON()),
+      spentKeyImages: Array.from(this._spentKeyImages),
+      blockHashes: Object.fromEntries(this._blockHashes),
+      state: Object.fromEntries(this._state)
+    };
+  }
+
+  /**
+   * Restore storage state from a dump() snapshot.
+   * @param {Object} data - Previously dumped state
+   */
+  load(data) {
+    if (!data || data.version !== 1) return;
+
+    this._syncHeight = data.syncHeight || 0;
+
+    if (data.outputs) {
+      for (const o of data.outputs) {
+        const wo = WalletOutput.fromJSON(o);
+        this._outputs.set(wo.keyImage, wo);
+        if (wo.keyImage) {
+          this._keyImages.set(wo.keyImage, { txHash: wo.txHash, outputIndex: wo.outputIndex });
+        }
+      }
+    }
+
+    if (data.transactions) {
+      for (const t of data.transactions) {
+        const wt = WalletTransaction.fromJSON(t);
+        this._transactions.set(wt.txHash, wt);
+      }
+    }
+
+    if (data.spentKeyImages) {
+      for (const ki of data.spentKeyImages) this._spentKeyImages.add(ki);
+    }
+
+    if (data.blockHashes) {
+      for (const [h, hash] of Object.entries(data.blockHashes)) {
+        this._blockHashes.set(parseInt(h), hash);
+      }
+    }
+
+    if (data.state) {
+      for (const [k, v] of Object.entries(data.state)) this._state.set(k, v);
+    }
   }
 }
 

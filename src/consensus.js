@@ -243,6 +243,12 @@ export const STAGENET_CONFIG = {
  * @returns {Object} Network configuration
  */
 export function getNetworkConfig(network) {
+  // Accept string names (e.g. 'testnet') as well as numeric NETWORK_ID values
+  if (typeof network === 'string') {
+    const NAME_MAP = { mainnet: NETWORK_ID.MAINNET, testnet: NETWORK_ID.TESTNET, stagenet: NETWORK_ID.STAGENET, fakechain: NETWORK_ID.FAKECHAIN };
+    network = NAME_MAP[network.toLowerCase()];
+    if (network === undefined) throw new Error(`Unknown network name: ${network}`);
+  }
   switch (network) {
     case NETWORK_ID.MAINNET:
     case NETWORK_ID.FAKECHAIN:
@@ -297,6 +303,22 @@ export function isHfActive(hfVersion, height, network = NETWORK_ID.MAINNET) {
 }
 
 /**
+ * Get the active asset type at a given height.
+ * After the AUDIT1 hard fork (HF 6), SAL transitions to SAL1.
+ *
+ * Reference: Salvium wallet2.cpp — uses HF_VERSION_SALVIUM_ONE_PROOFS (6)
+ *
+ * @param {number} height - Block height
+ * @param {number} network - Network type
+ * @returns {string} 'SAL' or 'SAL1'
+ */
+export function getActiveAssetType(height, network = NETWORK_ID.MAINNET) {
+  // At HF6+ (HF_VERSION_SALVIUM_ONE_PROOFS), all TX asset types must be 'SAL1'.
+  // Coinbase outputs after HF6 also use 'SAL1'. See blockchain.cpp:3845-3846.
+  return isHfActive(6, height, network) ? 'SAL1' : 'SAL';
+}
+
+/**
  * Check if CARROT outputs are enabled at a given height
  *
  * @param {number} height - Block height
@@ -305,6 +327,48 @@ export function isHfActive(hfVersion, height, network = NETWORK_ID.MAINNET) {
  */
 export function isCarrotActive(height, network = NETWORK_ID.MAINNET) {
   return isHfActive(HF_VERSION.CARROT, height, network);
+}
+
+/**
+ * Get the correct TX version for a given TX type and height.
+ *
+ * Reference: Salvium cryptonote_tx_utils.cpp lines 748-755
+ *   - TRANSFER at HF >= ENABLE_N_OUTS (2): version 3 (TRANSACTION_VERSION_N_OUTS)
+ *   - HF >= CARROT (10): version 4 (TRANSACTION_VERSION_CARROT)
+ *   - Otherwise: version 2
+ *
+ * @param {number} txType - Transaction type (from TX_TYPE enum)
+ * @param {number} height - Block height
+ * @param {number|string} network - Network type
+ * @returns {number} TX version (2, 3, or 4)
+ */
+export function getTxVersion(txType, height, network = NETWORK_ID.MAINNET) {
+  const hf = getHfVersionForHeight(height, network);
+  // TX_TYPE.TRANSFER = 3 (from constants)
+  if (hf >= HF_VERSION.CARROT) return 4;
+  if (hf >= HF_VERSION.ENABLE_N_OUTS && txType === 3) return 3;
+  return 2;
+}
+
+/**
+ * Get the required RCT signature type for a given height.
+ *
+ * Reference: Salvium blockchain.cpp lines 3737-3774
+ *   - HF >= CARROT (10):              RCTTypeSalviumOne (9) — uses TCLSAG
+ *   - HF >= SALVIUM_ONE_PROOFS (6):   RCTTypeSalviumZero (8) — uses CLSAG + salvium_data
+ *   - HF >= FULL_PROOFS (3):          RCTTypeFullProofs (7) — uses CLSAG + partial salvium_data
+ *   - HF >= 1:                        RCTTypeBulletproofPlus (6) — standard CLSAG
+ *
+ * @param {number} height - Block height
+ * @param {number|string} network - Network type
+ * @returns {number} RCT type constant
+ */
+export function getRctType(height, network = NETWORK_ID.MAINNET) {
+  const hf = getHfVersionForHeight(height, network);
+  if (hf >= HF_VERSION.CARROT) return 9;              // SalviumOne
+  if (hf >= HF_VERSION.SALVIUM_ONE_PROOFS) return 8;  // SalviumZero
+  if (hf >= HF_VERSION.FULL_PROOFS) return 7;          // FullProofs
+  return 6;                                             // BulletproofPlus
 }
 
 // =============================================================================

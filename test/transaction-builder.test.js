@@ -301,7 +301,7 @@ test('buildTransaction creates valid transaction structure', () => {
   assert(tx._meta, 'Should have metadata');
 
   // Check prefix
-  assertEqual(tx.prefix.version, TX_VERSION.RCT_2);
+  assertEqual(tx.prefix.version, TX_VERSION.V2);
   assertEqual(tx.prefix.vin.length, 1, 'Should have 1 input');
   assertEqual(tx.prefix.vout.length, 2, 'Should have 2 outputs (dest + change)');
 

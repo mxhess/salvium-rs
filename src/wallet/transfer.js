@@ -12,7 +12,7 @@ import {
   buildTransaction, buildStakeTransaction, prepareInputs, estimateTransactionFee,
   selectUTXOs, serializeTransaction, TX_TYPE, DEFAULT_RING_SIZE
 } from '../transaction.js';
-import { getNetworkConfig, NETWORK_ID } from '../consensus.js';
+import { getNetworkConfig, NETWORK_ID, getActiveAssetType } from '../consensus.js';
 import {
   generateKeyDerivation, deriveSecretKey, scalarAdd
 } from '../crypto/index.js';
@@ -72,11 +72,15 @@ async function resolveGlobalIndices(outputs, daemon) {
       throw new Error(`Failed to get output indexes for tx ${txHash}`);
     }
     const oIndexes = resp.data.o_indexes;
+    const assetTypeIndexes = resp.data.asset_type_output_indices || [];
     for (const out of outs) {
       if (out.outputIndex < oIndexes.length) {
         const gi = Number(oIndexes[out.outputIndex]);
         indices.set(out.keyImage, gi);
         out.globalIndex = gi;
+        if (out.outputIndex < assetTypeIndexes.length) {
+          out.assetTypeIndex = Number(assetTypeIndexes[out.outputIndex]);
+        }
       }
     }
   }
@@ -102,7 +106,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   const {
     priority = 'default',
     subtractFeeFromAmount = false,
-    assetType = 'SAL',
+    assetType: assetTypeOpt,
     dryRun = false
   } = options;
 
@@ -133,7 +137,8 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   if (!infoResp.success) throw new Error('Failed to get daemon info');
   const currentHeight = infoResp.result?.height || infoResp.data?.height;
 
-  // 4. Get spendable outputs
+  // 4. Get spendable outputs — use HF-based asset type if not specified
+  const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);
   const allOutputs = await wallet.storage.getOutputs({
     isSpent: false,
     isFrozen: false,
@@ -194,7 +199,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   const IDENTITY_MASK = '0100000000000000000000000000000000000000000000000000000000000000';
   const { commit: pedersenCommit } = await import('../transaction/serialization.js');
 
-  const ownedForPrep = selectedOutputs.map(o => {
+  const ownedForPrep = selectedOutputs.map((o, idx) => {
     let mask = o.mask;
     let commitment = o.commitment;
 
@@ -204,19 +209,26 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
 
+    // Debug: check if publicKey looks valid
+    const pkType = typeof o.publicKey;
+    const pkLen = o.publicKey?.length;
+    console.log(`[PREP DEBUG] Output ${idx}: publicKey type=${pkType}, len=${pkLen}, value=${String(o.publicKey).slice(0, 32)}...`);
+
     return {
       secretKey: deriveOutputSecretKey(o, wallet.keys),
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
+      assetTypeIndex: o.assetTypeIndex,
       commitment
     };
   });
 
   // 10. Prepare inputs (fetch decoys from daemon)
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
-    ringSize: DEFAULT_RING_SIZE
+    ringSize: DEFAULT_RING_SIZE,
+    assetType
   });
 
   // 11. Build change address from wallet's primary address
@@ -227,6 +239,10 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   };
 
   // 12. Build the transaction
+  const spendPub = typeof wallet.keys.spendPublicKey === 'string'
+    ? hexToBytes(wallet.keys.spendPublicKey) : wallet.keys.spendPublicKey;
+  const viewPub = typeof wallet.keys.viewPublicKey === 'string'
+    ? hexToBytes(wallet.keys.viewPublicKey) : wallet.keys.viewPublicKey;
   const tx = buildTransaction(
     {
       inputs: preparedInputs,
@@ -237,22 +253,43 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
     {
       txType: TX_TYPE.TRANSFER,
       sourceAssetType: assetType,
-      destinationAssetType: assetType
+      destinationAssetType: assetType,
+      returnAddress: spendPub,
+      returnPubkey: viewPub,
+      height: currentHeight,
+      network: options.network
     }
   );
+
+  // DEBUG: log TX structure
+  console.log(`  [DEBUG] TX version: ${tx.prefix.version}, RCT type: ${tx.rct.type}`);
+  console.log(`  [DEBUG] p_r: ${bytesToHex(typeof tx.rct.p_r === 'string' ? hexToBytes(tx.rct.p_r) : tx.rct.p_r).slice(0, 16)}...`);
+  console.log(`  [DEBUG] ecdhInfo[0]: ${tx.rct.ecdhInfo[0]?.slice(0, 16)}...`);
+  console.log(`  [DEBUG] outPk count: ${tx.rct.outPk.length}, pseudoOuts count: ${tx.rct.pseudoOuts.length}`);
+  console.log(`  [DEBUG] CLSAGs: ${tx.rct.CLSAGs?.length || 0}, BP+ proof: ${tx.rct.bulletproofPlus ? 'yes' : 'no'}`);
+  if (tx.rct.salvium_data) console.log(`  [DEBUG] salvium_data: type=${tx.rct.salvium_data.salvium_data_type}`);
 
   // 13. Serialize
   const serialized = serializeTransaction(tx);
   const txHex = bytesToHex(serialized);
 
+  // DEBUG: dump TX hex for analysis and round-trip test
+  try {
+    const fs = await import('fs');
+    fs.writeFileSync('/tmp/last_tx.hex', txHex);
+    console.log(`  [DEBUG] TX hex dumped to /tmp/last_tx.hex (${txHex.length / 2} bytes)`);
+  } catch (_e) { /* ignore */ }
+
   // 14. Broadcast
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex);
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
+      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp)}`);
     }
-    if (sendResp.data?.status !== 'OK' && sendResp.data?.result?.status !== 'OK') {
-      const reason = sendResp.data?.reason || sendResp.data?.result?.reason || 'unknown';
+    const respData = sendResp.result || sendResp.data?.result || sendResp.data;
+    console.log(`  [DEBUG] Daemon response:`, JSON.stringify(respData));
+    if (respData?.status !== 'OK') {
+      const reason = respData?.reason || respData?.status || 'unknown';
       throw new Error(`Transaction rejected: ${reason}`);
     }
   }
@@ -261,13 +298,17 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   const { keccak256 } = await import('../crypto/index.js');
   const txHash = bytesToHex(keccak256(serialized));
 
+  // Collect spent key images for caller to mark as spent
+  const spentKeyImages = selection.selected.map(u => u.keyImage);
+
   return {
     txHash,
     fee: estimatedFee,
     tx,
     serializedHex: txHex,
     inputCount: preparedInputs.length,
-    outputCount: tx.prefix.vout.length
+    outputCount: tx.prefix.vout.length,
+    spentKeyImages
   };
 }
 
@@ -287,7 +328,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
 export async function sweep({ wallet, daemon, address, options = {} }) {
   const {
     priority = 'default',
-    assetType = 'SAL',
+    assetType: assetTypeOpt,
     dryRun = false
   } = options;
 
@@ -302,16 +343,28 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   if (!infoResp.success) throw new Error('Failed to get daemon info');
   const currentHeight = infoResp.result?.height || infoResp.data?.height;
 
+  // Use HF-based asset type detection (like C++ wallet2)
+  const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);
+
   // Get all spendable outputs
   const allOutputs = await wallet.storage.getOutputs({
     isSpent: false,
     isFrozen: false,
     assetType
   });
-  const spendable = allOutputs.filter(o => o.isSpendable(currentHeight));
+  let spendable = allOutputs.filter(o => o.isSpendable(currentHeight));
 
   if (spendable.length === 0) {
     throw new Error('No spendable outputs available');
+  }
+
+  // Limit inputs to avoid exceeding max tx weight (149400 bytes)
+  // Each TCLSAG input adds ~2KB, so max ~60 inputs safely
+  const MAX_SWEEP_INPUTS = 60;
+  if (spendable.length > MAX_SWEEP_INPUTS) {
+    // Sort by amount descending to sweep largest first
+    spendable.sort((a, b) => b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0);
+    spendable = spendable.slice(0, MAX_SWEEP_INPUTS);
   }
 
   let totalAmount = 0n;
@@ -333,21 +386,41 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   await resolveGlobalIndices(spendable, daemon);
 
   // Derive secret keys
-  const ownedForPrep = spendable.map(o => ({
-    secretKey: deriveOutputSecretKey(o, wallet.keys),
-    publicKey: o.publicKey,
-    amount: o.amount,
-    mask: o.mask,
-    globalIndex: o.globalIndex,
-    commitment: o.commitment
-  }));
+  const IDENTITY_MASK = '0100000000000000000000000000000000000000000000000000000000000000';
+  const { commit: pedersenCommit } = await import('../transaction/serialization.js');
+
+  const ownedForPrep = spendable.map(o => {
+    let mask = o.mask;
+    let commitment = o.commitment;
+
+    // Coinbase outputs have no RCT mask — use identity
+    if (!mask) {
+      mask = IDENTITY_MASK;
+      commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
+    }
+
+    return {
+      secretKey: deriveOutputSecretKey(o, wallet.keys),
+      publicKey: o.publicKey,
+      amount: o.amount,
+      mask,
+      globalIndex: o.globalIndex,
+      assetTypeIndex: o.assetTypeIndex,
+      commitment
+    };
+  });
 
   // Prepare inputs
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
-    ringSize: DEFAULT_RING_SIZE
+    ringSize: DEFAULT_RING_SIZE,
+    assetType
   });
 
   // Build TX (no change output)
+  const sweepSpendPub = typeof wallet.keys.spendPublicKey === 'string'
+    ? hexToBytes(wallet.keys.spendPublicKey) : wallet.keys.spendPublicKey;
+  const sweepViewPub = typeof wallet.keys.viewPublicKey === 'string'
+    ? hexToBytes(wallet.keys.viewPublicKey) : wallet.keys.viewPublicKey;
   const tx = buildTransaction(
     {
       inputs: preparedInputs,
@@ -363,7 +436,11 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     {
       txType: TX_TYPE.TRANSFER,
       sourceAssetType: assetType,
-      destinationAssetType: assetType
+      destinationAssetType: assetType,
+      returnAddress: sweepSpendPub,
+      returnPubkey: sweepViewPub,
+      height: currentHeight,
+      network: options.network
     }
   );
 
@@ -372,12 +449,14 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   const txHex = bytesToHex(serialized);
 
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex);
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
-    if (sendResp.data?.status !== 'OK' && sendResp.data?.result?.status !== 'OK') {
-      const reason = sendResp.data?.reason || sendResp.data?.result?.reason || 'unknown';
+    const respData = sendResp.result || sendResp.data?.result || sendResp.data;
+    console.log(`  [DEBUG] Sweep daemon response:`, JSON.stringify(respData));
+    if (respData?.status !== 'OK') {
+      const reason = respData?.reason || respData?.status || 'unknown';
       throw new Error(`Transaction rejected: ${reason}`);
     }
   }
@@ -415,7 +494,7 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
 export async function stake({ wallet, daemon, amount, options = {} }) {
   const {
     priority = 'default',
-    assetType = 'SAL',
+    assetType: assetTypeOpt,
     network = 'mainnet',
     dryRun = false
   } = options;
@@ -436,7 +515,10 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   if (!infoResp.success) throw new Error('Failed to get daemon info');
   const currentHeight = infoResp.result?.height || infoResp.data?.height;
 
-  // 2. Get spendable outputs
+  // 2. Use HF-based asset type detection (like C++ wallet2)
+  const assetType = assetTypeOpt || getActiveAssetType(currentHeight, network);
+
+  // 3. Get spendable outputs
   const allOutputs = await wallet.storage.getOutputs({
     isSpent: false,
     isFrozen: false,
@@ -503,13 +585,15 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
+      assetTypeIndex: o.assetTypeIndex,
       commitment
     };
   });
 
   // 8. Prepare inputs (fetch decoys)
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
-    ringSize: DEFAULT_RING_SIZE
+    ringSize: DEFAULT_RING_SIZE,
+    assetType
   });
 
   // 9. Return address = wallet's own address (stake returns here)
@@ -529,7 +613,9 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
     },
     {
       stakeLockPeriod,
-      assetType
+      assetType,
+      height: currentHeight,
+      network
     }
   );
 
@@ -539,12 +625,14 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
 
   // 12. Broadcast
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex);
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
-    if (sendResp.data?.status !== 'OK' && sendResp.data?.result?.status !== 'OK') {
-      const reason = sendResp.data?.reason || sendResp.data?.result?.reason || 'unknown';
+    const respData = sendResp.result || sendResp.data?.result || sendResp.data;
+    console.log(`  [DEBUG] Stake daemon response:`, JSON.stringify(respData));
+    if (respData?.status !== 'OK') {
+      const reason = respData?.reason || respData?.status || 'unknown';
       throw new Error(`Transaction rejected: ${reason}`);
     }
   }
@@ -552,6 +640,9 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   // 13. Compute TX hash
   const { keccak256 } = await import('../crypto/index.js');
   const txHash = bytesToHex(keccak256(serialized));
+
+  // Collect spent key images for caller to mark as spent
+  const spentKeyImages = selection.selected.map(u => u.keyImage);
 
   return {
     txHash,
@@ -561,6 +652,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
     tx,
     serializedHex: txHex,
     inputCount: preparedInputs.length,
-    outputCount: tx.prefix.vout.length
+    outputCount: tx.prefix.vout.length,
+    spentKeyImages
   };
 }

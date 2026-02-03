@@ -384,7 +384,9 @@ export class DaemonRPC extends RPCClient {
   async sendRawTransaction(txAsHex, options = {}) {
     return this.post('/send_raw_transaction', {
       tx_as_hex: txAsHex,
-      do_not_relay: options.do_not_relay || false
+      source_asset_type: options.source_asset_type || '',
+      do_not_relay: options.do_not_relay || false,
+      do_sanity_checks: options.do_sanity_checks ?? true
     });
   }
 
@@ -951,6 +953,7 @@ export class DaemonRPC extends RPCClient {
       success: true,
       data: {
         o_indexes: data.o_indexes || [],
+        asset_type_output_indices: data.asset_type_output_indices || [],
         status: data.status || 'OK'
       }
     };

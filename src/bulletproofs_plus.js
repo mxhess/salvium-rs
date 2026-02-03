@@ -1,15 +1,15 @@
 /**
- * Bulletproofs+ Range Proof Verification
+ * Bulletproofs+ Range Proof Generation & Verification
  *
- * Pure JavaScript implementation using @noble/curves for Ed25519 operations.
+ * Uses the crypto provider for hash-to-point (Monero's ge_fromfe_frombytes_vartime).
  * Based on the Bulletproofs+ paper and Monero/Salvium implementation.
  *
  * Reference: https://eprint.iacr.org/2020/735.pdf
  */
 
-import { ed25519, ed25519_hasher } from '@noble/curves/ed25519.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { mod, invert, Field } from '@noble/curves/abstract/modular.js';
-import { keccak256 } from './crypto/index.js';
+import { keccak256, hashToPoint as cryptoHashToPoint } from './crypto/index.js';
 
 // Ed25519 curve order (L)
 const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');
@@ -20,8 +20,14 @@ const Point = ed25519.Point;
 // Scalar field for batch operations
 const Fn = Field(L);
 
-// Hash-to-curve function (uses elligator2)
-const hashToCurve = ed25519_hasher.hashToCurve;
+// Fixed H constant from Monero/Salvium (toPoint(cn_fast_hash(G)))
+// This is NOT computed at runtime - it's a fixed basepoint
+const H_BYTES = new Uint8Array([
+  0x8b, 0x65, 0x59, 0x70, 0x15, 0x37, 0x99, 0xaf,
+  0x2a, 0xea, 0xdc, 0x9f, 0xf1, 0xad, 0xd0, 0xea,
+  0x6c, 0x72, 0x51, 0xd5, 0x41, 0x54, 0xcf, 0xa9,
+  0x2c, 0x17, 0x3a, 0x0d, 0xd3, 0x9c, 0x1f, 0x94
+]);
 
 // Number of bits in range proof
 const N = 64;
@@ -40,6 +46,15 @@ const TWO_64_MINUS_1 = (1n << 64n) - 1n;
 // Precomputed generators cache
 let generatorsCache = null;
 let transcriptInitCache = null;
+
+/**
+ * Clear cached generators and transcript.
+ * Call this after switching crypto backends.
+ */
+export function clearBulletproofCache() {
+  generatorsCache = null;
+  transcriptInitCache = null;
+}
 
 /**
  * Convert a 32-byte Uint8Array to BigInt (little-endian)
@@ -92,13 +107,24 @@ export function hashToScalar(...inputs) {
 }
 
 /**
- * Hash to point using elligator2 hash-to-curve
- * Note: For production, this should match Monero's hash_to_p3 exactly.
- * This version uses the standard hash-to-curve for Ed25519.
+ * Hash to point matching C++ get_exponent / hash_to_p3 exactly.
+ *
+ * C++ flow:
+ *   1. cn_fast_hash(data) -> hash1
+ *   2. hash_to_p3(hash1) internally does:
+ *      a. cn_fast_hash(hash1) -> hash2 (DOUBLE HASH!)
+ *      b. ge_fromfe_frombytes_vartime(hash2) -> elligator2
+ *      c. ge_mul8 -> cofactor clear
+ *
+ * Our WASM hashToPoint does: keccak256(input) -> elligator2 -> *8
+ * So we need to pre-hash: hashToPoint(keccak256(data)) = keccak256(keccak256(data)) -> elligator2 -> *8
  */
-export function hashToPoint(data) {
-  // hashToCurve automatically clears cofactor
-  return hashToCurve(data);
+export function hashToPointMonero(data) {
+  // First hash: matches C++'s cn_fast_hash in get_exponent
+  const hash1 = keccak256(data);
+  // WASM hashToPoint does second hash internally, matching hash_to_p3
+  const pointBytes = cryptoHashToPoint(hash1);
+  return Point.fromBytes(pointBytes);
 }
 
 /**
@@ -116,41 +142,46 @@ function encodeVarint(n) {
 
 /**
  * Initialize generators Gi and Hi
- * Gi[i] = hash_to_p3(H || "bulletproof_plus" || varint(2*i+1))
- * Hi[i] = hash_to_p3(H || "bulletproof_plus" || varint(2*i))
+ *
+ * C++ formula (from bulletproofs_plus.cc):
+ *   Hi_p3[i] = get_exponent(rct::H, i * 2);
+ *   Gi_p3[i] = get_exponent(rct::H, i * 2 + 1);
+ *
+ * Where get_exponent does:
+ *   hashed = H_bytes + "bulletproof_plus" + varint(idx)
+ *   generator = hash_to_p3(cn_fast_hash(hashed))
+ *
+ * Note: H is a FIXED constant, NOT computed from hash-to-point.
  */
 export function initGenerators(maxMN = MAX_M * N) {
   if (generatorsCache && generatorsCache.Gi.length >= maxMN) {
     return generatorsCache;
   }
 
-  // H is the second generator (hash of G)
   const G = Point.BASE;
-  const GBytes = G.toBytes();
-  const H = hashToPoint(GBytes);
+  const H = Point.fromBytes(H_BYTES); // Use fixed H constant
 
   const prefix = new TextEncoder().encode('bulletproof_plus');
-  const HBytes = H.toBytes();
 
   const Gi = [];
   const Hi = [];
 
   for (let i = 0; i < maxMN; i++) {
+    // Hi uses even indices (2*i) - NOTE: Hi uses even, Gi uses odd (matches C++)
+    const hiVarint = encodeVarint(2 * i);
+    const hiData = new Uint8Array(H_BYTES.length + prefix.length + hiVarint.length);
+    hiData.set(H_BYTES);
+    hiData.set(prefix, H_BYTES.length);
+    hiData.set(hiVarint, H_BYTES.length + prefix.length);
+    Hi.push(hashToPointMonero(hiData));
+
     // Gi uses odd indices (2*i + 1)
     const giVarint = encodeVarint(2 * i + 1);
-    const giData = new Uint8Array(HBytes.length + prefix.length + giVarint.length);
-    giData.set(HBytes);
-    giData.set(prefix, HBytes.length);
-    giData.set(giVarint, HBytes.length + prefix.length);
-    Gi.push(hashToPoint(giData));
-
-    // Hi uses even indices (2*i)
-    const hiVarint = encodeVarint(2 * i);
-    const hiData = new Uint8Array(HBytes.length + prefix.length + hiVarint.length);
-    hiData.set(HBytes);
-    hiData.set(prefix, HBytes.length);
-    hiData.set(hiVarint, HBytes.length + prefix.length);
-    Hi.push(hashToPoint(hiData));
+    const giData = new Uint8Array(H_BYTES.length + prefix.length + giVarint.length);
+    giData.set(H_BYTES);
+    giData.set(prefix, H_BYTES.length);
+    giData.set(giVarint, H_BYTES.length + prefix.length);
+    Gi.push(hashToPointMonero(giData));
   }
 
   generatorsCache = { G, H, Gi, Hi };
@@ -159,7 +190,15 @@ export function initGenerators(maxMN = MAX_M * N) {
 
 /**
  * Initialize transcript with domain separator
- * Matches Salvium: hash_to_p3(hash(domain_separator)).toBytes()
+ *
+ * C++ formula:
+ *   cn_fast_hash(domain_separator) -> hash1
+ *   hash_to_p3(hash1) internally does:
+ *     cn_fast_hash(hash1) -> hash2
+ *     ge_fromfe_frombytes_vartime(hash2) -> elligator2
+ *     ge_mul8 -> *8
+ *
+ * Total: keccak256(keccak256(domain)) -> elligator2 -> *8
  */
 export function initTranscript() {
   if (transcriptInitCache) {
@@ -167,10 +206,11 @@ export function initTranscript() {
   }
 
   const domain = new TextEncoder().encode('bulletproof_plus_transcript');
-  const domainHash = keccak256(domain);
-  // Convert hash to point using hash-to-curve, then encode as bytes
-  const point = hashToPoint(domainHash);
-  transcriptInitCache = point.toBytes();
+  // First hash (matches C++ cn_fast_hash)
+  const hash1 = keccak256(domain);
+  // WASM hashToPoint does second hash internally
+  const pointBytes = cryptoHashToPoint(hash1);
+  transcriptInitCache = pointBytes;
   return transcriptInitCache;
 }
 
@@ -192,25 +232,27 @@ function hashKeysToScalar(keys) {
 
 /**
  * Update transcript with one element (Salvium style)
- * Matches Salvium: hash_to_scalar(transcript || element)
+ * Matches Salvium: hash_to_scalar(transcript || element) - returns REDUCED scalar bytes
  */
 function transcriptUpdate(transcript, element) {
   const data = new Uint8Array(64);
   data.set(transcript);
   data.set(element, 32);
-  return keccak256(data);
+  // IMPORTANT: C++ hash_to_scalar reduces the result - we must return reduced bytes
+  return scalarToBytes(bytesToScalar(keccak256(data)));
 }
 
 /**
  * Update transcript with two elements (Salvium style)
- * Matches Salvium: hash_to_scalar(transcript || element1 || element2)
+ * Matches Salvium: hash_to_scalar(transcript || element1 || element2) - returns REDUCED scalar bytes
  */
 function transcriptUpdate2(transcript, element1, element2) {
   const data = new Uint8Array(96);
   data.set(transcript);
   data.set(element1, 32);
   data.set(element2, 64);
-  return keccak256(data);
+  // IMPORTANT: C++ hash_to_scalar reduces the result - we must return reduced bytes
+  return scalarToBytes(bytesToScalar(keccak256(data)));
 }
 
 /**
@@ -436,8 +478,10 @@ export function verifyBulletproofPlusBatch(proofs) {
     proofTranscript = transcriptUpdate(proofTranscript, A.toBytes());
     const y = bytesToScalar(proofTranscript);
 
-    // Challenge z from y: z = hash_to_scalar(y) (NOT from transcript!)
-    const z = bytesToScalar(keccak256(proofTranscript));
+    // Challenge z from y: z = hash_to_scalar(y)
+    // IMPORTANT: C++ uses the REDUCED y bytes, not the raw transcript hash
+    const yBytes = scalarToBytes(y);
+    const z = bytesToScalar(keccak256(yBytes));
     proofTranscript = scalarToBytes(z); // transcript = z
 
     // Challenges for each round: challenge[j] = hash_to_scalar(transcript || L[j] || R[j])
@@ -825,7 +869,9 @@ export function bulletproofPlusProve(amounts, masks) {
   }
 
   // Challenge z = hash_to_scalar(y), transcript = z
-  let z = bytesToScalar(keccak256(transcript));
+  // IMPORTANT: C++ uses the REDUCED y bytes, not the raw transcript hash
+  const yBytes = scalarToBytes(y);
+  let z = bytesToScalar(keccak256(yBytes));
   if (z === 0n) {
     throw new Error('Challenge z is zero - retry');
   }
@@ -1036,17 +1082,13 @@ export function serializeProof(proof) {
   const { V, A, A1, B, r1, s1, d1, L, R } = proof;
 
   // Monero/Salvium binary format for BulletproofPlus:
-  //   varint(V.length), V[0..n] (32 bytes each)
   //   A (32), A1 (32), B (32)
   //   r1 (32), s1 (32), d1 (32)
   //   varint(L.length), L[0..n] (32 bytes each)
   //   varint(R.length), R[0..n] (32 bytes each)
+  // NOTE: V (commitments) are NOT serialized — they're restored via outPk
 
   const chunks = [];
-
-  // V (commitments)
-  chunks.push(_encodeVarint(V.length));
-  for (const v of V) chunks.push(v.toBytes());
 
   // A, A1, B (points)
   chunks.push(A.toBytes());
