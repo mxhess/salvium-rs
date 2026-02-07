@@ -330,7 +330,14 @@ export function computeCarrotOnetimeAddress(addressSpendPubkey, extensionG, exte
  * @returns {Uint8Array} 32-byte blinding factor
  */
 export function deriveCarrotAmountBlindingFactor(senderReceiverSecret, amount, addressSpendPubkey, enoteType) {
-  const amountBytes = bigIntToBytes(amount);
+  // Amount must be encoded as 8 bytes little-endian (uint64_t in C++)
+  // NOT 32 bytes like bigIntToBytes() - that's for scalars only
+  const amountBytes = new Uint8Array(8);
+  let a = typeof amount === 'bigint' ? amount : BigInt(amount);
+  for (let i = 0; i < 8; i++) {
+    amountBytes[i] = Number(a & 0xffn);
+    a = a >> 8n;
+  }
   const typeBytes = new Uint8Array([enoteType]);
 
   return carrotHashToScalar(

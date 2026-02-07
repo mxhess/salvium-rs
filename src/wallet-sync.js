@@ -69,6 +69,43 @@ export const SYNC_STATUS = {
 };
 
 // ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Normalize a key value to a hex string.
+ * Accepts: hex string (passthrough), Uint8Array, or indexed-object
+ * (e.g. {"0": 175, "1": 212, ...} from JSON.stringify(Uint8Array)).
+ */
+function _toHex(val) {
+  if (typeof val === 'string') return val;
+  if (val instanceof Uint8Array) return bytesToHex(val);
+  if (val && typeof val === 'object' && '0' in val) {
+    const len = Object.keys(val).length;
+    const arr = new Uint8Array(len);
+    for (let i = 0; i < len; i++) arr[i] = val[i];
+    return bytesToHex(arr);
+  }
+  return val;
+}
+
+/**
+ * Normalize wallet keys object so all key fields are hex strings.
+ * This prevents issues where Uint8Arrays or JSON-deserialized indexed objects
+ * are passed as keys (Map lookups and crypto functions expect consistent types).
+ */
+function _normalizeKeys(keys) {
+  if (!keys) return keys;
+  const result = { ...keys };
+  for (const field of ['viewSecretKey', 'spendSecretKey', 'viewPublicKey', 'spendPublicKey']) {
+    if (result[field] && typeof result[field] !== 'string') {
+      result[field] = _toHex(result[field]);
+    }
+  }
+  return result;
+}
+
+// ============================================================================
 // SYNC ENGINE
 // ============================================================================
 
@@ -90,7 +127,8 @@ export class WalletSync {
   constructor(options = {}) {
     this.storage = options.storage;
     this.daemon = options.daemon;
-    this.keys = options.keys;
+    // Normalize keys to hex strings (handles Uint8Array and indexed-object formats)
+    this.keys = options.keys ? _normalizeKeys(options.keys) : options.keys;
     this.carrotKeys = options.carrotKeys || null;
     this.subaddresses = options.subaddresses || new Map();
     // Always include the primary address in subaddress map
@@ -364,12 +402,18 @@ export class WalletSync {
 
     const headers = headersResponse.result.headers || [];
 
-    for (const header of headers) {
+    for (let idx = 0; idx < headers.length; idx++) {
+      const header = headers[idx];
       if (this._stopRequested) break;
       await this._processBlock(header);
       await this.storage.putBlockHash(header.height, header.hash);
       this.currentHeight = header.height + 1;
       this._emit('syncProgress', this.getProgress());
+
+      // Yield to event loop every 20 blocks to allow GC and prevent OOM
+      if (idx % 20 === 19) {
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
 
     // Save sync height
@@ -961,6 +1005,17 @@ export class WalletSync {
 
       if (scanResult) {
         // Create output record
+        // Commitment: prefer scanResult.commitment (computed from mask/amount for CARROT coinbase),
+        // then fall back to tx.rct.outPk[i] for standard RCT outputs
+        let commitment = null;
+        if (scanResult.commitment) {
+          commitment = typeof scanResult.commitment === 'string'
+            ? scanResult.commitment
+            : bytesToHex(scanResult.commitment);
+        } else if (tx.rct?.outPk?.[i]) {
+          commitment = bytesToHex(tx.rct.outPk[i]);
+        }
+
         const walletOutput = new WalletOutput({
           keyImage: scanResult.keyImage,
           publicKey: bytesToHex(outputPubKey),
@@ -970,7 +1025,7 @@ export class WalletSync {
           blockHeight: header.height,
           blockTimestamp: header.timestamp,
           amount: scanResult.amount,
-          commitment: tx.rct?.outPk?.[i] ? bytesToHex(tx.rct.outPk[i]) : null,
+          commitment,
           mask: scanResult.mask ? bytesToHex(scanResult.mask) : null,
           subaddressIndex: scanResult.subaddressIndex,
           unlockTime: tx.prefix?.unlockTime || 0n,
@@ -979,6 +1034,7 @@ export class WalletSync {
           isCarrot: scanResult.isCarrot || false,
           carrotEphemeralPubkey: scanResult.carrotEphemeralPubkey || null,
           carrotSharedSecret: scanResult.carrotSharedSecret || null,
+          carrotEnoteType: scanResult.enoteType ?? null,
           assetType: output.assetType || 'SAL'
         });
 
@@ -1060,10 +1116,13 @@ export class WalletSync {
           : tx.rct.outPk[outputIndex])
       : null;
 
-    // For coinbase (RCTTypeNull), compute zeroCommit(amount) = G + amount*H
-    // This matches C++ rct::zeroCommit() used during coinbase scanning
+    // For non-CARROT coinbase (RCTTypeNull), compute zeroCommit(amount) = G + amount*H
+    // This matches C++ rct::zeroCommit() used during coinbase scanning.
+    // For CARROT outputs (type 0x04), the commitment will be computed AFTER scanning
+    // using the CARROT-derived mask, not the scalar 1.
     const rctType = tx.rct?.type ?? 0;
-    if (!amountCommitment && rctType === 0 && output.amount !== undefined) {
+    const isCarrotOutput = output.type === 0x04 || output.target?.type === 0x04;
+    if (!amountCommitment && rctType === 0 && output.amount !== undefined && !isCarrotOutput) {
       const clearAmount = typeof output.amount === 'bigint'
         ? output.amount
         : BigInt(output.amount || 0);
@@ -1108,6 +1167,15 @@ export class WalletSync {
       encryptedAmount: tx.rct?.ecdhInfo?.[outputIndex]?.amount
     };
 
+    // For coinbase (rctType=0), pass clear-text amount so mask derivation uses the real amount
+    // (coinbase has no ecdhInfo, so encrypted amount decryption would return 0)
+    const scanOptions = {};
+    if (rctType === 0 && output.amount !== undefined) {
+      scanOptions.clearTextAmount = typeof output.amount === 'bigint'
+        ? output.amount
+        : BigInt(output.amount || 0);
+    }
+
     // Scan with CARROT algorithm
     let result;
     try {
@@ -1117,7 +1185,8 @@ export class WalletSync {
         this.carrotKeys.accountSpendPubkey,
         inputContext,
         this.carrotSubaddresses,
-        amountCommitment
+        amountCommitment,
+        scanOptions
       );
     } catch (e) {
       // Missing required fields in CARROT output - skip this output
@@ -1126,6 +1195,13 @@ export class WalletSync {
 
     if (!result) {
       return null;
+    }
+
+    // If we have mask and amount from CARROT scan but no commitment from outPk,
+    // compute it now. This happens for CARROT coinbase (mining) outputs.
+    if (!amountCommitment && result.mask && result.amount !== undefined) {
+      const maskBytes = typeof result.mask === 'string' ? hexToBytes(result.mask) : result.mask;
+      amountCommitment = pedersonCommit(BigInt(result.amount), maskBytes);
     }
 
     // Generate CARROT key image if we have the generateImageKey
@@ -1187,6 +1263,8 @@ export class WalletSync {
     return {
       amount,
       mask: result.mask,
+      enoteType: result.enoteType,  // 0=PAYMENT, 1=CHANGE (from try-both logic)
+      commitment: amountCommitment,  // Computed commitment for spending
       subaddressIndex: result.subaddressIndex,
       keyImage,
       isCarrot: true,

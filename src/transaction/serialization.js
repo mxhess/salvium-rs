@@ -239,11 +239,13 @@ export function commit(amount, mask) {
     amount = BigInt(amount);
   }
 
-  // Convert amount to 32-byte scalar
-  const amountBytes = bigIntToBytes(amount);
-
   // C = mask*G + amount*H
   const maskG = scalarMultBase(mask);    // mask * G
+
+  // When amount is 0, amount*H is the identity point, so C = mask*G
+  if (amount === 0n) return maskG;
+
+  const amountBytes = bigIntToBytes(amount);
   const amountH = scalarMultPoint(amountBytes, hexToBytes(H));  // amount * H
 
   return pointAddCompressed(maskG, amountH);
@@ -814,10 +816,14 @@ export function serializeRctBase(rct) {
   // Type (1 byte)
   chunks.push(new Uint8Array([rct.type]));
 
-  // Fee (varint, only for non-coinbase)
-  if (rct.type !== RCT_TYPE.Null) {
-    chunks.push(encodeVarint(rct.fee || 0n));
+  // C++: if (type == RCTTypeNull) return ar.good();
+  // Null type only has the type byte — no fee, no data
+  if (rct.type === RCT_TYPE.Null) {
+    return concatBytes(chunks);
   }
+
+  // Fee (varint)
+  chunks.push(encodeVarint(rct.fee || 0n));
 
   // ecdhInfo (8 bytes per output — compact format for BP+ types)
   if (rct.ecdhInfo) {

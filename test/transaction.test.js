@@ -592,32 +592,50 @@ test('clsagSign accepts hex string inputs', () => {
 console.log('\n--- Pre-MLSAG Hash Tests ---');
 
 test('getPreMlsagHash produces 32-byte hash', () => {
+  // C++ signature: get_pre_mlsag_hash(rctSig) -> hashes txPrefixHash, rctBaseSerialized, bpProof
+  // JS signature: getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof)
   const txPrefixHash = new Uint8Array(32);
-  const ss = new Uint8Array(64);
-  const pseudoOuts = [new Uint8Array(32), new Uint8Array(32)];
+  const rctBaseSerialized = new Uint8Array(64);
+  const bpProof = {
+    A: new Uint8Array(32), A1: new Uint8Array(32), B: new Uint8Array(32),
+    r1: new Uint8Array(32), s1: new Uint8Array(32), d1: new Uint8Array(32),
+    L: [new Uint8Array(32)], R: [new Uint8Array(32)]
+  };
 
-  const hash = getPreMlsagHash(txPrefixHash, ss, pseudoOuts);
+  const hash = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof);
   assertEqual(hash.length, 32);
 });
 
 test('getPreMlsagHash is deterministic', () => {
   const txPrefixHash = bigIntToBytes(12345n);
-  const ss = bigIntToBytes(67890n);
-  const pseudoOuts = [bigIntToBytes(1n), bigIntToBytes(2n)];
+  const rctBaseSerialized = bigIntToBytes(67890n);
+  const bpProof = {
+    A: bigIntToBytes(1n), A1: bigIntToBytes(2n), B: bigIntToBytes(3n),
+    r1: bigIntToBytes(4n), s1: bigIntToBytes(5n), d1: bigIntToBytes(6n),
+    L: [bigIntToBytes(7n)], R: [bigIntToBytes(8n)]
+  };
 
-  const h1 = getPreMlsagHash(txPrefixHash, ss, pseudoOuts);
-  const h2 = getPreMlsagHash(txPrefixHash, ss, pseudoOuts);
+  const h1 = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof);
+  const h2 = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof);
   assertEqual(h1, h2);
 });
 
 test('getPreMlsagHash varies with different inputs', () => {
   const txPrefixHash = new Uint8Array(32);
-  const ss = new Uint8Array(64);
-  const pseudoOuts1 = [bigIntToBytes(1n)];
-  const pseudoOuts2 = [bigIntToBytes(2n)];
+  const rctBaseSerialized = new Uint8Array(64);
+  const bpProof1 = {
+    A: bigIntToBytes(1n), A1: new Uint8Array(32), B: new Uint8Array(32),
+    r1: new Uint8Array(32), s1: new Uint8Array(32), d1: new Uint8Array(32),
+    L: [new Uint8Array(32)], R: [new Uint8Array(32)]
+  };
+  const bpProof2 = {
+    A: bigIntToBytes(2n), A1: new Uint8Array(32), B: new Uint8Array(32),
+    r1: new Uint8Array(32), s1: new Uint8Array(32), d1: new Uint8Array(32),
+    L: [new Uint8Array(32)], R: [new Uint8Array(32)]
+  };
 
-  const h1 = getPreMlsagHash(txPrefixHash, ss, pseudoOuts1);
-  const h2 = getPreMlsagHash(txPrefixHash, ss, pseudoOuts2);
+  const h1 = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof1);
+  const h2 = getPreMlsagHash(txPrefixHash, rctBaseSerialized, bpProof2);
   assert(bytesToHex(h1) !== bytesToHex(h2), 'Different inputs should produce different hashes');
 });
 
@@ -1324,9 +1342,11 @@ test('buildRingCtInputContext includes key image', () => {
   }
 });
 
-test('buildCoinbaseInputContext produces 9-byte context', () => {
+test('buildCoinbaseInputContext produces 33-byte context', () => {
+  // C++ input_context_t: 1 byte domain separator + 32 bytes data = 33 bytes
+  // See carrot_core/core_types.h: INPUT_CONTEXT_BYTES{1 + 32}
   const context = buildCoinbaseInputContext(12345n);
-  assertEqual(context.length, 9);
+  assertEqual(context.length, 33);
   assertEqual(context[0], 'C'.charCodeAt(0));
 });
 

@@ -9,6 +9,15 @@ import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } fr
 import { scRandom, scAdd, scMul, commit, bytesToBigInt } from '../src/transaction/serialization.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
 
+const T = getGeneratorT();
+
+/** Compute TCLSAG public key: P = x*G + y*T */
+function tclsagPublicKey(x, y) {
+  const xG = scalarMultBase(x);
+  const yT = scalarMultPoint(y, T);
+  return pointAddCompressed(xG, yT);
+}
+
 console.log('=== TCLSAG Signing and Verification Tests ===\n');
 
 let passed = 0;
@@ -47,10 +56,10 @@ console.log();
 // =============================================================================
 console.log('2. TCLSAG Sign/Verify Round Trip (Ring Size 1)');
 {
-  // Generate keys
+  // Generate keys — TCLSAG public key is P = x*G + y*T
   const secretKeyX = scRandom(); // Spend key component
   const secretKeyY = scRandom(); // Auxiliary component
-  const publicKey = scalarMultBase(secretKeyX);
+  const publicKey = tclsagPublicKey(secretKeyX, secretKeyY);
 
   // Generate commitment (amount * G + mask * T for TCLSAG style, but we use standard for test)
   const amount = 1000000n;
@@ -111,14 +120,14 @@ console.log();
 // =============================================================================
 console.log('3. TCLSAG Sign/Verify Round Trip (Ring Size 3)');
 {
-  // Generate real keys
+  // Generate real keys — P = x*G + y*T
   const secretKeyX = scRandom();
   const secretKeyY = scRandom();
-  const publicKey = scalarMultBase(secretKeyX);
+  const publicKey = tclsagPublicKey(secretKeyX, secretKeyY);
 
-  // Generate decoy keys
-  const decoy1 = scalarMultBase(scRandom());
-  const decoy2 = scalarMultBase(scRandom());
+  // Generate decoy keys (also TCLSAG-style with T component)
+  const decoy1 = tclsagPublicKey(scRandom(), scRandom());
+  const decoy2 = tclsagPublicKey(scRandom(), scRandom());
 
   // Generate commitments
   const amount = 5000000n;
@@ -194,7 +203,7 @@ console.log('4. TCLSAG with Different Secret Indices');
   for (let secretIndex = 0; secretIndex < ringSize; secretIndex++) {
     const secretKeyX = scRandom();
     const secretKeyY = scRandom();
-    const publicKey = scalarMultBase(secretKeyX);
+    const publicKey = tclsagPublicKey(secretKeyX, secretKeyY);
 
     const mask = scRandom();
     const commitment = commit(amount, mask);
@@ -207,7 +216,7 @@ console.log('4. TCLSAG with Different Secret Indices');
         ring.push(publicKey);
         commitmentList.push(commitment);
       } else {
-        ring.push(scalarMultBase(scRandom()));
+        ring.push(tclsagPublicKey(scRandom(), scRandom()));
         commitmentList.push(commit(amount, scRandom()));
       }
     }
@@ -247,7 +256,7 @@ console.log('5. Key Image Consistency');
 {
   const secretKeyX = scRandom();
   const secretKeyY = scRandom();
-  const publicKey = scalarMultBase(secretKeyX);
+  const publicKey = tclsagPublicKey(secretKeyX, secretKeyY);
 
   const amount = 1000000n;
   const mask = scRandom();
@@ -287,7 +296,10 @@ console.log('6. CLSAG vs TCLSAG Structure Comparison');
 {
   const secretKey = scRandom();
   const secretKeyY = scRandom(); // Only used by TCLSAG
-  const publicKey = scalarMultBase(secretKey);
+  // CLSAG public key: P = x*G
+  const clsagPubKey = scalarMultBase(secretKey);
+  // TCLSAG public key: P = x*G + y*T
+  const tclsagPubKey = tclsagPublicKey(secretKey, secretKeyY);
 
   const amount = 1000000n;
   const mask = scRandom();
@@ -309,8 +321,8 @@ console.log('6. CLSAG vs TCLSAG Structure Comparison');
 
   const message = scRandom();
 
-  const clsagSig = clsagSign(message, [publicKey], secretKey, [commitment], commitmentMask, pseudoOut, 0);
-  const tclsagSig = tclsagSign(message, [publicKey], secretKey, secretKeyY, [commitment], commitmentMask, pseudoOut, 0);
+  const clsagSig = clsagSign(message, [clsagPubKey], secretKey, [commitment], commitmentMask, pseudoOut, 0);
+  const tclsagSig = tclsagSign(message, [tclsagPubKey], secretKey, secretKeyY, [commitment], commitmentMask, pseudoOut, 0);
 
   test('CLSAG has single s array', () => Array.isArray(clsagSig.s));
   test('TCLSAG has sx array', () => Array.isArray(tclsagSig.sx));
@@ -318,14 +330,15 @@ console.log('6. CLSAG vs TCLSAG Structure Comparison');
   test('Both have key image I', () => clsagSig.I && tclsagSig.I);
   test('Both have commitment key image D', () => clsagSig.D && tclsagSig.D);
 
-  // Key images should be the same (same secret key x)
-  test('Key image I is same for same x', () => clsagSig.I === tclsagSig.I);
+  // Key images use H_p(P) which differs between CLSAG (P=x*G) and TCLSAG (P=x*G+y*T)
+  // so they won't match when y != 0. But key image formula I = x*H_p(P) is the same.
+  test('Both have non-empty key images', () => clsagSig.I.length === 64 && tclsagSig.I.length === 64);
 
   // CLSAG should verify with clsagVerify
-  test('CLSAG sig verifies with clsagVerify', () => clsagVerify(message, clsagSig, [publicKey], [commitment], pseudoOut));
+  test('CLSAG sig verifies with clsagVerify', () => clsagVerify(message, clsagSig, [clsagPubKey], [commitment], pseudoOut));
 
   // TCLSAG should verify with tclsagVerify
-  test('TCLSAG sig verifies with tclsagVerify', () => tclsagVerify(message, tclsagSig, [publicKey], [commitment], pseudoOut));
+  test('TCLSAG sig verifies with tclsagVerify', () => tclsagVerify(message, tclsagSig, [tclsagPubKey], [commitment], pseudoOut));
 }
 console.log();
 

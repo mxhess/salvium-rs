@@ -15,10 +15,10 @@ import {
 } from '../transaction.js';
 import { getNetworkConfig, NETWORK_ID, getActiveAssetType, isCarrotActive } from '../consensus.js';
 import {
-  generateKeyDerivation, deriveSecretKey, scalarAdd
+  generateKeyDerivation, deriveSecretKey, scalarAdd, scalarMultBase
 } from '../crypto/index.js';
 import { cnSubaddressSecretKey } from '../subaddress.js';
-import { deriveOnetimeExtensionG } from '../carrot-scanning.js';
+import { deriveOnetimeExtensionG, deriveOnetimeExtensionT } from '../carrot-scanning.js';
 
 /**
  * Derive the output secret key needed for spending.
@@ -33,10 +33,17 @@ import { deriveOnetimeExtensionG } from '../carrot-scanning.js';
  * @returns {Uint8Array} Output secret key
  */
 function deriveOutputSecretKey(output, keys, carrotKeys = null) {
-  // CARROT outputs use a different derivation
+  // CARROT outputs use a different derivation with TWO components (G and T generators)
+  // K_o = K_s + k^o_g*G + k^o_t*T  where K_s = k_gi*G + k_ps*T
+  // So K_o = (k_gi + k^o_g)*G + (k_ps + k^o_t)*T
+  // secretKeyX = k_gi + extensionG (for G generator)
+  // secretKeyY = k_ps + extensionT (for T generator)
   if (output.isCarrot) {
     if (!carrotKeys?.generateImageKey) {
       throw new Error('CARROT output requires carrotKeys.generateImageKey for spending');
+    }
+    if (!carrotKeys?.proveSpendKey) {
+      throw new Error('CARROT output requires carrotKeys.proveSpendKey for spending');
     }
     if (!output.carrotSharedSecret) {
       throw new Error('CARROT output requires carrotSharedSecret for spending');
@@ -45,9 +52,11 @@ function deriveOutputSecretKey(output, keys, carrotKeys = null) {
       throw new Error('CARROT output requires commitment for spending');
     }
 
-    // Get k_gi (generate-image key)
+    // Get k_gi (generate-image key) and k_ps (prove-spend key)
     const kGi = typeof carrotKeys.generateImageKey === 'string'
       ? hexToBytes(carrotKeys.generateImageKey) : carrotKeys.generateImageKey;
+    const kPs = typeof carrotKeys.proveSpendKey === 'string'
+      ? hexToBytes(carrotKeys.proveSpendKey) : carrotKeys.proveSpendKey;
 
     // Get s_sr_ctx (shared secret) and C_a (commitment)
     const sharedSecret = typeof output.carrotSharedSecret === 'string'
@@ -55,26 +64,29 @@ function deriveOutputSecretKey(output, keys, carrotKeys = null) {
     const commitment = typeof output.commitment === 'string'
       ? hexToBytes(output.commitment) : output.commitment;
 
-    // Compute sender_extension_g = H_n("Carrot key extension G", s_sr_ctx, C_a)
-    // For main address (0,0): output_secret_key = k_gi + sender_extension_g
-    // For subaddresses: output_secret_key = k_gi * k_subscal + sender_extension_g
+    // Compute extension scalars
+    // k^o_g = H_n("Carrot key extension G", s_sr_ctx, C_a)
+    // k^o_t = H_n("Carrot key extension T", s_sr_ctx, C_a)
     const sub = output.subaddressIndex;
-    let outputSecretKey;
 
     if (sub && (sub.major !== 0 || sub.minor !== 0)) {
       // Subaddress: need to multiply k_gi by subaddress scalar
-      // For now, throw - subaddress spending needs more implementation
       throw new Error('CARROT subaddress spending not yet implemented');
-    } else {
-      // Main address: x = k_gi + sender_extension_g
-      const senderExtG = deriveOnetimeExtensionG(sharedSecret, commitment);
-      outputSecretKey = scalarAdd(kGi, senderExtG);
     }
 
-    return outputSecretKey;
+    // Main address:
+    // secretKeyX = k_gi + extensionG
+    // secretKeyY = k_ps + extensionT
+    const extensionG = deriveOnetimeExtensionG(sharedSecret, commitment);
+    const extensionT = deriveOnetimeExtensionT(sharedSecret, commitment);
+
+    const secretKeyX = scalarAdd(kGi, extensionG);
+    const secretKeyY = scalarAdd(kPs, extensionT);
+
+    return { secretKeyX, secretKeyY, isCarrot: true };
   }
 
-  // CryptoNote (legacy) derivation
+  // CryptoNote (legacy) derivation - only has G component, no T
   const txPubKey = typeof output.txPubKey === 'string'
     ? hexToBytes(output.txPubKey) : output.txPubKey;
   const viewSecretKey = typeof keys.viewSecretKey === 'string'
@@ -94,7 +106,9 @@ function deriveOutputSecretKey(output, keys, carrotKeys = null) {
   }
 
   const derivation = generateKeyDerivation(txPubKey, viewSecretKey);
-  return deriveSecretKey(derivation, output.outputIndex, spendSecretKey);
+  const secretKeyX = deriveSecretKey(derivation, output.outputIndex, spendSecretKey);
+  // CryptoNote outputs have no T component - secretKeyY is zero
+  return { secretKeyX, secretKeyY: null, isCarrot: false };
 }
 
 /**
@@ -127,6 +141,28 @@ function buildChangeAddress(wallet, carrotKeys, height, network) {
     },
     carrotViewSecretKey: null
   };
+}
+
+/**
+ * Extract rejection details from daemon sendRawTransaction response.
+ * The daemon returns boolean flags alongside status/reason.
+ */
+function extractRejectionReason(respData) {
+  const flags = [];
+  if (respData?.double_spend) flags.push('double_spend');
+  if (respData?.fee_too_low) flags.push('fee_too_low');
+  if (respData?.invalid_input) flags.push('invalid_input');
+  if (respData?.invalid_output) flags.push('invalid_output');
+  if (respData?.too_big) flags.push('too_big');
+  if (respData?.overspend) flags.push('overspend');
+  if (respData?.too_few_outputs) flags.push('too_few_outputs');
+  if (respData?.sanity_check_failed) flags.push('sanity_check_failed');
+  if (respData?.tx_extra_too_big) flags.push('tx_extra_too_big');
+  if (respData?.low_mixin) flags.push('low_mixin');
+  if (respData?.not_relayed) flags.push('not_relayed');
+  const reason = respData?.reason || '';
+  const flagStr = flags.length ? ` [${flags.join(', ')}]` : '';
+  return reason ? `${reason}${flagStr}` : (flagStr || respData?.status || 'unknown');
 }
 
 /**
@@ -216,10 +252,15 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   let totalSend = 0n;
   for (const d of parsedDests) totalSend += d.amount;
 
-  // 3. Get current height for spendability check
+  // 3. Get current height and blockchain state for fee calculation
   const infoResp = await daemon.getInfo();
   if (!infoResp.success) throw new Error('Failed to get daemon info');
-  const currentHeight = infoResp.result?.height || infoResp.data?.height;
+  const infoData = infoResp.result || infoResp.data;
+  const currentHeight = infoData?.height;
+  const blockchainState = {
+    height: currentHeight,
+    blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
+  };
 
   // 4. Get spendable outputs — use HF-based asset type if not specified
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);
@@ -243,7 +284,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   let estimatedFee = estimateTransactionFee(
     2, // guess 2 inputs initially
     parsedDests.length + 1, // destinations + change
-    { priority }
+    { priority, blockchainState }
   );
 
   // 6. Select UTXOs
@@ -268,7 +309,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   estimatedFee = estimateTransactionFee(
     selection.selected.length,
     parsedDests.length + (selection.changeAmount > 0n ? 1 : 0),
-    { priority }
+    { priority, blockchainState }
   );
 
   // Adjust amounts if subtracting fee
@@ -301,14 +342,19 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
 
+    // Derive output secret keys (CARROT returns both X and Y components)
+    const { secretKeyX, secretKeyY, isCarrot } = deriveOutputSecretKey(o, wallet.keys, carrotKeys);
+
     return {
-      secretKey: deriveOutputSecretKey(o, wallet.keys, carrotKeys),
+      secretKey: secretKeyX,
+      secretKeyY: secretKeyY,  // T-component secret for TCLSAG (CARROT only)
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
       assetTypeIndex: o.assetTypeIndex,
-      commitment
+      commitment,
+      isCarrot
     };
   });
 
@@ -342,7 +388,8 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
       returnPubkey: viewPub,
       height: currentHeight,
       network: options.network,
-      viewSecretKey: carrotViewSecretKey
+      viewSecretKey: carrotViewSecretKey,
+      senderViewSecretKey: wallet.keys.viewSecretKey
     }
   );
 
@@ -354,12 +401,11 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   if (!dryRun) {
     const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp)}`);
+      throw new Error(`Failed to broadcast transfer: ${JSON.stringify(sendResp.error || sendResp)}`);
     }
     const respData = sendResp.result || sendResp.data?.result || sendResp.data;
     if (respData?.status !== 'OK') {
-      const reason = respData?.reason || respData?.status || 'unknown';
-      throw new Error(`Transaction rejected: ${reason}`);
+      throw new Error(`Transfer rejected: ${extractRejectionReason(respData)}`);
     }
   }
 
@@ -407,10 +453,15 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     throw new Error(`Invalid address: ${address} — ${parsed.error}`);
   }
 
-  // Get current height
+  // Get current height and blockchain state for fee calculation
   const infoResp = await daemon.getInfo();
   if (!infoResp.success) throw new Error('Failed to get daemon info');
-  const currentHeight = infoResp.result?.height || infoResp.data?.height;
+  const infoData = infoResp.result || infoResp.data;
+  const currentHeight = infoData?.height;
+  const blockchainState = {
+    height: currentHeight,
+    blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
+  };
 
   // Use HF-based asset type detection (like C++ wallet2)
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);
@@ -432,8 +483,8 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   }
 
   // Limit inputs to avoid exceeding max tx weight (149400 bytes)
-  // Each TCLSAG input adds ~2KB, so max ~60 inputs safely
-  const MAX_SWEEP_INPUTS = 60;
+  // Each TCLSAG input adds ~2KB with ring size 16; keep under block weight limit
+  const MAX_SWEEP_INPUTS = 30;
   if (spendable.length > MAX_SWEEP_INPUTS) {
     // Sort by amount descending to sweep largest first
     spendable.sort((a, b) => b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0);
@@ -443,11 +494,12 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   let totalAmount = 0n;
   for (const o of spendable) totalAmount += o.amount;
 
-  // Estimate fee with all inputs, 1 output (no change for sweep)
+  // Estimate fee with all inputs, 2 outputs (destination + 0-value change to self)
+  // C++ wallet always creates 2-output sweep TXs (see wallet2::create_transactions_all)
   const estimatedFee = estimateTransactionFee(
     spendable.length,
-    1, // single output, no change
-    { priority }
+    2, // destination + change-to-self (required for TX version 2)
+    { priority, blockchainState }
   );
 
   const sendAmount = totalAmount - estimatedFee;
@@ -474,14 +526,17 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
 
+    const { secretKeyX, secretKeyY, isCarrot } = deriveOutputSecretKey(o, wallet.keys, sweepCarrotKeys);
     return {
-      secretKey: deriveOutputSecretKey(o, wallet.keys, sweepCarrotKeys),
+      secretKey: secretKeyX,
+      secretKeyY: secretKeyY,
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
       assetTypeIndex: o.assetTypeIndex,
-      commitment
+      commitment,
+      isCarrot
     };
   });
 
@@ -491,7 +546,10 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     assetType
   });
 
-  // Build TX (no change output)
+  // Build change address (CARROT-aware) — sweep always needs 2 outputs
+  const { changeAddress: sweepChangeAddr, carrotViewSecretKey: sweepCarrotViewKey } =
+    buildChangeAddress(wallet, sweepCarrotKeys, currentHeight, options.network);
+
   const sweepSpendPub = typeof wallet.keys.spendPublicKey === 'string'
     ? hexToBytes(wallet.keys.spendPublicKey) : wallet.keys.spendPublicKey;
   const sweepViewPub = typeof wallet.keys.viewPublicKey === 'string'
@@ -505,7 +563,7 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
         isSubaddress: parsed.type === 'subaddress',
         amount: sendAmount
       }],
-      changeAddress: null,
+      changeAddress: sweepChangeAddr,
       fee: estimatedFee
     },
     {
@@ -515,7 +573,10 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
       returnAddress: sweepSpendPub,
       returnPubkey: sweepViewPub,
       height: currentHeight,
-      network: options.network
+      network: options.network,
+      useCarrot: isCarrotActive(currentHeight, options.network),
+      viewSecretKey: sweepCarrotViewKey,
+      senderViewSecretKey: wallet.keys.viewSecretKey
     }
   );
 
@@ -526,12 +587,11 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   if (!dryRun) {
     const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
+      throw new Error(`Failed to broadcast sweep: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
     const respData = sendResp.result || sendResp.data?.result || sendResp.data;
     if (respData?.status !== 'OK') {
-      const reason = respData?.reason || respData?.status || 'unknown';
-      throw new Error(`Transaction rejected: ${reason}`);
+      throw new Error(`Sweep rejected: ${extractRejectionReason(respData)}`);
     }
   }
 
@@ -544,7 +604,8 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     amount: sendAmount,
     tx,
     serializedHex: txHex,
-    inputCount: preparedInputs.length
+    inputCount: preparedInputs.length,
+    outputCount: tx.prefix.vout.length
   };
 }
 
@@ -584,10 +645,15 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   const networkConfig = getNetworkConfig(networkId);
   const stakeLockPeriod = networkConfig.STAKE_LOCK_PERIOD;
 
-  // 1. Get current height
+  // 1. Get current height and blockchain state for fee calculation
   const infoResp = await daemon.getInfo();
   if (!infoResp.success) throw new Error('Failed to get daemon info');
-  const currentHeight = infoResp.result?.height || infoResp.data?.height;
+  const infoData = infoResp.result || infoResp.data;
+  const currentHeight = infoData?.height;
+  const blockchainState = {
+    height: currentHeight,
+    blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
+  };
 
   // 2. Use HF-based asset type detection (like C++ wallet2)
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, network);
@@ -612,7 +678,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   let estimatedFee = estimateTransactionFee(
     2, // guess 2 inputs
     1, // change only
-    { priority }
+    { priority, blockchainState }
   );
 
   // 4. Select UTXOs
@@ -637,7 +703,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   estimatedFee = estimateTransactionFee(
     selection.selected.length,
     selection.changeAmount > 0n ? 1 : 0,
-    { priority }
+    { priority, blockchainState }
   );
 
   // 6. Resolve global indices
@@ -658,14 +724,17 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
 
+    const { secretKeyX, secretKeyY, isCarrot } = deriveOutputSecretKey(o, wallet.keys, stakeCarrotKeys);
     return {
-      secretKey: deriveOutputSecretKey(o, wallet.keys, stakeCarrotKeys),
+      secretKey: secretKeyX,
+      secretKeyY: secretKeyY,
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
       assetTypeIndex: o.assetTypeIndex,
-      commitment
+      commitment,
+      isCarrot
     };
   });
 
@@ -680,6 +749,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   const { changeAddress: stakeReturnAddress, carrotViewSecretKey: stakeViewKey } = buildChangeAddress(wallet, stakeCarrotKeys, currentHeight, network);
 
   // 10. Build stake transaction
+  const useCarrot = isCarrotActive(currentHeight, network);
   const tx = buildStakeTransaction(
     {
       inputs: preparedInputs,
@@ -692,7 +762,8 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
       assetType,
       height: currentHeight,
       network,
-      viewSecretKey: stakeViewKey
+      viewSecretKey: stakeViewKey,
+      useCarrot
     }
   );
 
@@ -704,12 +775,11 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   if (!dryRun) {
     const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
+      throw new Error(`Failed to broadcast stake: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
     const respData = sendResp.result || sendResp.data?.result || sendResp.data;
     if (respData?.status !== 'OK') {
-      const reason = respData?.reason || respData?.status || 'unknown';
-      throw new Error(`Transaction rejected: ${reason}`);
+      throw new Error(`Stake rejected: ${extractRejectionReason(respData)}`);
     }
   }
 
@@ -757,10 +827,15 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
 
   const burnAmount = typeof amount === 'bigint' ? amount : BigInt(amount);
 
-  // Get current height
+  // Get current height and blockchain state for fee calculation
   const infoResp = await daemon.getInfo();
   if (!infoResp.success) throw new Error('Failed to get daemon info');
-  const currentHeight = infoResp.result?.height || infoResp.data?.height;
+  const infoData = infoResp.result || infoResp.data;
+  const currentHeight = infoData?.height;
+  const blockchainState = {
+    height: currentHeight,
+    blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
+  };
 
   // Use HF-based asset type detection
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, network);
@@ -782,7 +857,7 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
   }
 
   // Estimate fee
-  let estimatedFee = estimateTransactionFee(2, 1, { priority });
+  let estimatedFee = estimateTransactionFee(2, 1, { priority, blockchainState });
 
   // Select UTXOs
   const target = burnAmount + estimatedFee;
@@ -803,7 +878,7 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
   }
 
   // Recalculate fee with actual input count
-  estimatedFee = estimateTransactionFee(selection.selected.length, 1, { priority });
+  estimatedFee = estimateTransactionFee(selection.selected.length, 1, { priority, blockchainState });
 
   // Resolve global indices
   const selectedOutputs = selection.selected.map(s => s._output);
@@ -821,14 +896,17 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
       mask = IDENTITY_MASK;
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
+    const { secretKeyX, secretKeyY, isCarrot } = deriveOutputSecretKey(o, wallet.keys, burnCarrotKeys);
     return {
-      secretKey: deriveOutputSecretKey(o, wallet.keys, burnCarrotKeys),
+      secretKey: secretKeyX,
+      secretKeyY: secretKeyY,
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
       assetTypeIndex: o.assetTypeIndex,
-      commitment
+      commitment,
+      isCarrot
     };
   });
 
@@ -865,12 +943,11 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
   if (!dryRun) {
     const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
+      throw new Error(`Failed to broadcast burn: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
     const respData = sendResp.result || sendResp.data?.result || sendResp.data;
     if (respData?.status !== 'OK') {
-      const reason = respData?.reason || respData?.status || 'unknown';
-      throw new Error(`Transaction rejected: ${reason}`);
+      throw new Error(`Burn rejected: ${extractRejectionReason(respData)}`);
     }
   }
 
@@ -924,10 +1001,15 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
     throw new Error(`Invalid destination address: ${destAddress} — ${parsedDest.error}`);
   }
 
-  // Get current height
+  // Get current height and blockchain state for fee calculation
   const infoResp = await daemon.getInfo();
   if (!infoResp.success) throw new Error('Failed to get daemon info');
-  const currentHeight = infoResp.result?.height || infoResp.data?.height;
+  const infoData = infoResp.result || infoResp.data;
+  const currentHeight = infoData?.height;
+  const blockchainState = {
+    height: currentHeight,
+    blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
+  };
 
   // Get spendable outputs of source asset type
   const allOutputs = await wallet.storage.getOutputs({
@@ -946,7 +1028,7 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
   }
 
   // Estimate fee
-  let estimatedFee = estimateTransactionFee(2, 2, { priority }); // 2 outputs: converted + change
+  let estimatedFee = estimateTransactionFee(2, 2, { priority, blockchainState }); // 2 outputs: converted + change
 
   // Select UTXOs
   const target = convertAmount + estimatedFee;
@@ -970,7 +1052,7 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
   estimatedFee = estimateTransactionFee(
     selection.selected.length,
     selection.changeAmount > 0n ? 2 : 1,
-    { priority }
+    { priority, blockchainState }
   );
 
   // Resolve global indices
@@ -989,14 +1071,17 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
       mask = IDENTITY_MASK;
       commitment = bytesToHex(pedersenCommit(o.amount, hexToBytes(IDENTITY_MASK)));
     }
+    const { secretKeyX, secretKeyY, isCarrot } = deriveOutputSecretKey(o, wallet.keys, convertCarrotKeys);
     return {
-      secretKey: deriveOutputSecretKey(o, wallet.keys, convertCarrotKeys),
+      secretKey: secretKeyX,
+      secretKeyY: secretKeyY,
       publicKey: o.publicKey,
       amount: o.amount,
       mask,
       globalIndex: o.globalIndex,
       assetTypeIndex: o.assetTypeIndex,
-      commitment
+      commitment,
+      isCarrot
     };
   });
 
@@ -1044,12 +1129,11 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
   if (!dryRun) {
     const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: sourceAssetType });
     if (!sendResp.success) {
-      throw new Error(`Failed to broadcast: ${JSON.stringify(sendResp.error || sendResp.data)}`);
+      throw new Error(`Failed to broadcast convert: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
     const respData = sendResp.result || sendResp.data?.result || sendResp.data;
     if (respData?.status !== 'OK') {
-      const reason = respData?.reason || respData?.status || 'unknown';
-      throw new Error(`Transaction rejected: ${reason}`);
+      throw new Error(`Convert rejected: ${extractRejectionReason(respData)}`);
     }
   }
 

@@ -183,10 +183,9 @@ export const HF_VERSION_ENABLE_ORACLE = 255;
 export const FEE_PER_KB = 200000n; // 2 * 10^5 atomic units
 
 /**
- * Fee per byte (daemon reports 490 as of 2026-02)
- * This should ideally be fetched dynamically from the daemon.
+ * Fee per byte — matches C++ cryptonote_config.h FEE_PER_BYTE = 30
  */
-export const FEE_PER_BYTE = 490n;
+export const FEE_PER_BYTE = 30n;
 
 /**
  * Dynamic fee base fee per KB

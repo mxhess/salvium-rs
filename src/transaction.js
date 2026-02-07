@@ -19,7 +19,8 @@ import {
 } from './crypto/index.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { bulletproofPlusProve, serializeProof as serializeBpPlus } from './bulletproofs_plus.js';
-import { getTxVersion, getRctType } from './consensus.js';
+import { getTxVersion, getRctType, CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW } from './consensus.js';
+import { getDynamicFeePerByte } from './transaction/fee.js';
 import { zeroCommit } from './transaction/serialization.js';
 
 // =============================================================================
@@ -72,6 +73,15 @@ export {
   analyzeTransaction
 } from './transaction/analysis.js';
 
+// Dynamic fee calculation
+export {
+  getBlockReward, estimateAlreadyGeneratedCoins,
+  getDynamicBaseFee, getDynamicFeeEstimate2021, getDynamicFeePerByte,
+  computeNeededFee, roundMoneyUp, getMinBlockWeight, getFeeQuantizationMask,
+  MONEY_SUPPLY, PREMINE_AMOUNT,
+  EMISSION_SPEED_FACTOR_PER_MINUTE as EMISSION_SPEED,
+} from './transaction/fee.js';
+
 // CARROT output generation
 export {
   generateJanusAnchor, buildRingCtInputContext, buildCoinbaseInputContext,
@@ -109,7 +119,7 @@ import {
 
 import {
   bytesToBigInt as _bytesToBigInt, bigIntToBytes as _bigIntToBytes,
-  scReduce32 as _scReduce32,
+  scReduce32 as _scReduce32, scInvert as _scInvert,
   scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scMulAdd as _scMulAdd, scRandom as _scRandom,
   commit as _commit, genCommitmentMask as _genCommitmentMask,
   serializeTxPrefix as _serializeTxPrefix, getTxPrefixHash as _getTxPrefixHash,
@@ -134,6 +144,7 @@ const getFeeMultiplier = _getFeeMultiplier;
 const bytesToBigInt = _bytesToBigInt;
 const bigIntToBytes = _bigIntToBytes;
 const scReduce32 = _scReduce32;
+const scInvert = _scInvert;
 const scAdd = _scAdd;
 const scSub = _scSub;
 const scMul = _scMul;
@@ -844,18 +855,25 @@ export function clsagVerify(message, sig, ring, commitments, pseudoOutputCommitm
   const I = typeof sig.I === 'string' ? hexToBytes(sig.I) : sig.I;
   const D = typeof sig.D === 'string' ? hexToBytes(sig.D) : sig.D;
 
-  // Compute commitment differences
+  // Compute commitment differences: C[i] = C_nonzero[i] - C_offset
   const C = commitments.map(c => pointSub(c, pseudoOutputCommitment));
 
-  // Compute aggregate coefficients
-  const aggData = [...ring, I, D, ...C];
+  // D from signature is D_8 (D * INV_EIGHT). For R computation we need full D.
+  // D_full = D_8 * 8 (3 doublings)
+  let D_full = pointAddCompressed(D, D);         // 2D
+  D_full = pointAddCompressed(D_full, D_full);   // 4D
+  D_full = pointAddCompressed(D_full, D_full);   // 8D
+
+  // Aggregation hash uses D_8 (sig.D) and C_nonzero (original commitments)
+  // Matches C++ CLSAG: [domain, P[], C_nonzero[], I, D_8, C_offset]
+  const aggData = [...ring, ...commitments, I, D, pseudoOutputCommitment];
   const mu_P = hashToScalar(CLSAG_AGG_0, ...aggData);
   const mu_C = hashToScalar(CLSAG_AGG_1, ...aggData);
 
-  // Build challenge hash with full ring data (matches Salvium C++ rctSigs.cpp:305-320)
-  // c_to_hash = [domain, P[0..n-1], C[0..n-1], C_offset, message, L, R]
+  // Challenge hash uses C_nonzero (original commitments), matching sign
+  // c = H_n(domain, P[], C_nonzero[], C_offset, message, L, R)
   const buildChallengeHash = (L, R) => {
-    return hashToScalar(CLSAG_ROUND, ...ring, ...C, pseudoOutputCommitment, message, L, R);
+    return hashToScalar(CLSAG_ROUND, ...ring, ...commitments, pseudoOutputCommitment, message, L, R);
   };
 
   // Verify the ring
@@ -863,23 +881,25 @@ export function clsagVerify(message, sig, ring, commitments, pseudoOutputCommitm
   for (let i = 0; i < n; i++) {
     const H_P_i = hashToPoint(ring[i]);
 
-    // L = s[i]*G + c*mu_P*P_i + c*mu_C*C_i
-    const sG = scalarMultBase(s[i]);
+    // Weighted challenges
     const c_mu_P = scMul(c, mu_P);
-    const c_mu_P_Pi = scalarMultPoint(c_mu_P, ring[i]);
     const c_mu_C = scMul(c, mu_C);
+
+    // L = s[i]*G + c*mu_P*P[i] + c*mu_C*C[i]
+    const sG = scalarMultBase(s[i]);
+    const c_mu_P_Pi = scalarMultPoint(c_mu_P, ring[i]);
     const c_mu_C_Ci = scalarMultPoint(c_mu_C, C[i]);
 
     const L = pointAddCompressed(pointAddCompressed(sG, c_mu_P_Pi), c_mu_C_Ci);
 
-    // R = s[i]*H_p(P_i) + c*mu_P*I + c*mu_C*D
+    // R = s[i]*H_p(P[i]) + c*mu_P*I + c*mu_C*D_full
     const sH = scalarMultPoint(s[i], H_P_i);
     const c_mu_P_I = scalarMultPoint(c_mu_P, I);
-    const c_mu_C_D = scalarMultPoint(c_mu_C, D);
+    const c_mu_C_D = scalarMultPoint(c_mu_C, D_full);
 
     const R = pointAddCompressed(pointAddCompressed(sH, c_mu_P_I), c_mu_C_D);
 
-    // c = H_n(domain, P[0..n-1], C[0..n-1], C_offset, message, L, R)
+    // Next challenge
     c = buildChallengeHash(L, R);
   }
 
@@ -1178,7 +1198,11 @@ export class GammaPicker {
     this.shape = options.shape || GAMMA_SHAPE;
     this.scale = options.scale || GAMMA_SCALE;
 
-    if (rctOffsets.length <= CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE) {
+    // Use coinbase maturity window (60) as the exclusion zone to ensure
+    // all selected decoys are unlocked (coinbase outputs need 60 blocks)
+    const unlockExclusion = CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
+
+    if (rctOffsets.length <= unlockExclusion) {
       throw new Error('Not enough blocks for decoy selection');
     }
 
@@ -1191,7 +1215,7 @@ export class GammaPicker {
       : 0;
     const outputsToConsider = rctOffsets[rctOffsets.length - 1] - startOffset;
 
-    this.numRctOutputs = rctOffsets[rctOffsets.length - CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE];
+    this.numRctOutputs = rctOffsets[rctOffsets.length - unlockExclusion];
     this.averageOutputTime = DIFFICULTY_TARGET * blocksToConsider / outputsToConsider;
 
     if (this.numRctOutputs === 0) {
@@ -1252,7 +1276,7 @@ export class GammaPicker {
   findBlockIndex(outputIndex) {
     // Binary search
     let low = 0;
-    let high = this.rctOffsets.length - CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE;
+    let high = this.rctOffsets.length - CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
 
     while (low < high) {
       const mid = Math.floor((low + high) / 2);
@@ -1684,9 +1708,10 @@ export function buildTransaction(params, options = {}) {
     // HF-aware options
     height = 0,
     network = 0,
-    // Wallet keys needed for v3 return_address_list F-point computation
+    // CARROT view incoming key (k_vi) — for anchor computation in CARROT outputs
     viewSecretKey = null,
-    spendSecretKey = null
+    // Sender's CryptoNote view secret key — for F-point computation in v3+ return addresses
+    senderViewSecretKey = null
   } = options;
 
   if (!inputs || inputs.length === 0) {
@@ -1739,6 +1764,7 @@ export function buildTransaction(params, options = {}) {
   // Create outputs (destinations + change if needed)
   const outputs = [];
   const outputMasks = [];
+  const amountKeys = []; // derivation scalars for F-point computation (v3+ return addresses)
   let outputIndex = 0;
 
   // CARROT ephemeral key (D_e) — used as txPubKey for CARROT outputs
@@ -1762,7 +1788,7 @@ export function buildTransaction(params, options = {}) {
 
     // Use first destination's spend pubkey for d_e derivation
     const allDests = [...destinations];
-    if (changeAmount > 0n && changeAddress) {
+    if (changeAddress) {
       allDests.push({ ...changeAddress, amount: changeAmount, isChange: true });
     }
 
@@ -1824,11 +1850,14 @@ export function buildTransaction(params, options = {}) {
         viewTag: null // no CN view tag for CARROT
       });
       outputMasks.push(mask);
+      // Standard Ed25519 ECDH derivation scalar for F-point computation
+      const derivation_fp = generateKeyDerivation(destViewPub, txSecretKey);
+      amountKeys.push(derivationToScalar(derivation_fp, outputIndex));
       outputIndex++;
     }
 
-    // Add CARROT change output if there's change
-    if (changeAmount > 0n && changeAddress) {
+    // Add CARROT change output (always when changeAddress provided, even for 0 amount)
+    if (changeAddress) {
       const chgViewPub = typeof changeAddress.viewPublicKey === 'string'
         ? hexToBytes(changeAddress.viewPublicKey) : changeAddress.viewPublicKey;
       const chgSpendPub = typeof changeAddress.spendPublicKey === 'string'
@@ -1868,6 +1897,9 @@ export function buildTransaction(params, options = {}) {
         isChange: true
       });
       outputMasks.push(mask_chg);
+      // Standard Ed25519 ECDH derivation scalar for F-point computation
+      const derivation_fp_chg = generateKeyDerivation(chgViewPub, txSecretKey);
+      amountKeys.push(derivationToScalar(derivation_fp_chg, outputIndex));
     }
   } else {
     // =========================================================================
@@ -1896,11 +1928,13 @@ export function buildTransaction(params, options = {}) {
         viewTag: output.viewTag
       });
       outputMasks.push(output.mask);
+      // Derivation scalar for F-point computation (createOutput already computed it)
+      amountKeys.push(derivationToScalar(output.derivation, outputIndex));
       outputIndex++;
     }
 
-    // Add change output if there's change
-    if (changeAmount > 0n && changeAddress) {
+    // Add change output (always when changeAddress provided, even for 0 amount)
+    if (changeAddress) {
       const changeOutput = createOutput(
         txSecretKey,
         changeAddress.viewPublicKey,
@@ -1920,6 +1954,7 @@ export function buildTransaction(params, options = {}) {
         isChange: true
       });
       outputMasks.push(changeOutput.mask);
+      amountKeys.push(derivationToScalar(changeOutput.derivation, outputIndex));
     }
   }
 
@@ -1936,11 +1971,14 @@ export function buildTransaction(params, options = {}) {
     });
     const sortedOutputs = indices.map(i => outputs[i]);
     const sortedMasks = indices.map(i => outputMasks[i]);
+    const sortedAmountKeys = indices.map(i => amountKeys[i]);
     outputs.length = 0;
     outputMasks.length = 0;
+    amountKeys.length = 0;
     for (let i = 0; i < sortedOutputs.length; i++) {
       outputs.push(sortedOutputs[i]);
       outputMasks.push(sortedMasks[i]);
+      amountKeys.push(sortedAmountKeys[i]);
     }
   }
 
@@ -2016,12 +2054,53 @@ export function buildTransaction(params, options = {}) {
   // Set return address fields based on TX version
   if (txVersion >= 3 && txType === TX_TYPE.TRANSFER) {
     // v3+: return_address_list (F-points) + return_address_change_mask
-    // For now, use null F-points — full implementation requires wallet secret keys
-    // to compute F = (y^-1) * a * P_change for each output
-    const fPoints = outputs.map(() => new Uint8Array(32)); // placeholder zeros
-    const changeMask = outputs.map(() => 0); // placeholder zeros
+    // F = (y^-1) * a * P_change  (C++ cryptonote_tx_utils.cpp:148-263)
+    // change_mask[i] = change_index XOR H("CHG_IDX\0" || amount_key[i])[0]
+    const changeIdx = outputs.findIndex(o => o.isChange);
+    const P_change = changeIdx >= 0
+      ? (typeof outputs[changeIdx].publicKey === 'string'
+          ? hexToBytes(outputs[changeIdx].publicKey) : outputs[changeIdx].publicKey)
+      : null;
+
+    // Precompute a * P_change (view secret key * change output pubkey)
+    let aP_change = null;
+    if (P_change && senderViewSecretKey) {
+      const vsk = typeof senderViewSecretKey === 'string'
+        ? hexToBytes(senderViewSecretKey) : senderViewSecretKey;
+      aP_change = scalarMultPoint(vsk, P_change);
+    }
+
+    const fPoints = [];
+    const changeMaskBytes = [];
+
+    for (let i = 0; i < outputs.length; i++) {
+      const ak = amountKeys[i];
+      const akBytes = typeof ak === 'string' ? hexToBytes(ak) : ak;
+
+      // y = H_s("RETURN\0\0" || amount_key) — 8-byte domain + 32-byte key
+      const domainReturn = new Uint8Array(40);
+      domainReturn.set(new TextEncoder().encode('RETURN'), 0); // bytes 6-7 stay 0
+      domainReturn.set(akBytes, 8);
+      const y = scReduce32(keccak256(domainReturn));
+
+      // F = y^-1 * (a * P_change)
+      if (aP_change) {
+        const yInv = scInvert(y);
+        fPoints.push(scalarMultPoint(yInv, aP_change));
+      } else {
+        fPoints.push(new Uint8Array(32));
+      }
+
+      // change_mask[i] = change_index XOR H("CHG_IDX\0" || amount_key)[0]
+      const domainChg = new Uint8Array(40);
+      domainChg.set(new TextEncoder().encode('CHG_IDX'), 0); // byte 7 stays 0
+      domainChg.set(akBytes, 8);
+      const eciHash = keccak256(domainChg);
+      changeMaskBytes.push((changeIdx >= 0 ? changeIdx : 0) ^ eciHash[0]);
+    }
+
     txPrefix.return_address_list = fPoints;
-    txPrefix.return_address_change_mask = new Uint8Array(changeMask);
+    txPrefix.return_address_change_mask = new Uint8Array(changeMaskBytes);
   } else if (txVersion >= 4 && txType === TX_TYPE.STAKE) {
     txPrefix.protocol_tx_data = protocolTxData;
   } else if (txType !== TX_TYPE.MINER && txType !== TX_TYPE.UNSET && txType !== TX_TYPE.PROTOCOL) {
@@ -2248,14 +2327,15 @@ export function buildStakeTransaction(params, options = {}) {
 
   if (useCarrot) {
     // CARROT STAKE uses protocol_tx_data structure
+    // return_address = spend pubkey (K_s), return_pubkey = view pubkey (K^0_v)
     protocolTxData = {
       version: 1,
-      return_address: typeof returnAddress.onetimeAddress === 'string'
-        ? hexToBytes(returnAddress.onetimeAddress)
-        : (returnAddress.onetimeAddress || new Uint8Array(32)),
-      return_pubkey: typeof returnAddress.spendPublicKey === 'string'
+      return_address: typeof returnAddress.spendPublicKey === 'string'
         ? hexToBytes(returnAddress.spendPublicKey)
         : returnAddress.spendPublicKey,
+      return_pubkey: typeof returnAddress.viewPublicKey === 'string'
+        ? hexToBytes(returnAddress.viewPublicKey)
+        : returnAddress.viewPublicKey,
       return_view_tag: returnAddress.viewTag || new Uint8Array(3),
       return_anchor_enc: returnAddress.anchorEnc || new Uint8Array(16)
     };
@@ -2827,6 +2907,7 @@ export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
 
     preparedInputs.push({
       secretKey: output.secretKey,
+      secretKeyY: output.secretKeyY || null,  // T-component for CARROT TCLSAG
       publicKey: output.publicKey,
       amount: output.amount,
       mask: output.mask,
@@ -2845,20 +2926,29 @@ export async function prepareInputs(ownedOutputs, rpcClient, options = {}) {
 /**
  * Estimate fee for a transaction
  *
+ * Uses the 2021 scaling dynamic fee algorithm matching C++ wallet2.
+ * When blockchainState is provided, computes the fee identically to the daemon.
+ * Without blockchainState, falls back to static FEE_PER_BYTE (likely too low
+ * for broadcast — only suitable for offline estimation).
+ *
  * @param {number} numInputs - Number of inputs
  * @param {number} numOutputs - Number of outputs (including change)
  * @param {Object} options - Fee options
  * @param {string} options.priority - Fee priority (default, low, high, highest)
  * @param {number} options.ringSize - Ring size (default: 16)
- * @param {bigint} options.baseFee - Base fee per byte (from network)
+ * @param {bigint} options.feePerByte - Pre-computed per-byte fee (overrides all calculation)
+ * @param {Object} options.blockchainState - Blockchain parameters for dynamic fee
+ * @param {number} options.blockchainState.height - Current height
+ * @param {number} options.blockchainState.blockWeightMedian - Median block weight
+ * @param {bigint} [options.blockchainState.alreadyGeneratedCoins] - Exact coins if known
  * @returns {bigint} Estimated fee in atomic units
  */
 export function estimateTransactionFee(numInputs, numOutputs, options = {}) {
   const {
     priority = 'default',
     ringSize = DEFAULT_RING_SIZE,
-    baseFee = FEE_PER_BYTE,
-    feeQuantizationMask = 0n
+    feePerByte: explicitFeePerByte,
+    blockchainState,
   } = options;
 
   // Convert string priority to number
@@ -2875,11 +2965,24 @@ export function estimateTransactionFee(numInputs, numOutputs, options = {}) {
     priorityNum = priority === 0 ? FEE_PRIORITY.NORMAL : priority;
   }
 
-  // Use per-byte weight-based fee (matches C++ wallet2::estimate_fee with use_per_byte_fee=true)
+  // Estimate TX weight
   const weight = estimateTxWeight(numInputs, ringSize, numOutputs, 0, { bulletproofPlus: true });
-  const multiplier = getFeeMultiplier(priorityNum);
 
-  return calculateFeeFromWeight(baseFee * multiplier, BigInt(weight), feeQuantizationMask);
+  // Determine per-byte fee rate
+  let feeRate;
+  if (explicitFeePerByte != null) {
+    // Caller provided a pre-computed per-byte rate (already includes priority)
+    feeRate = BigInt(explicitFeePerByte);
+  } else if (blockchainState) {
+    // Compute dynamic fee from blockchain state (2021 scaling)
+    // getDynamicFeePerByte returns the rate for the given priority — no multiplier needed
+    feeRate = getDynamicFeePerByte(blockchainState, priorityNum);
+  } else {
+    // Fallback: static fee with priority multiplier (legacy, likely too low for broadcast)
+    feeRate = FEE_PER_BYTE * getFeeMultiplier(priorityNum);
+  }
+
+  return calculateFeeFromWeight(feeRate, BigInt(weight));
 }
 
 /**

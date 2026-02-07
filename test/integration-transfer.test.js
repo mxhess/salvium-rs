@@ -67,7 +67,7 @@ async function syncWallet(label, keys, cacheFile = null, carrotKeys = null) {
 
   // Save sync state for next run
   if (cacheFile) {
-    await Bun.write(cacheFile, JSON.stringify(storage.dump()));
+    await Bun.write(cacheFile, storage.dumpJSON());
     const newHeight = await storage.getSyncHeight();
     if (newHeight > cachedHeight) {
       console.log(`  Synced ${newHeight - cachedHeight} new blocks (saved to ${cacheFile})`);

@@ -16,7 +16,7 @@
  */
 
 import { hexToBytes, bytesToHex } from './address.js';
-import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint } from './crypto/index.js';
+import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint, commit as pedersenCommit } from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
@@ -502,8 +502,10 @@ export function deriveOnetimeExtensionG(senderReceiverCtx, amountCommitment) {
  * k^o_t = H_n[s^ctx_sr]("Carrot key extension T", C_a)
  * Key = s_sender_receiver, data = C_a
  */
-function deriveOnetimeExtensionT(senderReceiverCtx, amountCommitment) {
+export function deriveOnetimeExtensionT(senderReceiverCtx, amountCommitment) {
   // Key is s_sender_receiver, transcript is just C_a
+  if (typeof senderReceiverCtx === 'string') senderReceiverCtx = hexToBytes(senderReceiverCtx);
+  if (typeof amountCommitment === 'string') amountCommitment = hexToBytes(amountCommitment);
   return deriveScalar(senderReceiverCtx, CARROT_DOMAIN.ONETIME_EXTENSION_T, amountCommitment);
 }
 
@@ -606,9 +608,11 @@ export function deriveCarrotCommitmentMask(senderReceiverCtx, amount, addressSpe
  * @param {Uint8Array} inputContext - Input context
  * @param {Map} subaddressMap - Map of address spend pubkeys (hex) to {major, minor}
  * @param {Uint8Array} amountCommitment - Amount commitment (C_a) from RingCT
+ * @param {Object} [options] - Additional options
+ * @param {bigint} [options.clearTextAmount] - Clear-text amount for coinbase (rctType=0) outputs
  * @returns {Object|null} Scan result or null if not owned
  */
-export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, inputContext, subaddressMap, amountCommitment) {
+export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, inputContext, subaddressMap, amountCommitment, options = {}) {
   // Convert keys if passed as hex strings
   if (typeof viewIncomingKey === 'string') viewIncomingKey = hexToBytes(viewIncomingKey);
   if (typeof accountSpendPubkey === 'string') accountSpendPubkey = hexToBytes(accountSpendPubkey);
@@ -686,17 +690,53 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     return null; // Not our output
   }
 
-  // 6. Decrypt amount (if encrypted)
+  // 6. Decrypt amount (if encrypted) or use clear-text amount for coinbase
   let amount = 0n;
-  if (encryptedAmount) {
+  if (options.clearTextAmount !== undefined && options.clearTextAmount !== null) {
+    // Coinbase: use clear-text amount directly (no ecdhInfo to decrypt)
+    amount = typeof options.clearTextAmount === 'bigint'
+      ? options.clearTextAmount
+      : BigInt(options.clearTextAmount);
+  } else if (encryptedAmount) {
     const encAmountBytes = typeof encryptedAmount === 'string'
       ? hexToBytes(encryptedAmount)
       : encryptedAmount;
     amount = decryptCarrotAmount(encAmountBytes, senderReceiverCtx, onetimeAddress);
   }
 
-  // 7. Derive commitment mask for verification
-  const mask = deriveCarrotCommitmentMask(senderReceiverCtx, amount, recoveredSpendPubkey, 0);
+  // 7. Derive commitment mask - try both enote types (matches C++ try_get_carrot_amount)
+  // C++ tries PAYMENT(0) first, then CHANGE(1), using whichever produces the correct commitment.
+  let mask;
+  let enoteType = 0; // PAYMENT
+  const maskPayment = deriveCarrotCommitmentMask(senderReceiverCtx, amount, recoveredSpendPubkey, 0);
+
+  if (amountCommitment) {
+    // Verify commitment: C_a ?= mask*G + amount*H
+    const commitmentBytes = typeof amountCommitment === 'string'
+      ? hexToBytes(amountCommitment) : amountCommitment;
+    const computedPayment = pedersenCommit(BigInt(amount), maskPayment);
+
+    if (bytesToHex(computedPayment) === bytesToHex(commitmentBytes)) {
+      mask = maskPayment;
+      enoteType = 0; // PAYMENT
+    } else {
+      // Try CHANGE type (1)
+      const maskChange = deriveCarrotCommitmentMask(senderReceiverCtx, amount, recoveredSpendPubkey, 1);
+      const computedChange = pedersenCommit(BigInt(amount), maskChange);
+      if (bytesToHex(computedChange) === bytesToHex(commitmentBytes)) {
+        mask = maskChange;
+        enoteType = 1; // CHANGE
+      } else {
+        // Neither type matched - use PAYMENT as fallback (for coinbase where commitment is unknown)
+        mask = maskPayment;
+        enoteType = 0;
+      }
+    }
+  } else {
+    // No commitment to verify against (coinbase) - use PAYMENT type
+    mask = maskPayment;
+    enoteType = 0;
+  }
 
   return {
     owned: true,
@@ -706,6 +746,7 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     viewTag: bytesToHex(viewTag),
     amount,
     mask,
+    enoteType,
     subaddressIndex,
     isMainAddress,
     isCarrot: true

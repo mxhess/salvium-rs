@@ -121,6 +121,7 @@ export class WalletOutput {
     this.isCarrot = data.isCarrot || false;
     this.carrotEphemeralPubkey = data.carrotEphemeralPubkey || null;  // D_e for CARROT spending
     this.carrotSharedSecret = data.carrotSharedSecret || null;        // s_sr_ctx for CARROT spending
+    this.carrotEnoteType = data.carrotEnoteType ?? null;             // 0=PAYMENT, 1=CHANGE (for mask derivation)
 
     // Spending status
     this.isSpent = data.isSpent || false;
@@ -206,6 +207,7 @@ export class WalletOutput {
       isCarrot: this.isCarrot,
       carrotEphemeralPubkey: this.carrotEphemeralPubkey,
       carrotSharedSecret: this.carrotSharedSecret,
+      carrotEnoteType: this.carrotEnoteType,
       isFrozen: this.isFrozen,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
@@ -357,6 +359,7 @@ export class MemoryStorage extends WalletStorage {
     this._spentKeyImages = new Set(); // Set of spent key images
     this._state = new Map();          // Generic key-value state
     this._blockHashes = new Map();    // height -> blockHash
+    this._blockHashRetention = 200;   // Only keep last N block hashes (for reorg detection)
     this._syncHeight = 0;
     this._isOpen = false;
   }
@@ -480,6 +483,14 @@ export class MemoryStorage extends WalletStorage {
   // Block hash tracking
   async putBlockHash(height, hash) {
     this._blockHashes.set(height, hash);
+    // Prune old block hashes to limit memory usage.
+    // Only keep the most recent N hashes (sufficient for reorg detection).
+    const cutoff = height - this._blockHashRetention;
+    if (cutoff > 0 && this._blockHashes.size > this._blockHashRetention * 1.5) {
+      for (const h of this._blockHashes.keys()) {
+        if (h < cutoff) this._blockHashes.delete(h);
+      }
+    }
   }
 
   async getBlockHash(height) {
@@ -566,6 +577,52 @@ export class MemoryStorage extends WalletStorage {
   }
 
   /**
+   * Dump storage state as a JSON string with reduced peak memory.
+   * Writes each section separately to avoid building one huge intermediate object.
+   * @returns {string} JSON string of all storage data
+   */
+  dumpJSON() {
+    const parts = [];
+    parts.push('{"version":1');
+    parts.push(`,"syncHeight":${this._syncHeight}`);
+
+    // Outputs - stringify one at a time
+    parts.push(',"outputs":[');
+    let first = true;
+    for (const o of this._outputs.values()) {
+      if (!first) parts.push(',');
+      parts.push(JSON.stringify(o.toJSON()));
+      first = false;
+    }
+    parts.push(']');
+
+    // Transactions - stringify one at a time
+    parts.push(',"transactions":[');
+    first = true;
+    for (const t of this._transactions.values()) {
+      if (!first) parts.push(',');
+      parts.push(JSON.stringify(t.toJSON()));
+      first = false;
+    }
+    parts.push(']');
+
+    // Spent key images
+    parts.push(',"spentKeyImages":');
+    parts.push(JSON.stringify(Array.from(this._spentKeyImages)));
+
+    // Block hashes (already pruned)
+    parts.push(',"blockHashes":');
+    parts.push(JSON.stringify(Object.fromEntries(this._blockHashes)));
+
+    // State
+    parts.push(',"state":');
+    parts.push(JSON.stringify(Object.fromEntries(this._state)));
+
+    parts.push('}');
+    return parts.join('');
+  }
+
+  /**
    * Restore storage state from a dump() snapshot.
    * @param {Object} data - Previously dumped state
    */
@@ -596,8 +653,12 @@ export class MemoryStorage extends WalletStorage {
     }
 
     if (data.blockHashes) {
-      for (const [h, hash] of Object.entries(data.blockHashes)) {
-        this._blockHashes.set(parseInt(h), hash);
+      // Only load the most recent block hashes (prune old ones on load)
+      const entries = Object.entries(data.blockHashes).map(([h, hash]) => [parseInt(h), hash]);
+      entries.sort((a, b) => b[0] - a[0]); // Sort descending by height
+      const toLoad = entries.slice(0, this._blockHashRetention);
+      for (const [h, hash] of toLoad) {
+        this._blockHashes.set(h, hash);
       }
     }
 

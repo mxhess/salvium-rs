@@ -185,7 +185,10 @@ test('creates sync engine with options', () => {
 
   assertEqual(sync.storage, storage);
   assertEqual(sync.daemon, daemon);
-  assertEqual(sync.keys, keys);
+  // Keys are normalized to hex strings in constructor
+  assertEqual(sync.keys.viewSecretKey, '0000000000000000000000000000000000000000000000000000000000000000');
+  assertEqual(sync.keys.spendSecretKey, '0000000000000000000000000000000000000000000000000000000000000000');
+  assertEqual(sync.keys.spendPublicKey, '0000000000000000000000000000000000000000000000000000000000000000');
   assertEqual(sync.batchSize, 50);
   assertEqual(sync.status, SYNC_STATUS.IDLE);
 });
