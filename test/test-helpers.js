@@ -56,11 +56,22 @@ export function short(addr) {
 
 /**
  * Load a wallet from a JSON file on disk.
+ * Supports both plain and encrypted wallet files.
+ * For encrypted files, reads the PIN from a sibling .pin file
+ * (e.g. wallet-a.json → wallet-a.pin) or accepts an explicit password.
  * @param {string} path - Absolute path to wallet JSON file
  * @param {string} [network='testnet'] - Network override
+ * @param {string} [password] - Explicit password (if omitted, reads .pin file)
  * @returns {Promise<Wallet>}
  */
-export async function loadWalletFromFile(path, network = 'testnet') {
+export async function loadWalletFromFile(path, network = 'testnet', password) {
   const data = JSON.parse(await Bun.file(path).text());
+  if (Wallet.isEncrypted(data)) {
+    if (!password) {
+      const pinPath = path.replace(/\.json$/, '.pin');
+      password = (await Bun.file(pinPath).text()).trim();
+    }
+    return Wallet.fromEncryptedJSON(data, password, { network });
+  }
   return Wallet.fromJSON(data, { network });
 }

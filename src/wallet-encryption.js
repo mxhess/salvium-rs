@@ -193,6 +193,24 @@ export function decryptWalletJSON(envelope, password) {
 }
 
 /**
+ * Re-encrypt a wallet envelope with a new password.
+ * Decrypts with the old password, then encrypts with the new one
+ * (fresh salts, fresh KEM keypair).
+ *
+ * @param {Object} envelope - Encrypted wallet JSON
+ * @param {string} oldPassword - Current password
+ * @param {string} newPassword - New password
+ * @param {Object} [options]
+ * @param {Object} [options.argon2] - Override Argon2 params for new encryption
+ * @returns {Object} Newly encrypted wallet envelope
+ * @throws {Error} On wrong old password or corrupted data
+ */
+export function reEncryptWalletJSON(envelope, oldPassword, newPassword, options = {}) {
+  const plain = decryptWalletJSON(envelope, oldPassword);
+  return encryptWalletJSON(plain, newPassword, options);
+}
+
+/**
  * Check if a wallet JSON object is encrypted.
  * @param {Object} json
  * @returns {boolean}

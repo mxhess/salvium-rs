@@ -10,6 +10,7 @@ import { Wallet } from '../src/wallet.js';
 import {
   encryptWalletJSON,
   decryptWalletJSON,
+  reEncryptWalletJSON,
   isEncryptedWallet,
   ENCRYPTION_VERSION,
 } from '../src/wallet-encryption.js';
@@ -156,6 +157,56 @@ console.log('Test 10: Different passwords produce different output');
   const enc2 = encryptWalletJSON(plainJSON, 'pass2', FAST_PARAMS);
   assert(enc1.encryption.ciphertext !== enc2.encryption.ciphertext, 'different ciphertexts');
   assert(enc1.encryption.kdfSalt !== enc2.encryption.kdfSalt, 'different salts');
+}
+
+// Test 11: reEncryptWalletJSON changes password
+console.log('Test 11: Password change via reEncryptWalletJSON');
+{
+  const enc = encryptWalletJSON(plainJSON, 'oldpass', FAST_PARAMS);
+  const reEnc = reEncryptWalletJSON(enc, 'oldpass', 'newpass', FAST_PARAMS);
+
+  // Old password no longer works
+  let threw = false;
+  try { decryptWalletJSON(reEnc, 'oldpass'); } catch { threw = true; }
+  assert(threw, 'old password rejected after change');
+
+  // New password works
+  const dec = decryptWalletJSON(reEnc, 'newpass');
+  assert(dec.seed === plainJSON.seed, 'seed intact after password change');
+  assert(dec.mnemonic === plainJSON.mnemonic, 'mnemonic intact after password change');
+  assert(dec.spendSecretKey === plainJSON.spendSecretKey, 'spendSecretKey intact');
+  assert(dec.viewSecretKey === plainJSON.viewSecretKey, 'viewSecretKey intact');
+  assert(dec.carrotKeys?.masterSecret === plainJSON.carrotKeys?.masterSecret, 'CARROT masterSecret intact');
+}
+
+// Test 12: Wallet.changePassword static method
+console.log('Test 12: Wallet.changePassword');
+{
+  const enc = wallet.toEncryptedJSON('pin123', FAST_PARAMS);
+  const reEnc = Wallet.changePassword(enc, 'pin123', 'pin456', FAST_PARAMS);
+
+  assert(Wallet.isEncrypted(reEnc), 're-encrypted envelope is encrypted');
+  assert(reEnc.address === enc.address, 'public address unchanged');
+  assert(reEnc.carrotAddress === enc.carrotAddress, 'CARROT address unchanged');
+
+  // Fresh salts (not reusing old crypto material)
+  assert(reEnc.encryption.kdfSalt !== enc.encryption.kdfSalt, 'fresh kdfSalt');
+  assert(reEnc.encryption.kemSalt !== enc.encryption.kemSalt, 'fresh kemSalt');
+
+  // Restore with new password
+  const restored = Wallet.fromEncryptedJSON(reEnc, 'pin456');
+  assert(restored.getLegacyAddress() === wallet.getLegacyAddress(), 'address matches after change');
+  assert(restored.getCarrotAddress() === wallet.getCarrotAddress(), 'CARROT address matches after change');
+  assert(restored.canSign(), 'can sign after password change');
+}
+
+// Test 13: Wrong old password in changePassword throws
+console.log('Test 13: changePassword with wrong old password throws');
+{
+  const enc = encryptWalletJSON(plainJSON, 'correct', FAST_PARAMS);
+  let threw = false;
+  try { reEncryptWalletJSON(enc, 'wrong', 'newpass', FAST_PARAMS); } catch { threw = true; }
+  assert(threw, 'wrong old password throws on re-encrypt');
 }
 
 console.log(`\nPassed: ${passed}`);

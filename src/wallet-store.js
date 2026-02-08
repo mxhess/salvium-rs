@@ -652,6 +652,16 @@ export class MemoryStorage extends WalletStorage {
       for (const ki of data.spentKeyImages) this._spentKeyImages.add(ki);
     }
 
+    // Reconcile: ensure outputs whose key images are in _spentKeyImages
+    // have isSpent=true. This fixes stale caches where sweep() marked KIs
+    // as spent but output objects weren't updated before serialization.
+    for (const ki of this._spentKeyImages) {
+      const output = this._outputs.get(ki);
+      if (output && !output.isSpent) {
+        output.isSpent = true;
+      }
+    }
+
     if (data.blockHashes) {
       // Only load the most recent block hashes (prune old ones on load)
       const entries = Object.entries(data.blockHashes).map(([h, hash]) => [parseInt(h), hash]);

@@ -51,7 +51,7 @@ import {
 } from './wallet/transfer.js';
 
 // Post-quantum wallet encryption
-import { encryptWalletJSON, decryptWalletJSON, isEncryptedWallet } from './wallet-encryption.js';
+import { encryptWalletJSON, decryptWalletJSON, reEncryptWalletJSON, isEncryptedWallet } from './wallet-encryption.js';
 
 // ============================================================================
 // IMPORTS FROM WALLET SUBMODULES
@@ -2241,6 +2241,22 @@ export class Wallet {
    */
   static isEncrypted(json) {
     return isEncryptedWallet(json);
+  }
+
+  /**
+   * Re-encrypt an encrypted wallet envelope with a new password.
+   * Generates fresh salts and a fresh KEM keypair.
+   *
+   * @param {Object} envelope - Encrypted wallet JSON
+   * @param {string} oldPassword - Current password
+   * @param {string} newPassword - New password
+   * @param {Object} [options]
+   * @param {Object} [options.argon2] - Override Argon2 params
+   * @returns {Object} Newly encrypted wallet envelope
+   * @throws {Error} On wrong old password
+   */
+  static changePassword(envelope, oldPassword, newPassword, options = {}) {
+    return reEncryptWalletJSON(envelope, oldPassword, newPassword, options);
   }
 
   // ===========================================================================
