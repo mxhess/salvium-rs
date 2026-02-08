@@ -598,6 +598,8 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   const { keccak256 } = await import('../crypto/index.js');
   const txHash = bytesToHex(keccak256(serialized));
 
+  const spentKeyImages = spendable.map(o => o.keyImage).filter(Boolean);
+
   return {
     txHash,
     fee: estimatedFee,
@@ -605,7 +607,8 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     tx,
     serializedHex: txHex,
     inputCount: preparedInputs.length,
-    outputCount: tx.prefix.vout.length
+    outputCount: tx.prefix.vout.length,
+    spentKeyImages
   };
 }
 

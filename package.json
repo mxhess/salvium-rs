@@ -29,6 +29,7 @@
     "./mining": "./src/mining.js",
     "./stratum": "./src/stratum/index.js",
     "./wallet": "./src/wallet.js",
+    "./wallet-encryption": "./src/wallet-encryption.js",
     "./randomx": "./src/randomx/index.js"
   },
   "scripts": {
@@ -81,9 +82,11 @@
     "./src/keccak.js": "./src/keccak.browser.js"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",
     "@noble/ed25519": "^3.0.0",
-    "@noble/hashes": "^2.0.1"
+    "@noble/hashes": "^2.0.1",
+    "@noble/post-quantum": "^0.5.4"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.0"

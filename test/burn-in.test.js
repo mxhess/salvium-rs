@@ -5,6 +5,10 @@
  * Runs hundreds of transactions across CN and CARROT eras to validate
  * the full transaction lifecycle: transfers, stakes, burns, sweeps.
  *
+ * Volume targets:
+ *   CN phase:     ~150 transfers A->B, 100+ outputs in B, multi-sweep
+ *   CARROT phase: 1000+ micro transfers, mega-sweep (30 inputs x N rounds)
+ *
  * Prerequisites:
  * - Fresh testnet chain (reset to height 0)
  * - Mining to wallet A's CN address (pre-1100) then CARROT address (post-1100)
@@ -15,11 +19,6 @@
  *   bun test/burn-in.test.js --phase cn     # Only CN phase
  *   bun test/burn-in.test.js --phase carrot # Only CARROT phase (resumes sync)
  *
- * The test will:
- * 1. Phase CN (blocks 20-1099): transfers A↔B, stakes, burns, sweeps using CN addresses
- * 2. Phase CARROT (blocks 1112+): same using CARROT addresses
- * 3. Final reconciliation: balance sheet, accounting, failure report
- *
  * All transactions are BROADCAST (not dry-run). Wallet B is persisted to disk.
  * Full TX log saved to ~/testnet-wallet/burn-in-log.json
  */
@@ -27,11 +26,8 @@
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
 import { Wallet } from '../src/wallet.js';
-import { createWalletSync } from '../src/wallet-sync.js';
-import { MemoryStorage } from '../src/wallet-store.js';
-import { transfer, sweep, stake, burn } from '../src/wallet/transfer.js';
-import { bytesToHex } from '../src/address.js';
 import { existsSync } from 'node:fs';
+import { getHeight, waitForHeight, fmt, short, loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
@@ -73,37 +69,14 @@ const daemon = new DaemonRPC({ url: DAEMON_URL });
 // Helpers
 // =============================================================================
 
-function fmt(atomic) {
-  return `${(Number(atomic) / 1e8).toFixed(8)} SAL`;
+function logTx(type, from, to, amount, fee, txHash, height) {
+  txLog.push({ type, from, to, amount: amount.toString(), fee: fee.toString(), txHash, height, time: Date.now() });
+  totalFees += fee;
 }
 
-function short(addr) {
-  return addr ? addr.slice(0, 20) + '...' : 'N/A';
-}
+async function syncAndReport(wallet, label, cacheFile = null) {
+  const currentHeight = await getHeight(daemon);
 
-async function getHeight() {
-  const info = await daemon.getInfo();
-  return info.result?.height || info.data?.height || 0;
-}
-
-async function waitForHeight(target, label = '') {
-  let h = await getHeight();
-  if (h >= target) return h;
-  const tag = label ? ` [${label}]` : '';
-  process.stdout.write(`  Waiting for height ${target}${tag}... (at ${h})`);
-  while (h < target) {
-    await new Promise(r => setTimeout(r, 3000));
-    h = await getHeight();
-    process.stdout.write(`\r  Waiting for height ${target}${tag}... (at ${h})     `);
-  }
-  process.stdout.write('\n');
-  return h;
-}
-
-async function syncWallet(label, keys, storage, cacheFile, carrotKeys) {
-  const currentHeight = await getHeight();
-
-  // Detect stale cache (chain was reset)
   if (cacheFile && existsSync(cacheFile)) {
     try {
       const cached = JSON.parse(await Bun.file(cacheFile).text());
@@ -111,157 +84,61 @@ async function syncWallet(label, keys, storage, cacheFile, carrotKeys) {
       if (cachedSyncHeight > currentHeight) {
         console.log(`  ${label}: Cache stale (cached=${cachedSyncHeight}, chain=${currentHeight}), resetting`);
       } else {
-        storage.load(cached);
+        wallet.loadSyncCache(cached);
       }
     } catch { /* ignore bad cache */ }
   }
 
-  const sync = createWalletSync({ daemon, keys, carrotKeys, storage, network: NETWORK });
-  await sync.start();
+  await wallet.syncWithDaemon();
 
   if (cacheFile) {
-    await Bun.write(cacheFile, storage.dumpJSON());
+    await Bun.write(cacheFile, wallet.dumpSyncCacheJSON());
   }
 
-  const allOutputs = await storage.getOutputs({ isSpent: false });
-  const spendable = allOutputs.filter(o => o.isSpendable(currentHeight));
-  let balance = 0n, spendableBalance = 0n;
-  for (const o of allOutputs) balance += o.amount;
-  for (const o of spendable) spendableBalance += o.amount;
-
-  const assetCounts = {};
-  for (const o of spendable) {
-    const a = o.assetType || 'SAL';
-    assetCounts[a] = (assetCounts[a] || 0) + 1;
-  }
-
-  console.log(`  ${label}: ${allOutputs.length} outputs, ${spendable.length} spendable, balance=${fmt(balance)}, spendable=${fmt(spendableBalance)} ${JSON.stringify(assetCounts)}`);
-  return { storage, balance, spendableBalance, spendable, allOutputs };
+  const { balance, unlockedBalance } = await wallet.getStorageBalance();
+  console.log(`  ${label}: balance=${fmt(balance)}, spendable=${fmt(unlockedBalance)}`);
+  return { balance, unlockedBalance };
 }
-
-function logTx(type, from, to, amount, fee, txHash, height) {
-  txLog.push({ type, from, to, amount: amount.toString(), fee: fee.toString(), txHash, height, time: Date.now() });
-  totalFees += fee;
-}
-
-// =============================================================================
-// Wallet Loading
-// =============================================================================
 
 /**
- * Convert a key value to hex string.
- * Handles: hex strings (passthrough), Uint8Array, and JSON-serialized
- * indexed objects like {"0": 175, "1": 212, ...} from JSON.stringify(Uint8Array).
+ * Report output count from wallet's internal storage.
  */
-function toHex(val) {
-  if (typeof val === 'string') return val;
-  if (val instanceof Uint8Array) return bytesToHex(val);
-  if (val && typeof val === 'object' && '0' in val) {
-    // Indexed object from JSON.stringify(Uint8Array)
-    const len = Object.keys(val).length;
-    const arr = new Uint8Array(len);
-    for (let i = 0; i < len; i++) arr[i] = val[i];
-    return bytesToHex(arr);
-  }
-  return val;
-}
-
-function loadWalletKeys(data) {
-  return {
-    keys: {
-      viewSecretKey: toHex(data.viewSecretKey),
-      spendSecretKey: toHex(data.spendSecretKey),
-      viewPublicKey: toHex(data.viewPublicKey),
-      spendPublicKey: toHex(data.spendPublicKey),
-    },
-    carrotKeys: data.carrotKeys || null,
-    address: data.address,
-    carrotAddress: data.carrotAddress || null,
-  };
-}
-
-async function loadOrCreateWalletB() {
-  if (existsSync(WALLET_B_FILE)) {
-    const data = JSON.parse(await Bun.file(WALLET_B_FILE).text());
-    console.log(`  Wallet B loaded from ${WALLET_B_FILE}`);
-    // Re-save if keys are in indexed-object format (from old Uint8Array serialization)
-    if (data.spendPublicKey && typeof data.spendPublicKey !== 'string') {
-      console.log(`  Wallet B: converting keys from indexed-object to hex format...`);
-      data.spendPublicKey = toHex(data.spendPublicKey);
-      data.viewPublicKey = toHex(data.viewPublicKey);
-      data.spendSecretKey = toHex(data.spendSecretKey);
-      data.viewSecretKey = toHex(data.viewSecretKey);
-      if (data.seed) data.seed = toHex(data.seed);
-      await Bun.write(WALLET_B_FILE, JSON.stringify(data, null, 2));
-      console.log(`  Wallet B: re-saved with hex keys`);
-    }
-    return loadWalletKeys(data);
-  }
-
-  const wb = Wallet.create({ network: NETWORK });
-  const data = {
-    version: 3,
-    type: 'full',
-    network: NETWORK,
-    spendPublicKey: toHex(wb.spendPublicKey),
-    viewPublicKey: toHex(wb.viewPublicKey),
-    address: wb.getAddress(),
-    carrotAddress: wb.getCarrotAddress(),
-    carrotKeys: wb.carrotKeys || null,
-    spendSecretKey: toHex(wb.spendSecretKey),
-    viewSecretKey: toHex(wb.viewSecretKey),
-    seed: toHex(wb.seed),
-  };
-  await Bun.write(WALLET_B_FILE, JSON.stringify(data, null, 2));
-  console.log(`  Wallet B CREATED and saved to ${WALLET_B_FILE}`);
-  return loadWalletKeys(data);
+async function outputCount(wallet) {
+  if (!wallet._storage) return 0;
+  const all = await wallet._storage.getOutputs({ isSpent: false });
+  return all.length;
 }
 
 // =============================================================================
-// Transaction Wrappers
+// Transaction Wrappers (thin wrappers for stats/logging only)
 // =============================================================================
 
-async function doTransfer(fromLabel, keys, storage, carrotKeys, toAddress, amount) {
+async function doTransfer(wallet, fromLabel, toAddress, amount) {
   stats.transfers.attempted++;
-  const h = await getHeight();
+  const h = await getHeight(daemon);
   try {
-    const result = await transfer({
-      wallet: { keys, storage, carrotKeys },
-      daemon,
-      destinations: [{ address: toAddress, amount }],
-      options: { priority: 'default', network: NETWORK }
-    });
-
+    const result = await wallet.transfer(
+      [{ address: toAddress, amount }],
+      { priority: 'default' }
+    );
     stats.transfers.succeeded++;
     logTx('transfer', fromLabel, toAddress.slice(0, 10), amount, result.fee, result.txHash, h);
-
-    if (result.spentKeyImages) {
-      for (const ki of result.spentKeyImages) await storage.markOutputSpent(ki);
-    }
     return result;
   } catch (e) {
     stats.transfers.failed++;
-    console.log(`    FAILED [${fromLabel}→${short(toAddress)}, ${fmt(amount)}]: ${e.message}`);
+    console.log(`    FAILED [${fromLabel}->${short(toAddress)}, ${fmt(amount)}]: ${e.message}`);
     return null;
   }
 }
 
-async function doStake(label, keys, storage, carrotKeys, amount) {
+async function doStake(wallet, label, amount) {
   stats.stakes.attempted++;
-  const h = await getHeight();
+  const h = await getHeight(daemon);
   try {
-    const result = await stake({
-      wallet: { keys, storage, carrotKeys },
-      daemon,
-      amount,
-      options: { priority: 'default', network: NETWORK }
-    });
+    const result = await wallet.stake(amount, { priority: 'default' });
     stats.stakes.succeeded++;
     logTx('stake', label, 'protocol', amount, result.fee, result.txHash, h);
     totalStaked += amount;
-    if (result.spentKeyImages) {
-      for (const ki of result.spentKeyImages) await storage.markOutputSpent(ki);
-    }
     return result;
   } catch (e) {
     stats.stakes.failed++;
@@ -270,22 +147,14 @@ async function doStake(label, keys, storage, carrotKeys, amount) {
   }
 }
 
-async function doBurn(label, keys, storage, carrotKeys, amount) {
+async function doBurn(wallet, label, amount) {
   stats.burns.attempted++;
-  const h = await getHeight();
+  const h = await getHeight(daemon);
   try {
-    const result = await burn({
-      wallet: { keys, storage, carrotKeys },
-      daemon,
-      amount,
-      options: { priority: 'default', network: NETWORK }
-    });
+    const result = await wallet.burn(amount, { priority: 'default' });
     stats.burns.succeeded++;
     logTx('burn', label, 'burned', amount, result.fee, result.txHash, h);
     totalBurned += amount;
-    if (result.spentKeyImages) {
-      for (const ki of result.spentKeyImages) await storage.markOutputSpent(ki);
-    }
     return result;
   } catch (e) {
     stats.burns.failed++;
@@ -294,21 +163,13 @@ async function doBurn(label, keys, storage, carrotKeys, amount) {
   }
 }
 
-async function doSweep(label, keys, storage, carrotKeys, toAddress) {
+async function doSweep(wallet, label, toAddress) {
   stats.sweeps.attempted++;
-  const h = await getHeight();
+  const h = await getHeight(daemon);
   try {
-    const result = await sweep({
-      wallet: { keys, storage, carrotKeys },
-      daemon,
-      address: toAddress,
-      options: { priority: 'default', network: NETWORK }
-    });
+    const result = await wallet.sweep(toAddress, { priority: 'default' });
     stats.sweeps.succeeded++;
     logTx('sweep', label, toAddress.slice(0, 10), result.amount, result.fee, result.txHash, h);
-    if (result.spentKeyImages) {
-      for (const ki of result.spentKeyImages) await storage.markOutputSpent(ki);
-    }
     return result;
   } catch (e) {
     stats.sweeps.failed++;
@@ -317,33 +178,78 @@ async function doSweep(label, keys, storage, carrotKeys, toAddress) {
   }
 }
 
+/**
+ * Repeatedly sweep a wallet until all outputs are consolidated.
+ * Each sweep takes up to 30 inputs (MAX_SWEEP_INPUTS in transfer.js).
+ * Returns total number of successful sweep TXs.
+ */
+async function megaSweep(wallet, label, toAddress, maxRounds = 50) {
+  let round = 0;
+  let totalSwept = 0n;
+  let totalSweepFees = 0n;
+
+  while (round < maxRounds) {
+    // Check if there are enough outputs to justify sweeping
+    const nOutputs = await outputCount(wallet);
+    if (nOutputs <= 1) {
+      console.log(`    Sweep done: only ${nOutputs} output(s) remain`);
+      break;
+    }
+
+    round++;
+    console.log(`    Sweep round ${round}: ${nOutputs} unspent outputs...`);
+
+    const result = await doSweep(wallet, label, toAddress);
+    if (!result) {
+      console.log(`    Sweep round ${round} failed, stopping`);
+      break;
+    }
+
+    totalSwept += result.amount;
+    totalSweepFees += result.fee;
+    console.log(`    Round ${round}: consolidated ${result.inputCount} inputs, fee=${fmt(result.fee)}, amount=${fmt(result.amount)}`);
+
+    // Save cache after each round
+    await Bun.write(
+      label === 'A' ? SYNC_CACHE_A : SYNC_CACHE_B,
+      wallet.dumpSyncCacheJSON()
+    );
+
+    // Always wait for the sweep TX to confirm + maturity before next round
+    const h = await getHeight(daemon);
+    await waitForHeight(daemon, h + SPENDABLE_AGE + 2, `sweep round ${round} maturity`);
+    await wallet.syncWithDaemon();
+  }
+
+  console.log(`  Mega-sweep complete: ${round} rounds, swept=${fmt(totalSwept)}, fees=${fmt(totalSweepFees)}`);
+  return { rounds: round, totalSwept, totalSweepFees };
+}
+
 // =============================================================================
 // Batch Helpers
 // =============================================================================
 
 /**
- * Send a batch of transfers, adaptive to available spendable outputs.
- * Returns number of successful transfers.
+ * Send a batch of transfers within a single maturity window.
+ * Re-syncs after every `resyncInterval` transfers to pick up change outputs.
  */
-async function batchTransfers(fromLabel, keys, storage, carrotKeys, toAddress, targetCount, minAmt, maxAmt) {
+async function batchTransfers(wallet, fromLabel, toAddress, targetCount, minAmt, maxAmt, cacheFile = null) {
   console.log(`  Sending up to ${targetCount} transfers ${fromLabel} -> ${short(toAddress)}`);
   let success = 0;
   let consecutiveFails = 0;
 
   for (let i = 0; i < targetCount; i++) {
     const amount = BigInt(Math.floor(Math.random() * Number(maxAmt - minAmt)) + Number(minAmt));
-    const result = await doTransfer(fromLabel, keys, storage, carrotKeys, toAddress, amount);
+    const result = await doTransfer(wallet, fromLabel, toAddress, amount);
 
     if (result) {
       success++;
       consecutiveFails = 0;
-      // Progress every 10
       if ((i + 1) % 10 === 0 || i === targetCount - 1) {
         console.log(`    ${i + 1}/${targetCount} sent (${success} ok, ${i + 1 - success} failed)`);
       }
     } else {
       consecutiveFails++;
-      // If 5 consecutive failures, likely out of outputs — stop
       if (consecutiveFails >= 5) {
         console.log(`    Stopping after ${consecutiveFails} consecutive failures (likely out of spendable outputs)`);
         break;
@@ -356,24 +262,76 @@ async function batchTransfers(fromLabel, keys, storage, carrotKeys, toAddress, t
 }
 
 /**
- * Print a phase separator banner
+ * Send a large number of micro transfers in waves.
+ * After each wave of `waveSize`, wait for maturity, re-sync, and continue.
  */
+async function microFlood(wallet, fromLabel, toAddress, totalCount, minAmt, maxAmt, waveSize, cacheFile) {
+  console.log(`  Flooding ${totalCount} micro transfers ${fromLabel} -> ${short(toAddress)} (waves of ${waveSize})`);
+  let sent = 0, failed = 0, consecutiveFails = 0;
+  let totalSent = 0n, totalFloodFees = 0n;
+
+  for (let wave = 0; wave * waveSize < totalCount; wave++) {
+    const waveStart = wave * waveSize;
+    const waveEnd = Math.min(waveStart + waveSize, totalCount);
+
+    if (wave > 0) {
+      // Wait for change outputs to mature
+      const bh = await getHeight(daemon);
+      await waitForHeight(daemon, bh + SPENDABLE_AGE + 2, `wave ${wave + 1} maturity`);
+      await syncAndReport(wallet, fromLabel, cacheFile);
+    }
+
+    for (let i = waveStart; i < waveEnd; i++) {
+      const amount = BigInt(Math.floor(Math.random() * Number(maxAmt - minAmt)) + Number(minAmt));
+      try {
+        const result = await wallet.transfer(
+          [{ address: toAddress, amount }],
+          { priority: 'default' }
+        );
+        sent++;
+        consecutiveFails = 0;
+        totalSent += amount;
+        totalFloodFees += result.fee;
+        stats.transfers.attempted++;
+        stats.transfers.succeeded++;
+        const h = await getHeight(daemon);
+        logTx('transfer', fromLabel, toAddress.slice(0, 10), amount, result.fee, result.txHash, h);
+
+        if ((sent + failed) % 25 === 0 || i === waveEnd - 1) {
+          console.log(`    ${sent + failed}/${totalCount} (${sent} ok, ${failed} fail) | sent=${fmt(totalSent)} | fees=${fmt(totalFloodFees)}`);
+        }
+      } catch (e) {
+        failed++;
+        consecutiveFails++;
+        stats.transfers.attempted++;
+        stats.transfers.failed++;
+        if ((sent + failed) % 25 === 0) {
+          console.log(`    ${sent + failed}/${totalCount} (${sent} ok, ${failed} fail) | err: ${e.message.slice(0, 60)}`);
+        }
+        if (consecutiveFails >= 10) {
+          console.log(`    Stopping wave after ${consecutiveFails} consecutive failures`);
+          break;
+        }
+      }
+    }
+
+    if (consecutiveFails >= 10) break;
+  }
+
+  console.log(`  Flood done: ${sent}/${totalCount} succeeded, total=${fmt(totalSent)}, fees=${fmt(totalFloodFees)}`);
+  return { sent, failed, totalSent, totalFloodFees };
+}
+
 function banner(title) {
   console.log('\n' + '='.repeat(72));
   console.log(`  ${title}`);
   console.log('='.repeat(72));
 }
 
-/**
- * Print a section header
- */
 function section(title) {
   console.log(`\n--- ${title} ---`);
 }
 
-/**
- * Save the TX log to disk
- */
 async function saveTxLog() {
   const data = {
     timestamp: new Date().toISOString(),
@@ -388,228 +346,215 @@ async function saveTxLog() {
 }
 
 // =============================================================================
+// Wallet Loading
+// =============================================================================
+
+async function loadOrCreateWalletB() {
+  if (existsSync(WALLET_B_FILE)) {
+    const wallet = await loadWalletFromFile(WALLET_B_FILE, NETWORK);
+    console.log(`  Wallet B loaded from ${WALLET_B_FILE}`);
+    return wallet;
+  }
+
+  const wallet = Wallet.create({ network: NETWORK });
+  await Bun.write(WALLET_B_FILE, JSON.stringify(wallet.toJSON(), null, 2));
+  console.log(`  Wallet B CREATED and saved to ${WALLET_B_FILE}`);
+  return wallet;
+}
+
+// =============================================================================
 // PHASE 1: CN ERA
 // =============================================================================
 
 async function phaseCN(walletA, walletB) {
   banner('PHASE 1: CN ERA (pre-CARROT, height < 1100)');
 
-  const addrA = walletA.address;
-  const addrB = walletB.address;
+  const addrA = walletA.getLegacyAddress();
+  const addrB = walletB.getLegacyAddress();
   console.log(`  A address: ${short(addrA)}`);
   console.log(`  B address: ${short(addrB)}`);
 
-  // Wait for enough blocks for coinbase maturity (60) + ring size (16) + buffer
-  // Coinbase outputs have unlock_time = height + 60, so decoys must be 60+ blocks old
   const COINBASE_MATURITY = 60;
-  const MIN_HEIGHT_FOR_RING = COINBASE_MATURITY + DEFAULT_RING_SIZE + 5; // 81
-  await waitForHeight(MIN_HEIGHT_FOR_RING, 'ring + coinbase maturity');
+  const MIN_HEIGHT_FOR_RING = COINBASE_MATURITY + DEFAULT_RING_SIZE + 5;
+  await waitForHeight(daemon, MIN_HEIGHT_FOR_RING, 'ring + coinbase maturity');
 
   // Sync wallet A
-  const storageA = new MemoryStorage();
-  let syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  let syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
 
-  if (syncA.spendableBalance === 0n) {
+  if (syncA.unlockedBalance === 0n) {
     console.log('  Waiting for more blocks (no spendable balance)...');
-    await waitForHeight(MIN_HEIGHT_FOR_RING + 10, 'more coinbase');
-    syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+    await waitForHeight(daemon, MIN_HEIGHT_FOR_RING + 10, 'more coinbase');
+    syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
   }
 
-  // ---- Round 1: A -> B transfers ----
-  section(`CN Round 1: A -> B transfers (${syncA.spendable.length} outputs available)`);
-  const count1 = Math.min(30, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    count1, 50_000_000n, 500_000_000n); // 0.5 - 5 SAL
+  // ---- Round 1: 50 A -> B transfers (medium, 0.5-5 SAL) ----
+  section('CN Round 1: A -> B transfers (0.5-5 SAL)');
+  await batchTransfers(walletA, 'A', addrB, 50, 50_000_000n, 500_000_000n, SYNC_CACHE_A);
 
-  // Wait for confirms
-  let h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'A->B confirms');
+  let h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'A->B confirms');
 
-  // Sync both wallets
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  const storageB = new MemoryStorage();
-  let syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  let syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
   // ---- Round 2: B -> A transfers ----
-  if (syncB.spendable.length > 0) {
-    section(`CN Round 2: B -> A transfers (${syncB.spendable.length} outputs available)`);
-    const count2 = Math.min(10, syncB.spendable.length);
-    await batchTransfers('B', walletB.keys, storageB, walletB.carrotKeys, addrA,
-      count2, 10_000_000n, 100_000_000n); // 0.1 - 1 SAL
+  if (syncB.unlockedBalance > 0n) {
+    section('CN Round 2: B -> A transfers (0.1-1 SAL)');
+    await batchTransfers(walletB, 'B', addrA, 15, 10_000_000n, 100_000_000n, SYNC_CACHE_B);
   } else {
     section('CN Round 2: B -> A transfers');
     console.log('  SKIPPED: wallet B has no spendable outputs');
   }
 
-  // Wait for B->A to settle, re-sync A
-  h = await getHeight();
-  await waitForHeight(h + 3, 'B->A settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'B->A settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
 
-  // ---- Round 3: Sub-SAL transfers (0.1 - 0.9 SAL) ----
-  section(`CN Round 3: Sub-SAL transfers A -> B`);
-  const microCount = Math.min(30, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    microCount, 10_000_000n, 90_000_000n); // 0.1 - 0.9 SAL
+  // ---- Round 3: 100 micro transfers to flood B with outputs ----
+  section('CN Round 3: Micro flood A -> B (100 x 0.1-0.9 SAL)');
+  await microFlood(walletA, 'A', addrB, 100, 10_000_000n, 90_000_000n, 50, SYNC_CACHE_A);
 
   // ---- Stakes ----
   section('CN Stakes');
-  h = await getHeight();
-  await waitForHeight(h + 3, 'pre-stake settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'pre-stake settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
 
   for (let i = 0; i < 3; i++) {
-    const amt = BigInt(Math.floor(Math.random() * 5_00_000_000) + 1_00_000_000); // 1-6 SAL
+    const amt = BigInt(Math.floor(Math.random() * 5_00_000_000) + 1_00_000_000);
     console.log(`  Stake ${i + 1}/3: ${fmt(amt)}`);
-    await doStake('A', walletA.keys, storageA, walletA.carrotKeys, amt);
-    // Wait 2 blocks between stakes to ensure each lands in a separate block
-    // (daemon bug: multiple CARROT returns in same block fails validation)
+    await doStake(walletA, 'A', amt);
     if (i < 2) {
-      const sh = await getHeight();
-      await waitForHeight(sh + 2, 'stake spacing');
+      const sh = await getHeight(daemon);
+      await waitForHeight(daemon, sh + 2, 'stake spacing');
     }
   }
 
   // ---- Burns ----
   section('CN Burns');
   for (let i = 0; i < 3; i++) {
-    const amt = BigInt(Math.floor(Math.random() * 1_00_000_000) + 10_000_000); // 0.1-1.1 SAL
+    const amt = BigInt(Math.floor(Math.random() * 1_00_000_000) + 10_000_000);
     console.log(`  Burn ${i + 1}/3: ${fmt(amt)}`);
-    await doBurn('A', walletA.keys, storageA, walletA.carrotKeys, amt);
+    await doBurn(walletA, 'A', amt);
   }
 
-  // ---- Sweep B -> B ----
-  section('CN Sweep B -> B');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'pre-sweep confirms');
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
-  if (syncB.spendable.length > 0) {
-    await doSweep('B', walletB.keys, storageB, walletB.carrotKeys, addrB);
+  // ---- Large transfers A -> B (10-50 SAL) ----
+  section('CN Round 4: Large A -> B transfers (10-50 SAL)');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'pre-large settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  await batchTransfers(walletA, 'A', addrB, 10, 1_000_000_000n, 5_000_000_000n, SYNC_CACHE_A);
+
+  // ---- Mega-sweep B -> B (consolidate 100+ outputs) ----
+  section('CN Mega-Sweep B -> B');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'pre-sweep maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
+  const bOutputsPre = await outputCount(walletB);
+  console.log(`  B has ${bOutputsPre} unspent outputs before sweep`);
+
+  if (bOutputsPre > 1) {
+    await megaSweep(walletB, 'B', addrB);
   } else {
-    console.log('  SKIPPED: no spendable outputs in B');
+    console.log('  SKIPPED: not enough outputs to sweep');
   }
 
-  // ---- Round 4: Larger A -> B transfers ----
-  section('CN Round 4: A -> B transfers (1-10 SAL)');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'change maturity');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  // ---- Multi-input stress: B -> A with whatever remains ----
+  section('CN Round 5: B -> A stress transfers');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'post-sweep maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
-  const count4 = Math.min(20, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    count4, 100_000_000n, 1_000_000_000n); // 1 - 10 SAL
-
-  // ---- Round 5: Many micro transfers to B (stress multi-input assembly) ----
-  // B now has many small UTXOs from rounds 1-4. Send many sub-SAL amounts back to A.
-  section('CN Round 5: Multi-input stress B -> A (many sub-SAL UTXOs)');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'micro B maturity');
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
-  console.log(`  B has ${syncB.spendable.length} spendable outputs, balance=${fmt(syncB.spendableBalance)}`);
-
-  if (syncB.spendable.length > 0) {
-    // Send many small txs from B -> A using B's tiny UTXOs
-    const bCount = Math.min(20, syncB.spendable.length);
-    await batchTransfers('B', walletB.keys, storageB, walletB.carrotKeys, addrA,
-      bCount, 5_000_000n, 50_000_000n); // 0.05 - 0.5 SAL
+  if (syncB.unlockedBalance > 0n) {
+    await batchTransfers(walletB, 'B', addrA, 20, 5_000_000n, 100_000_000n, SYNC_CACHE_B);
   } else {
     console.log('  SKIPPED: B has no spendable outputs');
   }
 
+  // ---- Sweep A -> A (consolidate A's change outputs) ----
+  section('CN Sweep A -> A');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'pre-sweep-A maturity');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  const aOutputsPre = await outputCount(walletA);
+  console.log(`  A has ${aOutputsPre} unspent outputs`);
+  if (aOutputsPre > 1) {
+    await megaSweep(walletA, 'A', addrA);
+  }
+
   // ---- CN Phase Accounting ----
   section('CN Phase Accounting');
-  h = await getHeight();
-  await waitForHeight(h + 3, 'accounting settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'accounting settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
-  console.log(`  Wallet A: ${fmt(syncA.balance)} (${syncA.allOutputs.length} outputs)`);
-  console.log(`  Wallet B: ${fmt(syncB.balance)} (${syncB.allOutputs.length} outputs)`);
+  console.log(`  A outputs: ${await outputCount(walletA)}`);
+  console.log(`  B outputs: ${await outputCount(walletB)}`);
   console.log(`  Total fees: ${fmt(totalFees)}`);
   console.log(`  Total burned: ${fmt(totalBurned)}`);
   console.log(`  Total staked: ${fmt(totalStaked)}`);
   console.log(`  TX count: ${txLog.length}`);
 
   await saveTxLog();
-  return { storageA, storageB };
 }
 
 // =============================================================================
 // PHASE 2: CARROT ERA
 // =============================================================================
 
-async function phaseCARROT(walletA, walletB, storageA, storageB) {
+async function phaseCARROT(walletA, walletB) {
   banner('PHASE 2: CARROT ERA (height >= 1100)');
 
-  // Use CARROT addresses
-  const addrA = walletA.carrotAddress || walletA.address;
-  const addrB = walletB.carrotAddress || walletB.address;
+  const addrA = walletA.getCarrotAddress() || walletA.getLegacyAddress();
+  const addrB = walletB.getCarrotAddress() || walletB.getLegacyAddress();
   console.log(`  A CARROT: ${short(addrA)}`);
   console.log(`  B CARROT: ${short(addrB)}`);
   console.log(`  Waiting for CARROT fork + coinbase maturity...`);
   console.log(`  (Switch mining to wallet A CARROT address after height 1100)`);
-  console.log(`  CARROT address: ${walletA.carrotAddress}`);
+  console.log(`  CARROT address: ${walletA.getCarrotAddress()}`);
 
-  await waitForHeight(CARROT_FORK_HEIGHT + SPENDABLE_AGE + 5, 'CARROT maturity');
+  await waitForHeight(daemon, CARROT_FORK_HEIGHT + SPENDABLE_AGE + 5, 'CARROT maturity');
 
-  // Re-sync both wallets through the fork
-  if (!storageA) storageA = new MemoryStorage();
-  if (!storageB) storageB = new MemoryStorage();
+  let syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  let syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
-  let syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  let syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  // ---- Round 1: 50 A -> B CARROT transfers (0.5-5 SAL) ----
+  section('CARROT Round 1: A -> B transfers (0.5-5 SAL)');
+  await batchTransfers(walletA, 'A', addrB, 50, 50_000_000n, 500_000_000n, SYNC_CACHE_A);
 
-  // ---- Round 1: A -> B CARROT transfers ----
-  section(`CARROT Round 1: A -> B transfers (${syncA.spendable.length} outputs available)`);
-  const count1 = Math.min(30, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    count1, 50_000_000n, 500_000_000n);
+  let h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'CARROT A->B confirms');
 
-  // Wait for confirms
-  let h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'CARROT A->B confirms');
-
-  // Sync both
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
   // ---- Round 2: B -> A CARROT transfers ----
-  if (syncB.spendable.length > 0) {
-    section(`CARROT Round 2: B -> A transfers (${syncB.spendable.length} outputs available)`);
-    const count2 = Math.min(10, syncB.spendable.length);
-    await batchTransfers('B', walletB.keys, storageB, walletB.carrotKeys, addrA,
-      count2, 10_000_000n, 100_000_000n);
+  if (syncB.unlockedBalance > 0n) {
+    section('CARROT Round 2: B -> A transfers (0.1-1 SAL)');
+    await batchTransfers(walletB, 'B', addrA, 15, 10_000_000n, 100_000_000n, SYNC_CACHE_B);
   } else {
     section('CARROT Round 2: B -> A transfers');
     console.log('  SKIPPED: wallet B has no spendable outputs');
   }
 
-  // Wait, re-sync A
-  h = await getHeight();
-  await waitForHeight(h + 3, 'B->A settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-
-  // ---- Round 3: CARROT micro transfers ----
-  section('CARROT Round 3: Micro transfers A -> B');
-  const microCount = Math.min(20, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    microCount, 1_000_000n, 10_000_000n);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'B->A settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
 
   // ---- CARROT Stakes ----
   section('CARROT Stakes');
-  h = await getHeight();
-  await waitForHeight(h + 3, 'pre-stake settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'pre-stake settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
 
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 5_00_000_000) + 1_00_000_000);
     console.log(`  Stake ${i + 1}/3: ${fmt(amt)}`);
-    await doStake('A', walletA.keys, storageA, walletA.carrotKeys, amt);
-    // Wait 2 blocks between stakes to ensure each lands in a separate block
-    // (daemon bug: multiple CARROT returns in same block fails validation)
+    await doStake(walletA, 'A', amt);
     if (i < 2) {
-      const sh = await getHeight();
-      await waitForHeight(sh + 2, 'stake spacing');
+      const sh = await getHeight(daemon);
+      await waitForHeight(daemon, sh + 2, 'stake spacing');
     }
   }
 
@@ -618,79 +563,131 @@ async function phaseCARROT(walletA, walletB, storageA, storageB) {
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 1_00_000_000) + 10_000_000);
     console.log(`  Burn ${i + 1}/3: ${fmt(amt)}`);
-    await doBurn('A', walletA.keys, storageA, walletA.carrotKeys, amt);
+    await doBurn(walletA, 'A', amt);
   }
 
-  // ---- CARROT Sweep B -> B ----
-  section('CARROT Sweep B -> B');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'pre-sweep confirms');
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
-  if (syncB.spendable.length > 0) {
-    await doSweep('B', walletB.keys, storageB, walletB.carrotKeys, addrB);
+  // ---- Large transfers A -> B ----
+  section('CARROT Round 3: Large A -> B transfers (10-50 SAL)');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'pre-large settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  await batchTransfers(walletA, 'A', addrB, 10, 1_000_000_000n, 5_000_000_000n, SYNC_CACHE_A);
+
+  // ---- Mega-sweep B -> B before the micro flood ----
+  section('CARROT Pre-Flood Sweep B -> B');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'pre-flood sweep maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
+  const preFloodOutputs = await outputCount(walletB);
+  console.log(`  B has ${preFloodOutputs} outputs before flood`);
+  if (preFloodOutputs > 1) {
+    await megaSweep(walletB, 'B', addrB);
+    h = await getHeight(daemon);
+    await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'post-pre-sweep maturity');
+    syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
+  }
+
+  // ---- Round 4: MEGA MICRO FLOOD — 1000+ transfers A -> B ----
+  section('CARROT Round 4: MEGA MICRO FLOOD A -> B (1000 x 0.01-0.09 SAL)');
+  console.log('  This creates 1000+ tiny outputs in wallet B for mega-sweep testing');
+  await microFlood(walletA, 'A', addrB, 1000, 1_000_000n, 9_000_000n, 50, SYNC_CACHE_A);
+
+  // ---- Round 5: MEGA SWEEP B -> B (1000+ outputs) ----
+  section('CARROT Round 5: MEGA SWEEP B -> B (1000+ outputs)');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'mega-sweep maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
+  const megaOutputs = await outputCount(walletB);
+  console.log(`  B has ${megaOutputs} unspent outputs before mega-sweep`);
+
+  if (megaOutputs > 1) {
+    await megaSweep(walletB, 'B', addrB);
   } else {
-    console.log('  SKIPPED: no spendable outputs in B');
+    console.log('  SKIPPED: not enough outputs');
   }
 
-  // ---- Round 4: More CARROT transfers with change ----
-  section('CARROT Round 4: A -> B transfers (1-10 SAL)');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'change maturity');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
+  // ---- Round 6: B -> A multi-input stress ----
+  section('CARROT Round 6: B -> A stress transfers');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'post-mega-sweep maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
-  const count4 = Math.min(20, syncA.spendable.length);
-  await batchTransfers('A', walletA.keys, storageA, walletA.carrotKeys, addrB,
-    count4, 100_000_000n, 1_000_000_000n);
-
-  // ---- Round 5: Multi-input stress B -> A ----
-  section('CARROT Round 5: Multi-input stress B -> A (many sub-SAL UTXOs)');
-  h = await getHeight();
-  await waitForHeight(h + SPENDABLE_AGE + 2, 'micro B maturity');
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
-  console.log(`  B has ${syncB.spendable.length} spendable outputs, balance=${fmt(syncB.spendableBalance)}`);
-
-  if (syncB.spendable.length > 0) {
-    const bCount = Math.min(20, syncB.spendable.length);
-    await batchTransfers('B', walletB.keys, storageB, walletB.carrotKeys, addrA,
-      bCount, 5_000_000n, 50_000_000n); // 0.05 - 0.5 SAL
+  if (syncB.unlockedBalance > 0n) {
+    // Progressively larger amounts to force multi-input assembly
+    const amounts = [
+      ...Array(5).fill(100_000_000n),    // 5 x 1 SAL
+      ...Array(5).fill(500_000_000n),    // 5 x 5 SAL
+      ...Array(3).fill(1_000_000_000n),  // 3 x 10 SAL
+      ...Array(2).fill(2_000_000_000n),  // 2 x 20 SAL
+    ];
+    let ok = 0;
+    for (const amt of amounts) {
+      const { unlockedBalance } = await walletB.getStorageBalance();
+      if (unlockedBalance < amt + 50_000_000n) {
+        console.log(`    Skipping ${fmt(amt)}: insufficient balance`);
+        continue;
+      }
+      const result = await doTransfer(walletB, 'B', addrA, amt);
+      if (result) {
+        ok++;
+        console.log(`    ${fmt(amt)} OK (${result.inputCount} inputs)`);
+      }
+    }
+    console.log(`  Stress transfers: ${ok}/${amounts.length}`);
   } else {
     console.log('  SKIPPED: B has no spendable outputs');
   }
 
+  // ---- Final sweeps: both wallets to self ----
+  section('CARROT Final Sweep A -> A');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'final-sweep-A maturity');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  const aOutputs = await outputCount(walletA);
+  console.log(`  A has ${aOutputs} outputs`);
+  if (aOutputs > 1) {
+    await megaSweep(walletA, 'A', addrA);
+  }
+
+  section('CARROT Final Sweep B -> B');
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'final-sweep-B maturity');
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
+  const bOutputs = await outputCount(walletB);
+  console.log(`  B has ${bOutputs} outputs`);
+  if (bOutputs > 1) {
+    await megaSweep(walletB, 'B', addrB);
+  }
+
   // ---- CARROT Phase Accounting ----
   section('CARROT Phase Accounting');
-  h = await getHeight();
-  await waitForHeight(h + 3, 'accounting settle');
-  syncA = await syncWallet('A', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  syncB = await syncWallet('B', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 3, 'accounting settle');
+  syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
+  syncB = await syncAndReport(walletB, 'B', SYNC_CACHE_B);
 
-  console.log(`  Wallet A: ${fmt(syncA.balance)} (${syncA.allOutputs.length} outputs)`);
-  console.log(`  Wallet B: ${fmt(syncB.balance)} (${syncB.allOutputs.length} outputs)`);
+  console.log(`  A outputs: ${await outputCount(walletA)}`);
+  console.log(`  B outputs: ${await outputCount(walletB)}`);
   console.log(`  Total fees: ${fmt(totalFees)}`);
   console.log(`  Total burned: ${fmt(totalBurned)}`);
   console.log(`  Total staked: ${fmt(totalStaked)}`);
   console.log(`  TX count: ${txLog.length}`);
 
   await saveTxLog();
-  return { storageA, storageB };
 }
 
 // =============================================================================
 // FINAL RECONCILIATION
 // =============================================================================
 
-async function reconcile(walletA, walletB, storageA, storageB) {
+async function reconcile(walletA, walletB) {
   banner('FINAL RECONCILIATION');
 
-  // Wait a few blocks for everything to settle
-  const h = await getHeight();
-  await waitForHeight(h + 5, 'final settle');
+  const h = await getHeight(daemon);
+  await waitForHeight(daemon, h + 5, 'final settle');
 
-  if (!storageA) storageA = new MemoryStorage();
-  if (!storageB) storageB = new MemoryStorage();
-
-  const syncA = await syncWallet('A (final)', walletA.keys, storageA, SYNC_CACHE_A, walletA.carrotKeys);
-  const syncB = await syncWallet('B (final)', walletB.keys, storageB, SYNC_CACHE_B, walletB.carrotKeys);
+  const syncA = await syncAndReport(walletA, 'A (final)', SYNC_CACHE_A);
+  const syncB = await syncAndReport(walletB, 'B (final)', SYNC_CACHE_B);
 
   // Sum transfer amounts by direction
   let totalA2B = 0n, totalB2A = 0n;
@@ -705,11 +702,16 @@ async function reconcile(walletA, walletB, storageA, storageB) {
     }
   }
 
+  const cnSweeps = txLog.filter(t => t.type === 'sweep' && t.height < CARROT_FORK_HEIGHT).length;
+  const carrotSweeps = txLog.filter(t => t.type === 'sweep' && t.height >= CARROT_FORK_HEIGHT).length;
+
   console.log('\n  Transaction Summary');
   console.log('  ' + '-'.repeat(50));
-  console.log(`  Total transactions:  ${txLog.length}`);
-  console.log(`  CN-era transfers:    ${cnTransfers}`);
+  console.log(`  Total transactions:   ${txLog.length}`);
+  console.log(`  CN-era transfers:     ${cnTransfers}`);
   console.log(`  CARROT-era transfers: ${carrotTransfers}`);
+  console.log(`  CN-era sweeps:        ${cnSweeps}`);
+  console.log(`  CARROT-era sweeps:    ${carrotSweeps}`);
   console.log(`  Transfers: ${stats.transfers.succeeded}/${stats.transfers.attempted} ok (${stats.transfers.failed} failed)`);
   console.log(`  Stakes:    ${stats.stakes.succeeded}/${stats.stakes.attempted} ok (${stats.stakes.failed} failed)`);
   console.log(`  Burns:     ${stats.burns.succeeded}/${stats.burns.attempted} ok (${stats.burns.failed} failed)`);
@@ -717,8 +719,8 @@ async function reconcile(walletA, walletB, storageA, storageB) {
 
   console.log('\n  Balance Sheet');
   console.log('  ' + '-'.repeat(50));
-  console.log(`  Wallet A balance:   ${fmt(syncA.balance)} (${syncA.allOutputs.length} outputs)`);
-  console.log(`  Wallet B balance:   ${fmt(syncB.balance)} (${syncB.allOutputs.length} outputs)`);
+  console.log(`  Wallet A balance:   ${fmt(syncA.balance)} (${await outputCount(walletA)} outputs)`);
+  console.log(`  Wallet B balance:   ${fmt(syncB.balance)} (${await outputCount(walletB)} outputs)`);
   console.log(`  Total A -> B:       ${fmt(totalA2B)}`);
   console.log(`  Total B -> A:       ${fmt(totalB2A)}`);
   console.log(`  Total fees:         ${fmt(totalFees)}`);
@@ -739,7 +741,6 @@ async function reconcile(walletA, walletB, storageA, storageB) {
     console.log('  ALL TRANSACTIONS SUCCEEDED');
   } else {
     console.log(`  WARNING: ${totalFailed} transactions failed`);
-    // List failures
     const failTypes = {};
     for (const tx of txLog) {
       if (tx.failed) {
@@ -766,7 +767,7 @@ async function main() {
   console.log('+----------------------------------------------------------------------+');
   console.log();
 
-  const h = await getHeight();
+  const h = await getHeight(daemon);
   console.log(`  Daemon:       ${DAEMON_URL}`);
   console.log(`  Network:      ${NETWORK}`);
   console.log(`  Height:       ${h}`);
@@ -775,14 +776,15 @@ async function main() {
 
   // Load wallets
   section('Loading Wallets');
-  const walletAJson = JSON.parse(await Bun.file(WALLET_A_FILE).text());
-  const walletA = loadWalletKeys(walletAJson);
-  console.log(`  A CN addr:     ${short(walletA.address)}`);
-  console.log(`  A CARROT addr: ${short(walletA.carrotAddress)}`);
+  const walletA = await loadWalletFromFile(WALLET_A_FILE, NETWORK);
+  walletA.setDaemon(daemon);
+  console.log(`  A CN addr:     ${short(walletA.getLegacyAddress())}`);
+  console.log(`  A CARROT addr: ${short(walletA.getCarrotAddress())}`);
 
   const walletB = await loadOrCreateWalletB();
-  console.log(`  B CN addr:     ${short(walletB.address)}`);
-  console.log(`  B CARROT addr: ${short(walletB.carrotAddress)}`);
+  walletB.setDaemon(daemon);
+  console.log(`  B CN addr:     ${short(walletB.getLegacyAddress())}`);
+  console.log(`  B CARROT addr: ${short(walletB.getCarrotAddress())}`);
 
   // Parse --phase argument
   const phaseArg = process.argv.find(a => a.startsWith('--phase='))?.split('=')[1]
@@ -791,21 +793,15 @@ async function main() {
 
   console.log(`\n  Phase: ${phaseArg}`);
 
-  let storageA, storageB;
-
   if (phaseArg === 'all' || phaseArg === 'cn') {
-    const result = await phaseCN(walletA, walletB);
-    storageA = result.storageA;
-    storageB = result.storageB;
+    await phaseCN(walletA, walletB);
   }
 
   if (phaseArg === 'all' || phaseArg === 'carrot') {
-    const result = await phaseCARROT(walletA, walletB, storageA, storageB);
-    storageA = result.storageA;
-    storageB = result.storageB;
+    await phaseCARROT(walletA, walletB);
   }
 
-  await reconcile(walletA, walletB, storageA, storageB);
+  await reconcile(walletA, walletB);
 
   console.log('\nBurn-in test complete.\n');
 }

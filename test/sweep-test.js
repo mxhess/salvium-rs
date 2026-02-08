@@ -6,100 +6,59 @@
 
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
-import { Wallet } from '../src/wallet.js';
-import { createWalletSync } from '../src/wallet-sync.js';
-import { MemoryStorage } from '../src/wallet-store.js';
-import { sweep } from '../src/wallet/transfer.js';
-import { bytesToHex } from '../src/address.js';
 import { existsSync } from 'node:fs';
+import { getHeight, fmt, loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
 const DAEMON_URL = 'http://web.whiskymine.io:29081';
 const WALLET_B_PATH = process.env.HOME + '/testnet-wallet/wallet-b.json';
 const SYNC_CACHE_B = WALLET_B_PATH.replace(/\.json$/, '-sync.json');
-const NETWORK = 'testnet';
-
-function toHex(val) {
-  if (typeof val === 'string') return val;
-  if (val instanceof Uint8Array) return bytesToHex(val);
-  if (val && typeof val === 'object' && '0' in val) {
-    const len = Object.keys(val).length;
-    const arr = new Uint8Array(len);
-    for (let i = 0; i < len; i++) arr[i] = val[i];
-    return bytesToHex(arr);
-  }
-  return val;
-}
-
-function loadWalletKeys(data) {
-  return {
-    keys: {
-      viewSecretKey: toHex(data.viewSecretKey),
-      spendSecretKey: toHex(data.spendSecretKey),
-      viewPublicKey: toHex(data.viewPublicKey),
-      spendPublicKey: toHex(data.spendPublicKey),
-    },
-    carrotKeys: data.carrotKeys || null,
-    address: data.address,
-    carrotAddress: data.carrotAddress || null,
-  };
-}
 
 async function main() {
   const daemon = new DaemonRPC({ url: DAEMON_URL });
-  const info = await daemon.getInfo();
-  const height = info.result?.height;
+  const height = await getHeight(daemon);
   console.log(`Height: ${height}`);
 
   // Load wallet B
-  const bData = JSON.parse(await Bun.file(WALLET_B_PATH).text());
-  const bWallet = loadWalletKeys(bData);
-  const bAddr = bWallet.address;
-  console.log(`B CN addr: ${bAddr.slice(0, 20)}...`);
+  const wallet = await loadWalletFromFile(WALLET_B_PATH, 'testnet');
+  wallet.setDaemon(daemon);
+  console.log(`B CN addr: ${wallet.getLegacyAddress().slice(0, 20)}...`);
 
-  // Sync wallet B
-  const storageB = new MemoryStorage();
+  // Load sync cache if exists
   if (existsSync(SYNC_CACHE_B)) {
     try {
       const cached = JSON.parse(await Bun.file(SYNC_CACHE_B).text());
-      const cachedSyncHeight = cached.syncHeight || 0;
-      if (cachedSyncHeight > height) {
-        console.log(`  Cache stale (cached=${cachedSyncHeight}, chain=${height}), resetting`);
+      if ((cached.syncHeight || 0) > height) {
+        console.log(`  Cache stale (cached=${cached.syncHeight}, chain=${height}), resetting`);
       } else {
-        storageB.load(cached);
+        wallet.loadSyncCache(cached);
       }
     } catch { /* ignore bad cache */ }
   }
 
+  // Sync
   console.log('Syncing wallet B...');
-  const syncB = createWalletSync({ daemon, keys: bWallet.keys, carrotKeys: bWallet.carrotKeys, storage: storageB, network: NETWORK });
-  await syncB.start();
-  await Bun.write(SYNC_CACHE_B, storageB.dumpJSON());
+  await wallet.syncWithDaemon();
+  await Bun.write(SYNC_CACHE_B, wallet.dumpSyncCacheJSON());
 
-  const allOutputs = await storageB.getOutputs({ isSpent: false });
-  const spendable = allOutputs.filter(o => o.isSpendable(height));
-  const balance = spendable.reduce((s, o) => s + o.amount, 0n);
-  console.log(`B: ${spendable.length} spendable outputs, balance=${(Number(balance) / 1e8).toFixed(8)} SAL`);
+  const { balance, unlockedBalance } = await wallet.getStorageBalance();
+  console.log(`B: balance=${fmt(balance)}, unlocked=${fmt(unlockedBalance)}`);
 
-  if (spendable.length === 0) {
+  if (unlockedBalance === 0n) {
     console.log('No spendable outputs — skipping sweep');
     return;
   }
 
   // Sweep B -> B (self)
-  console.log(`Sweeping B -> B (${bAddr.slice(0, 20)}...)`);
+  const addr = wallet.getAddress();
+  console.log(`Sweeping B -> B (${addr.slice(0, 20)}...)`);
 
   try {
-    const result = await sweep({
-      wallet: { keys: bWallet.keys, storage: storageB, carrotKeys: bWallet.carrotKeys },
-      daemon,
-      address: bAddr,
-      options: { priority: 'default', network: NETWORK }
-    });
+    const result = await wallet.sweep(addr);
     console.log(`Sweep OK: ${result.txHash}`);
-    console.log(`  fee: ${(Number(result.fee) / 1e8).toFixed(8)} SAL`);
-    console.log(`  amount: ${(Number(result.amount) / 1e8).toFixed(8)} SAL`);
+    console.log(`  fee: ${fmt(result.fee)}`);
+    console.log(`  amount: ${fmt(result.amount)}`);
     console.log(`  inputs: ${result.inputCount}, outputs: ${result.outputCount}`);
   } catch (err) {
     console.error(`Sweep FAILED: ${err.message}`);

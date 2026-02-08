@@ -3,10 +3,10 @@
  * Sync-only test: resync wallet A with memory monitoring.
  * Used to verify memory optimizations before running full integration tests.
  */
-import { setCryptoBackend } from '../src/crypto/index.js';
+import { setCryptoBackend, commit } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
-import { createWalletSync } from '../src/wallet-sync.js';
-import { MemoryStorage } from '../src/wallet-store.js';
+import { hexToBytes, bytesToHex } from '../src/address.js';
+import { loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
@@ -19,22 +19,17 @@ const info = await daemon.getInfo();
 if (!info.success) throw new Error('Cannot reach daemon');
 console.log(`Daemon height: ${info.result.height}`);
 
-// Load wallet keys
-const walletJson = JSON.parse(await Bun.file(WALLET_FILE).text());
-const keys = {
-  viewSecretKey: walletJson.viewSecretKey,
-  spendSecretKey: walletJson.spendSecretKey,
-  viewPublicKey: walletJson.viewPublicKey,
-  spendPublicKey: walletJson.spendPublicKey,
-};
-const carrotKeys = walletJson.carrotKeys || null;
+// Load wallet
+const wallet = await loadWalletFromFile(WALLET_FILE, 'testnet');
+wallet.setDaemon(daemon);
 
-const storage = new MemoryStorage();
-const sync = createWalletSync({ daemon, keys, carrotKeys, storage, network: 'testnet' });
+// Access internals for memory monitoring (test-only)
+const storage = wallet._ensureStorage();
+const ws = wallet._ensureSync();
 
 // Monitor memory every 5000 blocks
 let lastLog = 0;
-sync.on('syncProgress', (progress) => {
+ws.on('syncProgress', (progress) => {
   const h = progress.currentHeight;
   if (h - lastLog >= 5000 || h === progress.targetHeight) {
     const rss = process.memoryUsage?.() || {};
@@ -45,10 +40,10 @@ sync.on('syncProgress', (progress) => {
 
 console.log('Starting sync from block 0...');
 const t0 = Date.now();
-await sync.start();
+await wallet.syncWithDaemon();
 const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
-const syncHeight = await storage.getSyncHeight();
+const syncHeight = wallet.getSyncHeight();
 console.log(`\nSync complete: ${syncHeight} blocks in ${elapsed}s`);
 console.log(`Outputs: ${storage._outputs.size}`);
 console.log(`Transactions: ${storage._transactions.size}`);
@@ -56,7 +51,7 @@ console.log(`Block hashes: ${storage._blockHashes.size}`);
 
 // Save cache
 console.log('Saving cache...');
-await Bun.write(CACHE_FILE, storage.dumpJSON());
+await Bun.write(CACHE_FILE, wallet.dumpSyncCacheJSON());
 console.log(`Saved to ${CACHE_FILE}`);
 
 // Verify some outputs
@@ -66,17 +61,7 @@ const withCommitment = carrotOutputs.filter(o => o.commitment);
 console.log(`\nUnspent outputs: ${allOutputs.length}`);
 console.log(`  CARROT: ${carrotOutputs.length} (${withCommitment.length} with commitment)`);
 
-// Check commitment validity on first few CARROT outputs
-import { commit } from '../src/crypto/index.js';
-function hexToBytes(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  return bytes;
-}
-function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
+// Check commitment validity on CARROT outputs
 let matchCount = 0, mismatchCount = 0;
 for (const o of carrotOutputs) {
   if (!o.mask || !o.commitment) continue;

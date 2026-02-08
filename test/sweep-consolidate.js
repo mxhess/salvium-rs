@@ -8,23 +8,18 @@
 
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
-import { Wallet } from '../src/wallet.js';
-import { createWalletSync } from '../src/wallet-sync.js';
-import { MemoryStorage } from '../src/wallet-store.js';
-import { sweep } from '../src/wallet/transfer.js';
 import { getHfVersionForHeight } from '../src/consensus.js';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { existsSync } from 'fs';
+import { getHeight, fmt, loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
 const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
 const DRY_RUN = process.env.DRY_RUN !== '0';
 
-const info = await daemon.getInfo();
-const h = info.result?.height;
+const h = await getHeight(daemon);
 const hfVersion = getHfVersionForHeight(h, 1);
 const assetType = hfVersion >= 6 ? 'SAL1' : 'SAL';
-const useCarrot = hfVersion >= 10;
 
 console.log('=== Sweep Consolidation Test: B → B ===');
 console.log(`Height: ${h}, HF: ${hfVersion}, Asset: ${assetType}`);
@@ -33,20 +28,25 @@ console.log(`Dry Run: ${DRY_RUN}\n`);
 const pathB = process.env.HOME + '/testnet-wallet/wallet-b-new.json';
 const cacheB = pathB.replace('.json', '-sync.json');
 
-const wjB = JSON.parse(readFileSync(pathB));
-const walletB = Wallet.fromJSON({ ...wjB, network: 'testnet' });
-const addrB = useCarrot ? walletB.getCarrotAddress() : walletB.getLegacyAddress();
+const wallet = await loadWalletFromFile(pathB, 'testnet');
+wallet.setDaemon(daemon);
+const addrB = wallet.getAddress();
 
-// Sync wallet B
-const storageB = new MemoryStorage();
-if (existsSync(cacheB)) storageB.load(JSON.parse(readFileSync(cacheB)));
+// Load sync cache
+if (existsSync(cacheB)) {
+  try {
+    wallet.loadSyncCache(JSON.parse(await Bun.file(cacheB).text()));
+  } catch { /* ignore bad cache */ }
+}
 
+// Sync
 console.log('Syncing Wallet B...');
-const syncB = createWalletSync({ daemon, keys: wjB, storage: storageB, network: 'testnet', carrotKeys: walletB.carrotKeys });
-await syncB.start();
-writeFileSync(cacheB, JSON.stringify(storageB.dump()));
+await wallet.syncWithDaemon();
+await Bun.write(cacheB, wallet.dumpSyncCacheJSON());
 
-const outputs = await storageB.getOutputs({ isSpent: false });
+// Report output status using storage internals for detailed breakdown
+const storage = wallet._storage;
+const outputs = await storage.getOutputs({ isSpent: false });
 const unlocked = outputs.filter(o => o.blockHeight <= h - 60 && o.assetType === assetType);
 const locked = outputs.filter(o => o.blockHeight > h - 60 || o.assetType !== assetType);
 const totalBal = unlocked.reduce((s, o) => s + BigInt(o.amount), 0n);
@@ -69,20 +69,13 @@ if (unlocked.length < 2) {
 console.log(`\nSweeping ${unlocked.length} outputs to self (${addrB.slice(0,30)}...)...\n`);
 
 try {
-  const result = await sweep({
-    wallet: { keys: wjB, storage: storageB },
-    daemon,
-    address: addrB,
-    options: {
-      priority: 'default',
-      network: 'testnet',
-      dryRun: DRY_RUN,
-      assetType,
-      useCarrot
-    }
+  const result = await wallet.sweep(addrB, {
+    priority: 'default',
+    dryRun: DRY_RUN,
+    assetType,
   });
 
-  console.log('✓ SWEEP SUCCESS!');
+  console.log('SWEEP SUCCESS!');
   console.log(`  TX Hash: ${result.txHash}`);
   console.log(`  Inputs consolidated: ${result.inputCount}`);
   console.log(`  Output count: ${result.outputCount}`);
@@ -91,16 +84,14 @@ try {
   console.log(`  TX Size: ${result.serializedHex.length / 2} bytes`);
 
   if (!DRY_RUN) {
-    for (const ki of result.spentKeyImages || []) {
-      await storageB.markOutputSpent(ki);
-    }
-    writeFileSync(cacheB, JSON.stringify(storageB.dump()));
+    // Wallet.sweep already marks spent outputs
+    await Bun.write(cacheB, wallet.dumpSyncCacheJSON());
     console.log('\n  Wallet cache updated.');
   } else {
     console.log('\n  [DRY RUN - not broadcast]');
   }
 
 } catch (e) {
-  console.log('✗ SWEEP FAILED:', e.message);
+  console.log('SWEEP FAILED:', e.message);
   if (e.stack) console.log(e.stack.split('\n').slice(1, 6).join('\n'));
 }

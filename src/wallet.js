@@ -39,6 +39,20 @@ import { NETWORK, ADDRESS_FORMAT } from './constants.js';
 import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID } from './consensus.js';
 import { seedToMnemonic, mnemonicToSeed, validateMnemonic } from './mnemonic.js';
 
+// Storage, sync, and transfer integration
+import { MemoryStorage } from './wallet-store.js';
+import { createWalletSync } from './wallet-sync.js';
+import {
+  transfer as _transfer,
+  sweep as _sweep,
+  stake as _stake,
+  burn as _burn,
+  convert as _convert,
+} from './wallet/transfer.js';
+
+// Post-quantum wallet encryption
+import { encryptWalletJSON, decryptWalletJSON, isEncryptedWallet } from './wallet-encryption.js';
+
 // ============================================================================
 // IMPORTS FROM WALLET SUBMODULES
 // ============================================================================
@@ -133,6 +147,11 @@ export class Wallet {
 
     // Previous balance (for change detection)
     this._previousBalance = new Map(); // Map<assetType, { balance, unlocked }>
+
+    // Integrated storage/sync/daemon (lazy-initialized)
+    this._storage = null;    // MemoryStorage instance
+    this._daemon = null;     // DaemonRPC instance
+    this._walletSync = null; // WalletSync instance
   }
 
   // ===========================================================================
@@ -1944,12 +1963,297 @@ export class Wallet {
     return data;
   }
 
+  // ===========================================================================
+  // INTEGRATED DAEMON / SYNC / TRANSFER API
+  // ===========================================================================
+
+  /**
+   * Set the daemon RPC connection.
+   * @param {Object} daemon - DaemonRPC instance
+   */
+  setDaemon(daemon) {
+    this._daemon = daemon;
+    this._walletSync = null; // reset so next sync picks up new daemon
+  }
+
+  /** @private Lazy-init MemoryStorage */
+  _ensureStorage() {
+    if (!this._storage) this._storage = new MemoryStorage();
+    return this._storage;
+  }
+
+  /** @private Lazy-init WalletSync with current keys + storage + daemon */
+  _ensureSync() {
+    if (!this._daemon) throw new Error('No daemon set. Call setDaemon(daemon) first.');
+    if (!this.canScan()) throw new Error('View secret key required for sync.');
+    this._ensureStorage();
+    if (!this._walletSync) {
+      this._walletSync = createWalletSync({
+        storage: this._storage,
+        daemon: this._daemon,
+        keys: {
+          viewSecretKey: this._viewSecretKey,
+          spendSecretKey: this._spendSecretKey,
+          viewPublicKey: this._viewPublicKey,
+          spendPublicKey: this._spendPublicKey,
+        },
+        carrotKeys: this._carrotKeys || null,
+        network: this.network,
+      });
+    }
+    return this._walletSync;
+  }
+
+  /** @private Build adapter object for transfer.js functions */
+  _walletAdapter() {
+    this._ensureStorage();
+    return {
+      keys: {
+        viewSecretKey: this._viewSecretKey,
+        spendSecretKey: this._spendSecretKey,
+        viewPublicKey: this._viewPublicKey,
+        spendPublicKey: this._spendPublicKey,
+      },
+      storage: this._storage,
+      carrotKeys: this._carrotKeys || null,
+    };
+  }
+
+  /** @private Mark spent outputs after a successful transaction */
+  async _markSpent(result) {
+    if (result.spentKeyImages && this._storage) {
+      for (const ki of result.spentKeyImages) {
+        await this._storage.markOutputSpent(ki, result.txHash);
+      }
+    }
+  }
+
+  /**
+   * Sync wallet with blockchain using WalletSync engine.
+   * Replaces the naive block-fetching sync with the full scanning pipeline.
+   *
+   * @param {Object} [daemon] - DaemonRPC (uses stored daemon if omitted)
+   * @returns {Promise<{ syncHeight: number }>}
+   */
+  async syncWithDaemon(daemon) {
+    if (daemon) this.setDaemon(daemon);
+    const ws = this._ensureSync();
+    await ws.start();
+    this._syncHeight = this._storage._syncHeight || this._syncHeight;
+    return { syncHeight: this._syncHeight };
+  }
+
+  /**
+   * Get balance from storage-backed outputs.
+   * @param {Object} [options]
+   * @param {string} [options.assetType='SAL']
+   * @returns {Promise<{ balance: bigint, unlockedBalance: bigint, lockedBalance: bigint }>}
+   */
+  async getStorageBalance(options = {}) {
+    if (!this._storage) return this.getBalance(options);
+    const allOutputs = await this._storage.getOutputs({ isSpent: false });
+    let balance = 0n, unlockedBalance = 0n;
+    for (const o of allOutputs) {
+      balance += o.amount;
+      if (o.isSpendable(this._syncHeight)) unlockedBalance += o.amount;
+    }
+    return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance };
+  }
+
+  /**
+   * Transfer SAL to one or more destinations.
+   * Builds, signs, broadcasts, and marks spent outputs.
+   *
+   * @param {Array<{address: string, amount: bigint}>} destinations
+   * @param {Object} [options] - { priority, dryRun, assetType }
+   * @returns {Promise<Object>} { txHash, fee, amount, tx, serializedHex, spentKeyImages }
+   */
+  async transfer(destinations, options = {}) {
+    if (!this.canSign()) throw new Error('Full wallet required');
+    if (!this._daemon) throw new Error('No daemon set');
+    this._ensureStorage();
+    const result = await _transfer({
+      wallet: this._walletAdapter(),
+      daemon: this._daemon,
+      destinations,
+      options: { network: this.network, ...options },
+    });
+    if (!options.dryRun) await this._markSpent(result);
+    return result;
+  }
+
+  /**
+   * Sweep all spendable outputs to a single address.
+   *
+   * @param {string} address - Destination address
+   * @param {Object} [options] - { priority, dryRun, assetType }
+   * @returns {Promise<Object>} { txHash, fee, amount, inputCount, outputCount }
+   */
+  async sweep(address, options = {}) {
+    if (!this.canSign()) throw new Error('Full wallet required');
+    if (!this._daemon) throw new Error('No daemon set');
+    this._ensureStorage();
+    const result = await _sweep({
+      wallet: this._walletAdapter(),
+      daemon: this._daemon,
+      address,
+      options: { network: this.network, ...options },
+    });
+    if (!options.dryRun) await this._markSpent(result);
+    return result;
+  }
+
+  /**
+   * Stake SAL to earn yield.
+   *
+   * @param {bigint} amount - Amount to stake
+   * @param {Object} [options] - { priority, dryRun }
+   * @returns {Promise<Object>} { txHash, fee, amount }
+   */
+  async stake(amount, options = {}) {
+    if (!this.canSign()) throw new Error('Full wallet required');
+    if (!this._daemon) throw new Error('No daemon set');
+    this._ensureStorage();
+    const result = await _stake({
+      wallet: this._walletAdapter(),
+      daemon: this._daemon,
+      amount,
+      options: { network: this.network, ...options },
+    });
+    if (!options.dryRun) await this._markSpent(result);
+    return result;
+  }
+
+  /**
+   * Burn SAL permanently.
+   *
+   * @param {bigint} amount - Amount to burn
+   * @param {Object} [options] - { priority, dryRun }
+   * @returns {Promise<Object>} { txHash, fee, amount }
+   */
+  async burn(amount, options = {}) {
+    if (!this.canSign()) throw new Error('Full wallet required');
+    if (!this._daemon) throw new Error('No daemon set');
+    this._ensureStorage();
+    const result = await _burn({
+      wallet: this._walletAdapter(),
+      daemon: this._daemon,
+      amount,
+      options: { network: this.network, ...options },
+    });
+    if (!options.dryRun) await this._markSpent(result);
+    return result;
+  }
+
+  /**
+   * Convert between asset types.
+   *
+   * @param {bigint} amount
+   * @param {string} sourceAssetType
+   * @param {string} destAssetType
+   * @param {string} destAddress
+   * @param {Object} [options]
+   * @returns {Promise<Object>} { txHash, fee, amount }
+   */
+  async convert(amount, sourceAssetType, destAssetType, destAddress, options = {}) {
+    if (!this.canSign()) throw new Error('Full wallet required');
+    if (!this._daemon) throw new Error('No daemon set');
+    this._ensureStorage();
+    const result = await _convert({
+      wallet: this._walletAdapter(),
+      daemon: this._daemon,
+      amount,
+      sourceAssetType,
+      destAssetType,
+      destAddress,
+      options: { network: this.network, ...options },
+    });
+    if (!options.dryRun) await this._markSpent(result);
+    return result;
+  }
+
+  /**
+   * Load a previously-saved sync cache into internal storage.
+   * Call before syncWithDaemon() to resume from saved state.
+   *
+   * @param {Object|string} data - Storage snapshot (Object or JSON string)
+   */
+  loadSyncCache(data) {
+    this._ensureStorage();
+    const obj = typeof data === 'string' ? JSON.parse(data) : data;
+    this._storage.load(obj);
+    this._syncHeight = this._storage._syncHeight || 0;
+  }
+
+  /**
+   * Dump current sync state for persistence.
+   * @returns {Object} Serializable snapshot
+   */
+  dumpSyncCache() {
+    return this._storage ? this._storage.dump() : null;
+  }
+
+  /**
+   * Dump sync state as JSON string.
+   * @returns {string}
+   */
+  dumpSyncCacheJSON() {
+    return this._storage ? this._storage.dumpJSON() : '{}';
+  }
+
+  // ===========================================================================
+  // POST-QUANTUM ENCRYPTION
+  // ===========================================================================
+
+  /**
+   * Export wallet to encrypted JSON using ML-KEM-768 + Argon2id hybrid encryption.
+   *
+   * Public data (addresses, public keys) remain readable without the password.
+   * Secret keys, seed, and mnemonic are encrypted.
+   *
+   * @param {string} password - Encryption password
+   * @param {Object} [options] - { argon2: { t, m, p } }
+   * @returns {Object} Encrypted wallet envelope
+   */
+  toEncryptedJSON(password, options = {}) {
+    return encryptWalletJSON(this.toJSON(true), password, options);
+  }
+
+  /**
+   * Restore wallet from encrypted JSON.
+   *
+   * @param {Object} data - Encrypted wallet envelope
+   * @param {string} password - Decryption password
+   * @param {Object} [options] - { network }
+   * @returns {Wallet}
+   * @throws {Error} On wrong password or corrupted data
+   */
+  static fromEncryptedJSON(data, password, options = {}) {
+    const plain = decryptWalletJSON(data, password);
+    if (options.network) plain.network = options.network;
+    return Wallet.fromJSON(plain);
+  }
+
+  /**
+   * Check if wallet JSON is encrypted.
+   * @param {Object} json
+   * @returns {boolean}
+   */
+  static isEncrypted(json) {
+    return isEncryptedWallet(json);
+  }
+
+  // ===========================================================================
+  // SERIALIZATION
+  // ===========================================================================
+
   /**
    * Import wallet from JSON
    * @param {Object} data - Wallet data
+   * @param {Object} [options] - { network }
    * @returns {Wallet} Wallet instance
    */
-  static fromJSON(data) {
+  static fromJSON(data, options = {}) {
     let wallet;
 
     if (data.seed) {
@@ -1995,6 +2299,9 @@ export class Wallet {
         Object.entries(data.nextSubaddressIndex).map(([k, v]) => [parseInt(k), v])
       );
     }
+
+    // Override network if requested
+    if (options.network) wallet.network = options.network;
 
     return wallet;
   }
