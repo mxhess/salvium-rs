@@ -147,16 +147,12 @@ export class WasmCryptoBackend {
     return this.wasm.pedersen_commit(amountBytes, mask);
   }
   zeroCommit(amount) {
-    let amountBytes = amount;
-    if (typeof amount === 'bigint' || typeof amount === 'number') {
-      let n = BigInt(amount);
-      amountBytes = new Uint8Array(32);
-      for (let i = 0; i < 32 && n > 0n; i++) {
-        amountBytes[i] = Number(n & 0xffn);
-        n >>= 8n;
-      }
-    }
-    return this.wasm.zero_commit(amountBytes);
+    // Salvium rct::zeroCommit uses blinding factor = 1 (not 0).
+    // The native WASM zero_commit uses mask=0 (Monero behavior), so we
+    // use pedersen_commit with scalarOne to match C++ rct::zeroCommit.
+    const scalarOne = new Uint8Array(32);
+    scalarOne[0] = 1;
+    return this.commit(amount, scalarOne);
   }
   genCommitmentMask(sharedSecret) {
     if (typeof sharedSecret === 'string') {

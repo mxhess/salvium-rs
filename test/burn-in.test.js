@@ -181,21 +181,31 @@ async function doSweep(wallet, label, toAddress) {
 /**
  * Repeatedly sweep a wallet until all outputs are consolidated.
  * Each sweep takes up to 30 inputs (MAX_SWEEP_INPUTS in transfer.js).
- * Returns total number of successful sweep TXs.
+ * Stops when output count reaches 2 or fewer (sweep always creates
+ * 2 outputs: destination + change), or when output count stops decreasing.
  */
 async function megaSweep(wallet, label, toAddress, maxRounds = 50) {
   let round = 0;
   let totalSwept = 0n;
   let totalSweepFees = 0n;
+  let prevOutputCount = Infinity;
 
   while (round < maxRounds) {
-    // Check if there are enough outputs to justify sweeping
     const nOutputs = await outputCount(wallet);
-    if (nOutputs <= 1) {
-      console.log(`    Sweep done: only ${nOutputs} output(s) remain`);
+
+    // Sweep always creates 2 outputs (dest + change), so <= 2 is fully consolidated
+    if (nOutputs <= 2) {
+      console.log(`    Sweep done: ${nOutputs} output(s) remain (fully consolidated)`);
       break;
     }
 
+    // Detect degenerate loop: output count not decreasing means we're cycling
+    if (nOutputs >= prevOutputCount) {
+      console.log(`    Sweep done: output count not decreasing (${nOutputs} >= ${prevOutputCount}), stopping`);
+      break;
+    }
+
+    prevOutputCount = nOutputs;
     round++;
     console.log(`    Sweep round ${round}: ${nOutputs} unspent outputs...`);
 
@@ -215,7 +225,7 @@ async function megaSweep(wallet, label, toAddress, maxRounds = 50) {
       wallet.dumpSyncCacheJSON()
     );
 
-    // Always wait for the sweep TX to confirm + maturity before next round
+    // Wait for the sweep TX to confirm + maturity before next round
     const h = await getHeight(daemon);
     await waitForHeight(daemon, h + SPENDABLE_AGE + 2, `sweep round ${round} maturity`);
     await wallet.syncWithDaemon();

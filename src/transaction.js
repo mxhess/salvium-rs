@@ -2248,7 +2248,13 @@ export function buildTransaction(params, options = {}) {
       txSecretKey: bytesToHex(txSecretKey),
       keyImages: keyImages.map(ki => bytesToHex(ki)),
       outputMasks: outputMasks.map(m => bytesToHex(m)),
-      changeIndex: changeAmount > 0n ? outputs.length - 1 : -1
+      changeIndex: changeAmount > 0n ? outputs.length - 1 : -1,
+      // Ring data for debugging/verification (not serialized)
+      ringData: inputs.map(input => ({
+        ring: input.ring.map(k => typeof k === 'string' ? k : bytesToHex(k)),
+        ringCommitments: input.ringCommitments.map(c => typeof c === 'string' ? c : bytesToHex(c)),
+        realIndex: input.realIndex
+      }))
     }
   };
 

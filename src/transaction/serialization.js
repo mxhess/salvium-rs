@@ -252,8 +252,8 @@ export function commit(amount, mask) {
 }
 
 /**
- * Compute a zero commitment: C = amount*H (mask = 0)
- * Used for transaction fees and other public amounts.
+ * Compute a zero commitment: C = 1*G + amount*H (blinding factor = 1)
+ * Matches C++ rct::zeroCommit(). Used for coinbase outputs and fee commitments.
  *
  * @param {bigint|number} amount - Amount to commit to
  * @returns {Uint8Array} 32-byte compressed point
@@ -262,8 +262,10 @@ export function zeroCommit(amount) {
   if (typeof amount === 'number') {
     amount = BigInt(amount);
   }
-  const amountBytes = bigIntToBytes(amount);
-  return scalarMultPoint(amountBytes, hexToBytes(H));
+  // zeroCommit = 1*G + amount*H (blinding factor = 1, matching C++ rct::zeroCommit)
+  const scalarOne = new Uint8Array(32);
+  scalarOne[0] = 1;
+  return commit(amount, scalarOne);
 }
 
 /**

@@ -51,7 +51,7 @@ import {
 } from './wallet/transfer.js';
 
 // Post-quantum wallet encryption
-import { encryptWalletJSON, decryptWalletJSON, reEncryptWalletJSON, isEncryptedWallet } from './wallet-encryption.js';
+import { encryptWalletJSON, decryptWalletJSON, reEncryptWalletJSON, isEncryptedWallet, encryptData, decryptData } from './wallet-encryption.js';
 
 // ============================================================================
 // IMPORTS FROM WALLET SUBMODULES
@@ -114,6 +114,10 @@ export class Wallet {
     // CARROT keys (always derived alongside legacy keys from same seed)
     this._carrotKeys = null;
 
+    // Data encryption key (random 32 bytes, stored encrypted in wallet file)
+    // Used for fast AES-256-GCM encryption of sync cache and other at-rest data
+    this._dataKey = null;
+
     // Account management
     this._accounts = [new Account(this, 0, 'Primary')]; // Account 0 always exists
     this._nextSubaddressIndex = new Map(); // account index -> next minor index
@@ -175,6 +179,7 @@ export class Wallet {
     });
 
     wallet._seed = generateSeed();
+    wallet._dataKey = generateSeed(); // Random 32-byte data encryption key
     wallet._deriveAllKeys();
 
     return wallet;
@@ -1954,6 +1959,9 @@ export class Wallet {
       if (this._viewSecretKey) {
         data.viewSecretKey = bytesToHex(this._viewSecretKey);
       }
+      if (this._dataKey) {
+        data.dataKey = bytesToHex(this._dataKey);
+      }
       // Full CARROT secrets (for completeness; can be re-derived from seed)
       if (this._carrotKeys) {
         data.carrotKeys = { ...this._carrotKeys };
@@ -2174,31 +2182,54 @@ export class Wallet {
 
   /**
    * Load a previously-saved sync cache into internal storage.
+   * Handles both encrypted and plain cache formats.
    * Call before syncWithDaemon() to resume from saved state.
    *
-   * @param {Object|string} data - Storage snapshot (Object or JSON string)
+   * @param {Object|string} data - Storage snapshot (Object or JSON string, plain or encrypted)
    */
   loadSyncCache(data) {
     this._ensureStorage();
-    const obj = typeof data === 'string' ? JSON.parse(data) : data;
+    let obj = typeof data === 'string' ? JSON.parse(data) : data;
+
+    // Decrypt if encrypted
+    if (obj.encrypted && obj.iv && obj.ciphertext) {
+      if (!this._dataKey) {
+        throw new Error('Cannot decrypt sync cache: no data key available (decrypt wallet first)');
+      }
+      const plainBytes = decryptData(this._dataKey, obj);
+      obj = JSON.parse(new TextDecoder().decode(plainBytes));
+    }
+
     this._storage.load(obj);
     this._syncHeight = this._storage._syncHeight || 0;
   }
 
   /**
    * Dump current sync state for persistence.
-   * @returns {Object} Serializable snapshot
+   * Returns encrypted if dataKey is available, plain otherwise.
+   * @returns {Object} Serializable snapshot (encrypted or plain)
    */
   dumpSyncCache() {
-    return this._storage ? this._storage.dump() : null;
+    if (!this._storage) return null;
+    const plain = this._storage.dump();
+    if (this._dataKey) {
+      return encryptData(this._dataKey, JSON.stringify(plain));
+    }
+    return plain;
   }
 
   /**
    * Dump sync state as JSON string.
+   * Returns encrypted if dataKey is available, plain otherwise.
    * @returns {string}
    */
   dumpSyncCacheJSON() {
-    return this._storage ? this._storage.dumpJSON() : '{}';
+    if (!this._storage) return '{}';
+    if (this._dataKey) {
+      const plainJSON = this._storage.dumpJSON();
+      return JSON.stringify(encryptData(this._dataKey, plainJSON));
+    }
+    return this._storage.dumpJSON();
   }
 
   // ===========================================================================
@@ -2296,6 +2327,13 @@ export class Wallet {
       wallet = Wallet.fromAddress(data.address || data.carrotAddress, {
         network: data.network
       });
+    }
+
+    // Restore data encryption key (or generate for legacy wallets)
+    if (data.dataKey) {
+      wallet._dataKey = hexToBytes(data.dataKey);
+    } else if (wallet.type === WALLET_TYPE.FULL) {
+      wallet._dataKey = generateSeed(); // Upgrade: generate on first load
     }
 
     // Restore sync height

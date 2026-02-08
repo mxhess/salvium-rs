@@ -33,7 +33,7 @@ const KEM_DOMAIN = utf8ToBytes('salvium-wallet-kem-v1');
 const HKDF_INFO  = utf8ToBytes('salvium-wallet-encryption-key-v1');
 
 // Fields that contain secrets and must be encrypted
-const SENSITIVE_KEYS = ['seed', 'mnemonic', 'spendSecretKey', 'viewSecretKey'];
+const SENSITIVE_KEYS = ['seed', 'mnemonic', 'spendSecretKey', 'viewSecretKey', 'dataKey'];
 
 // CARROT public-only keys (stay plaintext for wallet identification)
 const CARROT_PUBLIC_KEYS = ['accountSpendPubkey', 'primaryAddressViewPubkey', 'accountViewPubkey'];
@@ -217,4 +217,44 @@ export function reEncryptWalletJSON(envelope, oldPassword, newPassword, options 
  */
 export function isEncryptedWallet(json) {
   return json?.encrypted === true && json?.encryption != null;
+}
+
+// ---------------------------------------------------------------------------
+// Fast data encryption (for sync cache, using pre-derived data key)
+// ---------------------------------------------------------------------------
+
+/**
+ * Encrypt arbitrary data with a 32-byte key using AES-256-GCM.
+ * Used for sync cache and other at-rest data where the key is already
+ * in memory (no Argon2id / ML-KEM ceremony needed).
+ *
+ * @param {Uint8Array} key - 32-byte encryption key (the wallet's dataKey)
+ * @param {string|Uint8Array} plaintext - Data to encrypt (string will be UTF-8 encoded)
+ * @returns {Object} { encrypted: true, iv: hex, ciphertext: hex }
+ */
+export function encryptData(key, plaintext) {
+  const data = typeof plaintext === 'string' ? utf8ToBytes(plaintext) : plaintext;
+  const iv = randomBytes(12);
+  const ciphertext = gcm(key, iv).encrypt(data);
+  return {
+    encrypted: true,
+    iv: bytesToHex(iv),
+    ciphertext: bytesToHex(ciphertext),
+  };
+}
+
+/**
+ * Decrypt data encrypted by encryptData().
+ *
+ * @param {Uint8Array} key - 32-byte encryption key (the wallet's dataKey)
+ * @param {Object} envelope - { iv: hex, ciphertext: hex }
+ * @returns {Uint8Array} Decrypted data
+ * @throws {Error} On wrong key or corrupted data
+ */
+export function decryptData(key, envelope) {
+  try {
+    return gcm(key, hexToBytes(envelope.iv)).decrypt(hexToBytes(envelope.ciphertext));
+  } catch {
+    throw new Error('Data decryption failed: wrong key or corrupted data');
+  }
 }

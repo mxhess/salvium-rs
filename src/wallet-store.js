@@ -16,6 +16,7 @@
  */
 
 import { bytesToHex, hexToBytes } from './address.js';
+import { areAssetTypesEquivalent } from './consensus.js';
 
 // ============================================================================
 // STORAGE INTERFACE
@@ -538,7 +539,7 @@ export class MemoryStorage extends WalletStorage {
   _matchesQuery(output, query) {
     if (query.isSpent !== undefined && output.isSpent !== query.isSpent) return false;
     if (query.isFrozen !== undefined && output.isFrozen !== query.isFrozen) return false;
-    if (query.assetType && output.assetType !== query.assetType) return false;
+    if (query.assetType && !areAssetTypesEquivalent(output.assetType, query.assetType)) return false;
     if (query.txType !== undefined && output.txType !== query.txType) return false;
     if (query.minAmount !== undefined && output.amount < BigInt(query.minAmount)) return false;
     if (query.maxAmount !== undefined && output.amount > BigInt(query.maxAmount)) return false;
@@ -1057,7 +1058,7 @@ export class IndexedDBStorage extends WalletStorage {
   _matchesOutputQuery(output, query) {
     if (query.isSpent !== undefined && output.isSpent !== query.isSpent) return false;
     if (query.isFrozen !== undefined && output.isFrozen !== query.isFrozen) return false;
-    if (query.assetType && output.assetType !== query.assetType) return false;
+    if (query.assetType && !areAssetTypesEquivalent(output.assetType, query.assetType)) return false;
     if (query.txType !== undefined && output.txType !== query.txType) return false;
     if (query.minAmount !== undefined && output.amount < BigInt(query.minAmount)) return false;
     if (query.maxAmount !== undefined && output.amount > BigInt(query.maxAmount)) return false;

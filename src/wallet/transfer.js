@@ -13,7 +13,7 @@ import {
   prepareInputs, estimateTransactionFee,
   selectUTXOs, serializeTransaction, TX_TYPE, DEFAULT_RING_SIZE
 } from '../transaction.js';
-import { getNetworkConfig, NETWORK_ID, getActiveAssetType, isCarrotActive } from '../consensus.js';
+import { getNetworkConfig, NETWORK_ID, getActiveAssetType, isCarrotActive, areAssetTypesEquivalent } from '../consensus.js';
 import {
   generateKeyDerivation, deriveSecretKey, scalarAdd, scalarMultBase
 } from '../crypto/index.js';
@@ -162,7 +162,17 @@ function extractRejectionReason(respData) {
   if (respData?.not_relayed) flags.push('not_relayed');
   const reason = respData?.reason || '';
   const flagStr = flags.length ? ` [${flags.join(', ')}]` : '';
-  return reason ? `${reason}${flagStr}` : (flagStr || respData?.status || 'unknown');
+  if (reason || flagStr) {
+    return `${reason}${flagStr}`.trim();
+  }
+  // No known flags — include full response for debugging
+  const status = respData?.status || 'unknown';
+  try {
+    const detail = JSON.stringify(respData, null, 0);
+    return detail.length > 200 ? `${status} (response too large)` : `${status}: ${detail}`;
+  } catch {
+    return status;
+  }
 }
 
 /**
@@ -273,6 +283,10 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
     if (!o.isSpendable(currentHeight)) return false;
     // CARROT outputs need carrotSharedSecret and commitment for spending
     if (o.isCarrot && (!o.carrotSharedSecret || !o.commitment)) return false;
+    // Post-HF6: only spend outputs matching the exact active asset type.
+    // The daemon requires vin.asset_type == tx.source_asset_type == 'SAL1'.
+    // Pre-fork SAL outputs have different index space and cannot be spent as SAL1.
+    if (o.assetType !== assetType) return false;
     return true;
   });
 
@@ -359,9 +373,13 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   });
 
   // 10. Prepare inputs (fetch decoys from daemon)
+  // Use actual on-chain asset type from outputs for distribution queries.
+  // During HF transitions (SAL→SAL1), outputs retain their original type
+  // but the active type has changed. Decoy selection must use the output's type.
+  const sourceAssetType = selectedOutputs[0]?.assetType || assetType;
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
     ringSize: DEFAULT_RING_SIZE,
-    assetType
+    assetType: sourceAssetType
   });
 
   // 11. Build change address (CARROT-aware)
@@ -382,8 +400,8 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
     },
     {
       txType: TX_TYPE.TRANSFER,
-      sourceAssetType: assetType,
-      destinationAssetType: assetType,
+      sourceAssetType: sourceAssetType,
+      destinationAssetType: sourceAssetType,
       returnAddress: spendPub,
       returnPubkey: viewPub,
       height: currentHeight,
@@ -399,7 +417,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
 
   // 14. Broadcast
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: sourceAssetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast transfer: ${JSON.stringify(sendResp.error || sendResp)}`);
     }
@@ -475,6 +493,7 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   let spendable = allOutputs.filter(o => {
     if (!o.isSpendable(currentHeight)) return false;
     if (o.isCarrot && (!o.carrotSharedSecret || !o.commitment)) return false;
+    if (o.assetType !== assetType) return false;
     return true;
   });
 
@@ -540,10 +559,11 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     };
   });
 
-  // Prepare inputs
+  // Prepare inputs — use actual on-chain asset type for distribution queries
+  const sourceAssetType = spendable[0]?.assetType || assetType;
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
     ringSize: DEFAULT_RING_SIZE,
-    assetType
+    assetType: sourceAssetType
   });
 
   // Build change address (CARROT-aware) — sweep always needs 2 outputs
@@ -568,8 +588,8 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     },
     {
       txType: TX_TYPE.TRANSFER,
-      sourceAssetType: assetType,
-      destinationAssetType: assetType,
+      sourceAssetType,
+      destinationAssetType: sourceAssetType,
       returnAddress: sweepSpendPub,
       returnPubkey: sweepViewPub,
       height: currentHeight,
@@ -585,7 +605,7 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
   const txHex = bytesToHex(serialized);
 
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: sourceAssetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast sweep: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
@@ -670,6 +690,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
   const spendable = allOutputs.filter(o => {
     if (!o.isSpendable(currentHeight)) return false;
     if (o.isCarrot && (!o.carrotSharedSecret || !o.commitment)) return false;
+    if (o.assetType !== assetType) return false;
     return true;
   });
 
@@ -741,10 +762,11 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
     };
   });
 
-  // 8. Prepare inputs (fetch decoys)
+  // 8. Prepare inputs (fetch decoys) — use actual on-chain asset type
+  const sourceAssetType = selectedOutputs[0]?.assetType || assetType;
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
     ringSize: DEFAULT_RING_SIZE,
-    assetType
+    assetType: sourceAssetType
   });
 
   // 9. Return address = wallet's own address (stake returns here)
@@ -762,7 +784,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
     },
     {
       stakeLockPeriod,
-      assetType,
+      assetType: sourceAssetType,
       height: currentHeight,
       network,
       viewSecretKey: stakeViewKey,
@@ -776,7 +798,7 @@ export async function stake({ wallet, daemon, amount, options = {} }) {
 
   // 12. Broadcast
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: sourceAssetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast stake: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
@@ -852,6 +874,7 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
   const spendable = allOutputs.filter(o => {
     if (!o.isSpendable(currentHeight)) return false;
     if (o.isCarrot && (!o.carrotSharedSecret || !o.commitment)) return false;
+    if (o.assetType !== assetType) return false;
     return true;
   });
 
@@ -913,10 +936,11 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
     };
   });
 
-  // Prepare inputs (fetch decoys)
+  // Prepare inputs (fetch decoys) — use actual on-chain asset type
+  const sourceAssetType = selectedOutputs[0]?.assetType || assetType;
   const preparedInputs = await prepareInputs(ownedForPrep, daemon, {
     ringSize: DEFAULT_RING_SIZE,
-    assetType
+    assetType: sourceAssetType
   });
 
   // Change address (CARROT-aware)
@@ -931,7 +955,7 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
       fee: estimatedFee
     },
     {
-      assetType,
+      assetType: sourceAssetType,
       height: currentHeight,
       network,
       viewSecretKey: burnCarrotViewKey
@@ -944,7 +968,7 @@ export async function burn({ wallet, daemon, amount, options = {} }) {
 
   // Broadcast
   if (!dryRun) {
-    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: assetType });
+    const sendResp = await daemon.sendRawTransaction(txHex, { source_asset_type: sourceAssetType });
     if (!sendResp.success) {
       throw new Error(`Failed to broadcast burn: ${JSON.stringify(sendResp.error || sendResp.data)}`);
     }
@@ -1023,6 +1047,7 @@ export async function convert({ wallet, daemon, amount, sourceAssetType, destAss
   const spendable = allOutputs.filter(o => {
     if (!o.isSpendable(currentHeight)) return false;
     if (o.isCarrot && (!o.carrotSharedSecret || !o.commitment)) return false;
+    if (o.assetType !== sourceAssetType) return false;
     return true;
   });
 

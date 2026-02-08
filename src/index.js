@@ -41,7 +41,7 @@ export * from './persistent-wallet.js';
 export * from './consensus.js';
 
 // Post-quantum wallet encryption
-export { encryptWalletJSON, decryptWalletJSON, reEncryptWalletJSON, isEncryptedWallet } from './wallet-encryption.js';
+export { encryptWalletJSON, decryptWalletJSON, reEncryptWalletJSON, isEncryptedWallet, encryptData, decryptData } from './wallet-encryption.js';
 
 // Validation exports
 export * from './validation.js';

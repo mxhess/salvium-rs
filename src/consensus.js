@@ -319,6 +319,32 @@ export function getActiveAssetType(height, network = NETWORK_ID.MAINNET) {
 }
 
 /**
+ * Check if two asset types are equivalent (SAL and SAL1 are the same
+ * underlying asset — SAL1 is the post-HF6 rename of SAL).
+ *
+ * @param {string} a - First asset type
+ * @param {string} b - Second asset type
+ * @returns {boolean} True if the types are equivalent
+ */
+export function areAssetTypesEquivalent(a, b) {
+  if (a === b) return true;
+  const salFamily = new Set(['SAL', 'SAL1']);
+  return salFamily.has(a) && salFamily.has(b);
+}
+
+/**
+ * Get the list of compatible asset types that can be spent at a given height.
+ * After HF6, both SAL (pre-fork outputs) and SAL1 (post-fork outputs) are valid.
+ *
+ * @param {number} height - Block height
+ * @param {number} network - Network type
+ * @returns {string[]} Array of spendable asset types
+ */
+export function getSpendableAssetTypes(height, network = NETWORK_ID.MAINNET) {
+  return isHfActive(6, height, network) ? ['SAL1', 'SAL'] : ['SAL'];
+}
+
+/**
  * Check if CARROT outputs are enabled at a given height
  *
  * @param {number} height - Block height

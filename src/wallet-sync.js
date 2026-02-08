@@ -1116,13 +1116,13 @@ export class WalletSync {
           : tx.rct.outPk[outputIndex])
       : null;
 
-    // For non-CARROT coinbase (RCTTypeNull), compute zeroCommit(amount) = G + amount*H
+    // For coinbase (RCTTypeNull), compute commitment = 1*G + amount*H
     // This matches C++ rct::zeroCommit() used during coinbase scanning.
-    // For CARROT outputs (type 0x04), the commitment will be computed AFTER scanning
-    // using the CARROT-derived mask, not the scalar 1.
+    // Both CryptoNote and CARROT coinbase outputs need this commitment —
+    // CARROT uses it for recoverAddressSpendPubkey (spend pubkey recovery).
     const rctType = tx.rct?.type ?? 0;
     const isCarrotOutput = output.type === 0x04 || output.target?.type === 0x04;
-    if (!amountCommitment && rctType === 0 && output.amount !== undefined && !isCarrotOutput) {
+    if (!amountCommitment && rctType === 0 && output.amount !== undefined) {
       const clearAmount = typeof output.amount === 'bigint'
         ? output.amount
         : BigInt(output.amount || 0);
@@ -1197,9 +1197,16 @@ export class WalletSync {
       return null;
     }
 
-    // If we have mask and amount from CARROT scan but no commitment from outPk,
-    // compute it now. This happens for CARROT coinbase (mining) outputs.
-    if (!amountCommitment && result.mask && result.amount !== undefined) {
+    // For coinbase (rctType=0): the on-chain commitment is 1*G + amount*H (same as CryptoNote).
+    // The CARROT scan derives a CARROT mask, but for coinbase the actual blinding factor is 1.
+    // Override mask to scalar 1 so the ring signature uses the correct blinding factor.
+    // For non-coinbase: the scan's CARROT mask matches the outPk commitment, so no override needed.
+    if (rctType === 0 && result.mask) {
+      const SCALAR_ONE = '0100000000000000000000000000000000000000000000000000000000000000';
+      result.mask = hexToBytes(SCALAR_ONE);
+      // amountCommitment is already pedersenCommit(amount, scalar_1) from line 1132
+    } else if (!amountCommitment && result.mask && result.amount !== undefined) {
+      // Non-coinbase without outPk: compute commitment from CARROT mask
       const maskBytes = typeof result.mask === 'string' ? hexToBytes(result.mask) : result.mask;
       amountCommitment = pedersonCommit(BigInt(result.amount), maskBytes);
     }

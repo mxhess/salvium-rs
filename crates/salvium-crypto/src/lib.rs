@@ -286,13 +286,18 @@ pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
     ).compress().to_bytes().to_vec()
 }
 
-/// Zero commitment: C = amount*H (no blinding factor)
+/// Zero commitment: C = 1*G + amount*H (blinding factor = 1)
+/// Matches C++ rct::zeroCommit() used for coinbase outputs and fee commitments.
 #[wasm_bindgen]
 pub fn zero_commit(amount: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
+    let mask_scalar = Scalar::ONE;
     let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
-    EdwardsPoint::vartime_multiscalar_mul(&[amount_scalar], &[h])
-        .compress().to_bytes().to_vec()
+    // 1*G + amount*H
+    EdwardsPoint::vartime_multiscalar_mul(
+        &[mask_scalar, amount_scalar],
+        &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, h],
+    ).compress().to_bytes().to_vec()
 }
 
 /// Generate commitment mask from shared secret

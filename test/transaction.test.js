@@ -325,15 +325,18 @@ test('commit with different amounts produces different results', () => {
   assert(bytesToHex(c1) !== bytesToHex(c2), 'Different amounts should produce different commitments');
 });
 
-test('zeroCommit produces commitment with mask=0', () => {
+test('zeroCommit produces 32-byte commitment', () => {
   const zc = zeroCommit(1000n);
   assert(zc.length === 32, 'Zero commit should be 32 bytes');
 });
 
-test('zeroCommit equals commit with zero mask', () => {
-  const zeroMask = new Uint8Array(32);
+test('zeroCommit equals commit with mask=1 (matching C++ rct::zeroCommit)', () => {
+  // C++ rct::zeroCommit uses blinding factor = identity scalar (1), not zero.
+  // zeroCommit(amount) = 1*G + amount*H
+  const scalarOne = new Uint8Array(32);
+  scalarOne[0] = 1;
   const zc = zeroCommit(1000n);
-  const c = commit(1000n, zeroMask);
+  const c = commit(1000n, scalarOne);
   assertEqual(zc, c);
 });
 

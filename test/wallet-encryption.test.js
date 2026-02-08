@@ -12,8 +12,11 @@ import {
   decryptWalletJSON,
   reEncryptWalletJSON,
   isEncryptedWallet,
+  encryptData,
+  decryptData,
   ENCRYPTION_VERSION,
 } from '../src/wallet-encryption.js';
+import { MemoryStorage, WalletOutput } from '../src/wallet-store.js';
 
 await setCryptoBackend('wasm');
 
@@ -207,6 +210,158 @@ console.log('Test 13: changePassword with wrong old password throws');
   let threw = false;
   try { reEncryptWalletJSON(enc, 'wrong', 'newpass', FAST_PARAMS); } catch { threw = true; }
   assert(threw, 'wrong old password throws on re-encrypt');
+}
+
+// Test 14: Wallet.create() generates dataKey
+console.log('Test 14: dataKey generated on create');
+{
+  const w = Wallet.create({ network: 'testnet' });
+  assert(w._dataKey !== null, 'dataKey is not null');
+  assert(w._dataKey instanceof Uint8Array, 'dataKey is Uint8Array');
+  assert(w._dataKey.length === 32, 'dataKey is 32 bytes');
+
+  // Different wallets get different dataKeys
+  const w2 = Wallet.create({ network: 'testnet' });
+  const dk1 = Array.from(w._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  const dk2 = Array.from(w2._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  assert(dk1 !== dk2, 'different wallets have different dataKeys');
+}
+
+// Test 15: dataKey encrypted in wallet JSON
+console.log('Test 15: dataKey encrypted in wallet envelope');
+{
+  const enc = wallet.toEncryptedJSON('pass', FAST_PARAMS);
+  assert(enc.dataKey === undefined, 'dataKey not in plaintext envelope');
+  const encStr = JSON.stringify(enc);
+  const dkHex = Array.from(wallet._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  assert(!encStr.includes(dkHex), 'dataKey hex not leaked in envelope');
+
+  // Restored after decryption
+  const restored = Wallet.fromEncryptedJSON(enc, 'pass');
+  const restoredHex = Array.from(restored._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  assert(restoredHex === dkHex, 'dataKey restored after decrypt');
+}
+
+// Test 16: encryptData / decryptData roundtrip
+console.log('Test 16: encryptData/decryptData roundtrip');
+{
+  const key = wallet._dataKey;
+  const original = '{"hello":"world","amount":12345}';
+  const enc = encryptData(key, original);
+
+  assert(enc.encrypted === true, 'encrypted flag set');
+  assert(typeof enc.iv === 'string', 'iv is hex string');
+  assert(typeof enc.ciphertext === 'string', 'ciphertext is hex string');
+
+  const decBytes = decryptData(key, enc);
+  const dec = new TextDecoder().decode(decBytes);
+  assert(dec === original, 'roundtrip preserves data');
+}
+
+// Test 17: decryptData with wrong key throws
+console.log('Test 17: decryptData wrong key throws');
+{
+  const key = wallet._dataKey;
+  const enc = encryptData(key, 'secret data');
+  const wrongKey = new Uint8Array(32);
+  wrongKey.fill(0xff);
+  let threw = false;
+  try { decryptData(wrongKey, enc); } catch { threw = true; }
+  assert(threw, 'wrong key throws');
+}
+
+// Test 18: Encrypted sync cache roundtrip
+console.log('Test 18: Encrypted sync cache roundtrip');
+{
+  const w = Wallet.create({ network: 'testnet' });
+  w._ensureStorage();
+
+  // Add some test outputs to the storage
+  await w._storage.putOutput(new WalletOutput({
+    keyImage: 'ab'.repeat(32),
+    publicKey: 'cd'.repeat(32),
+    txHash: 'ef'.repeat(32),
+    outputIndex: 0,
+    blockHeight: 100,
+    amount: 500000000n,
+    commitment: '11'.repeat(32),
+    mask: '22'.repeat(32),
+    carrotSharedSecret: '33'.repeat(32),
+    isCarrot: true,
+  }));
+  w._storage._syncHeight = 100;
+
+  // Dump encrypted
+  const encryptedJSON = w.dumpSyncCacheJSON();
+  const parsed = JSON.parse(encryptedJSON);
+  assert(parsed.encrypted === true, 'sync cache is encrypted');
+  assert(parsed.iv !== undefined, 'sync cache has iv');
+  assert(parsed.ciphertext !== undefined, 'sync cache has ciphertext');
+
+  // Verify secrets are not in the encrypted string
+  assert(!encryptedJSON.includes('ab'.repeat(32)), 'keyImage not leaked in encrypted cache');
+  assert(!encryptedJSON.includes('22'.repeat(32)), 'mask not leaked in encrypted cache');
+  assert(!encryptedJSON.includes('33'.repeat(32)), 'carrotSharedSecret not leaked in encrypted cache');
+  assert(!encryptedJSON.includes('500000000'), 'amount not leaked in encrypted cache');
+
+  // Load back into a new wallet with the same dataKey
+  const w2 = Wallet.create({ network: 'testnet' });
+  w2._dataKey = w._dataKey; // Same data key
+  w2.loadSyncCache(parsed);
+
+  const outputs = await w2._storage.getOutputs({});
+  assert(outputs.length === 1, 'output restored from encrypted cache');
+  assert(outputs[0].keyImage === 'ab'.repeat(32), 'keyImage matches');
+  assert(outputs[0].amount === 500000000n, 'amount matches');
+  assert(outputs[0].mask === '22'.repeat(32), 'mask matches');
+  assert(outputs[0].carrotSharedSecret === '33'.repeat(32), 'sharedSecret matches');
+  assert(w2._syncHeight === 100, 'syncHeight restored');
+}
+
+// Test 19: Loading encrypted cache without dataKey throws
+console.log('Test 19: Encrypted cache without dataKey throws');
+{
+  const w = Wallet.create({ network: 'testnet' });
+  w._ensureStorage();
+  w._storage._syncHeight = 50;
+  const encJSON = w.dumpSyncCacheJSON();
+  const parsed = JSON.parse(encJSON);
+
+  // Create wallet with no dataKey
+  const w2 = Wallet.create({ network: 'testnet' });
+  w2._dataKey = null;
+  let threw = false;
+  try { w2.loadSyncCache(parsed); } catch (e) {
+    threw = true;
+    assert(e.message.includes('no data key'), 'error mentions data key');
+  }
+  assert(threw, 'loading encrypted cache without dataKey throws');
+}
+
+// Test 20: Backward compat — plain sync cache still loads
+console.log('Test 20: Plain sync cache backward compatibility');
+{
+  const w = Wallet.create({ network: 'testnet' });
+  w._ensureStorage();
+
+  // Build a plain (unencrypted) cache manually
+  const plainCache = { version: 1, syncHeight: 42, outputs: [], transactions: [], spentKeyImages: [], blockHashes: {}, state: {} };
+  w.loadSyncCache(plainCache);
+  assert(w._syncHeight === 42, 'plain cache loaded successfully');
+}
+
+// Test 21: dataKey survives password change
+console.log('Test 21: dataKey survives password change');
+{
+  const w = Wallet.create({ network: 'testnet' });
+  const originalDK = Array.from(w._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  const enc1 = w.toEncryptedJSON('old', FAST_PARAMS);
+  const enc2 = Wallet.changePassword(enc1, 'old', 'new', FAST_PARAMS);
+  const restored = Wallet.fromEncryptedJSON(enc2, 'new');
+  const restoredDK = Array.from(restored._dataKey).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  assert(restoredDK === originalDK, 'dataKey unchanged after password change');
 }
 
 console.log(`\nPassed: ${passed}`);
