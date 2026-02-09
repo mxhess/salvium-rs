@@ -865,7 +865,7 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `calculateCommitment(input, hashIn)` | Calculate hash commitment |
 | `RandomXCache` | Cache class for Argon2d-initialized memory |
 | `initDatasetItem(cache, itemNumber)` | Generate single dataset item from cache |
-| `RandomXVM` | Virtual machine for RandomX program execution |
+| `RandomXNative` | WASM-JIT RandomX context (vendored randomx.js) |
 | `Blake2Generator` | Pseudo-random byte generator using Blake2b |
 | `generateSuperscalar(gen)` | Generate superscalar program |
 | `executeSuperscalar(registers, program)` | Execute superscalar program on registers |

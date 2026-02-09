@@ -1,14 +1,11 @@
 /**
  * RandomX Proof-of-Work Implementation
  *
- * JavaScript/WASM implementation of the RandomX algorithm used by Salvium.
- *
- * Two implementations are available:
- * 1. Native (vendored randomx.js, BSD 3-Clause) - WASM-JIT, fastest, recommended
- * 2. Pure JS - Full JavaScript implementation for portability/debugging
+ * WASM-JIT implementation of the RandomX algorithm used by Salvium.
+ * Vendored from https://github.com/l1mey112/randomx.js (BSD 3-Clause).
  *
  * Features:
- * - WASM-JIT compiled for maximum performance (native)
+ * - WASM-JIT compiled for maximum performance
  * - Light mode (256MB cache) - suitable for verification and mining
  * - Full mode (2GB dataset) - faster hashing for dedicated miners
  * - Multi-threaded support via Worker pools
@@ -19,7 +16,7 @@
 
 import { blake2b } from '../blake2b.js';
 
-// Native RandomX implementation (vendored randomx.js)
+// WASM-JIT RandomX implementation (vendored randomx.js)
 export {
   RandomXNative,
   randomx_init_cache,
@@ -32,11 +29,9 @@ export {
 import { RandomXWorkerPool, getAvailableCores } from './worker-pool.js';
 export { RandomXWorkerPool, getAvailableCores };
 
-// Pure JS implementation (alternative to vendored)
-export { RandomXVM } from './vm.js';
+// Cache and dataset (used by both WASM and dataset generation)
 export { RandomXCache, initDatasetItem, initDataset } from './dataset.js';
 export * as config from './config.js';
-export * as aes from './aes.js';
 export * as superscalar from './superscalar.js';
 
 // Export individual superscalar functions for direct access
@@ -246,8 +241,6 @@ export async function mine(key, blockTemplate, nonceOffset, difficulty, maxItera
   return null;
 }
 
-// Import JS implementations for default export
-import { RandomXVM } from './vm.js';
 import { RandomXCache, initDatasetItem, initDataset } from './dataset.js';
 import { RandomXFullMode, createFullModeContext } from './full-mode.js';
 
@@ -265,8 +258,7 @@ export default {
   // Full mode (2GB dataset)
   RandomXFullMode,
   createFullModeContext,
-  // Pure JS implementation
-  RandomXVM,
+  // Cache/dataset
   RandomXCache,
   initDatasetItem,
   initDataset

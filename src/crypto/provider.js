@@ -142,14 +142,8 @@ export function isIdentity(p) {
 
 // Random scalar: generate 64 random bytes, reduce mod L
 export function randomScalar() {
-  let bytes64;
-  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
-    bytes64 = new Uint8Array(64);
-    globalThis.crypto.getRandomValues(bytes64);
-  } else {
-    const { randomBytes } = require('crypto');
-    bytes64 = new Uint8Array(randomBytes(64));
-  }
+  const bytes64 = new Uint8Array(64);
+  crypto.getRandomValues(bytes64);
   return scReduce64(bytes64);
 }
 

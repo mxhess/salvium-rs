@@ -37,16 +37,10 @@ const T_BYTES = new Uint8Array([
 // Group order L
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
 
-// Crypto random (for browser & Node.js compatibility)
 function getRandomBytes(n) {
-  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
-    const buf = new Uint8Array(n);
-    globalThis.crypto.getRandomValues(buf);
-    return buf;
-  }
-  // Node.js fallback
-  const { randomBytes } = require('crypto');
-  return new Uint8Array(randomBytes(n));
+  const buf = new Uint8Array(n);
+  crypto.getRandomValues(buf);
+  return buf;
 }
 
 // Field operations

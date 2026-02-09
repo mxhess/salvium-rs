@@ -93,16 +93,7 @@ function scReduce32(bytes) {
  */
 export function generateSeed() {
   const seed = new Uint8Array(32);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(seed);
-  } else if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.getRandomValues) {
-    globalThis.crypto.getRandomValues(seed);
-  } else {
-    // Node.js fallback
-    const { randomBytes } = require('crypto');
-    const buf = randomBytes(32);
-    seed.set(buf);
-  }
+  crypto.getRandomValues(seed);
   return seed;
 }
 

@@ -1,17 +1,16 @@
 #!/usr/bin/env bun
 /**
- * Solo Miner — mines blocks against a daemon using JS, WASM, or Rust RandomX.
+ * Solo Miner — mines blocks against a daemon using WASM or Rust RandomX.
  *
  * Supports:
- *   - Pure JS: multi-threaded via worker pool, interpreted RandomX (light only)
- *   - WASM JIT: multi-threaded via worker pool (~7 H/s/thread, light mode)
+ *   - WASM JIT: multi-threaded via worker pool (light mode)
  *   - Rust native: spawns salvium-miner binary (light or full mode)
  *
  * Usage:
- *   bun test/solo-miner.js --backend <js|wasm|rust> --blocks <N> --address <ADDR> [options]
+ *   bun test/solo-miner.js --backend <wasm|rust> --blocks <N> --address <ADDR> [options]
  *
  * Options:
- *   --backend, -b   js|wasm|rust (default: wasm)
+ *   --backend, -b   wasm|rust (default: wasm)
  *   --mode, -m      light|full (default: light)
  *   --blocks, -n    Number of blocks to mine (default: 5)
  *   --address, -a   Wallet address for mining rewards (required)
@@ -62,19 +61,13 @@ function parseArgs() {
     console.error('Error: --address is required');
     process.exit(1);
   }
-  if (!['js', 'wasm', 'rust'].includes(opts.backend)) {
-    console.error('Error: --backend must be "js", "wasm", or "rust"');
+  if (!['wasm', 'rust'].includes(opts.backend)) {
+    console.error('Error: --backend must be "wasm" or "rust"');
     process.exit(1);
   }
   if (!['light', 'full'].includes(opts.mode)) {
     console.error('Error: --mode must be "light" or "full"');
     process.exit(1);
-  }
-
-  // JS backend: light only
-  if (opts.backend === 'js' && opts.mode === 'full') {
-    console.log('Note: Pure JS backend only supports light mode, using light.');
-    opts.mode = 'light';
   }
 
   // WASM full mode not implemented
@@ -98,25 +91,19 @@ function bytesToHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ─── Worker Pool Mining (shared by WASM and JS backends) ─────────────────────
+// ─── Worker Pool Mining (WASM-JIT backend) ───────────────────────────────────
 
 class WorkerMinerPool {
   /**
    * @param {number} numThreads
-   * @param {'wasm'|'js'} backend - Which worker script to use
    */
-  constructor(numThreads, backend) {
+  constructor(numThreads) {
     this.numThreads = numThreads;
-    this.backend = backend;
     this.workers = [];
     this.ready = false;
-
-    // Select worker script based on backend
-    if (backend === 'wasm') {
-      this.workerPath = new URL('../src/randomx/randomx-worker.js', import.meta.url).pathname;
-    } else {
-      this.workerPath = new URL('../src/randomx/randomx-worker-js.js', import.meta.url).pathname;
-    }
+    this.workerPath = new URL('../src/randomx/randomx-worker.js', import.meta.url).pathname;
+    this._handlers = [];  // Track active handlers for cleanup
+    this._jobCounter = 0;
   }
 
   async init(seedHash) {
@@ -150,8 +137,7 @@ class WorkerMinerPool {
     await Promise.all(initPromises);
     this.ready = true;
 
-    const label = this.backend === 'wasm' ? 'WASM-JIT' : 'Pure JS';
-    console.log(`  ${this.numThreads} ${label} workers initialized (${this.numThreads * 256}MB total)`);
+    console.log(`  ${this.numThreads} WASM-JIT workers initialized (${this.numThreads * 256}MB total)`);
   }
 
   /**
@@ -159,16 +145,33 @@ class WorkerMinerPool {
    * Workers use async chunked mining, so sending a new mine message
    * cancels the previous one without needing to kill/respawn workers.
    *
+   * Uses jobId to prevent stale messages from previous blocks being
+   * accepted by the current block's handler.
+   *
    * Returns { nonce, hash, hashCount } on success.
    */
   async mineBlock(hashingBlob, nonceOffset, difficulty) {
     const RANGE_PER_WORKER = 0x10000000; // ~268M nonces per worker
     const baseNonce = Math.floor(Math.random() * 0x40000000);
+    const jobId = ++this._jobCounter;
+
+    // Clean up any leftover handlers from previous blocks
+    for (const { worker, handler } of this._handlers) {
+      worker.off('message', handler);
+    }
+    this._handlers = [];
+
+    // Cancel any in-flight mining from previous blocks
+    for (const w of this.workers) {
+      w.postMessage({ type: 'cancel' });
+    }
 
     return new Promise((resolve, reject) => {
       let found = false;
       let completed = 0;
       let totalHashCount = 0;
+      const workerHashes = new Array(this.workers.length).fill(0);
+      const mineStart = Date.now();
 
       for (let i = 0; i < this.workers.length; i++) {
         const worker = this.workers[i];
@@ -176,38 +179,60 @@ class WorkerMinerPool {
         const endNonce = (startNonce + RANGE_PER_WORKER) >>> 0;
 
         const handler = (msg) => {
+          // Ignore messages from previous jobs
+          if (msg.jobId !== undefined && msg.jobId !== jobId) return;
           if (found) return;
 
           if (msg.type === 'found') {
             found = true;
-            worker.off('message', handler);
 
-            // Cancel other workers' mine operations (they'll stop at next yield)
-            for (let j = 0; j < this.workers.length; j++) {
-              if (j !== i) {
-                this.workers[j].postMessage({ type: 'cancel' });
-              }
+            // Cancel all workers and remove all handlers
+            for (const w of this.workers) {
+              w.postMessage({ type: 'cancel' });
             }
+            for (const h of this._handlers) {
+              h.worker.off('message', h.handler);
+            }
+            this._handlers = [];
 
             totalHashCount += msg.hashCount || 0;
             resolve({ nonce: msg.nonce, hash: msg.hash, hashCount: totalHashCount });
+          } else if (msg.type === 'progress') {
+            workerHashes[i] = msg.hashCount || 0;
+            const runningTotal = workerHashes.reduce((a, b) => a + b, 0);
+            const elapsed = (Date.now() - mineStart) / 1000;
+            if (elapsed > 0.5) {
+              const hr = runningTotal / elapsed;
+              process.stderr.write(`\r  ${runningTotal} hashes, ${formatHashrate(hr)}...`);
+            }
           } else if (msg.type === 'notfound') {
             completed++;
             totalHashCount += msg.hashCount || 0;
-            worker.off('message', handler);
             if (completed === this.workers.length && !found) {
+              for (const h of this._handlers) {
+                h.worker.off('message', h.handler);
+              }
+              this._handlers = [];
               reject(new Error('No nonce found in range'));
             }
           } else if (msg.type === 'error') {
-            worker.off('message', handler);
-            if (!found) reject(new Error(msg.error));
+            if (!found) {
+              for (const h of this._handlers) {
+                h.worker.off('message', h.handler);
+              }
+              this._handlers = [];
+              reject(new Error(msg.error));
+            }
           }
         };
 
         worker.on('message', handler);
+        this._handlers.push({ worker, handler });
+
         worker.postMessage({
           type: 'mine',
           id: i,
+          jobId,
           input: {
             template: Array.from(hashingBlob),
             nonceOffset,
@@ -342,16 +367,14 @@ class RustMiner {
   }
 }
 
-// ─── Main mining loop (JS/WASM backends) ─────────────────────────────────────
+// ─── Main mining loop (WASM backend) ──────────────────────────────────────────
 
 async function mineBlocksWorkerPool(opts) {
   const daemon = new DaemonRPC({ url: opts.daemon });
 
   const info = await daemon.getInfo();
   const height = info.result?.height || info.height;
-  const label = opts.backend === 'wasm'
-    ? `WASM-JIT light (${opts.threads} threads)`
-    : `Pure JS light (${opts.threads} threads)`;
+  const label = `WASM-JIT light (${opts.threads} threads)`;
 
   console.log(`\nSolo Miner — ${label}`);
   console.log(`Daemon: ${opts.daemon} (height ${height})`);
@@ -361,7 +384,7 @@ async function mineBlocksWorkerPool(opts) {
   const tmpl0 = await daemon.getBlockTemplate(opts.address, 8);
   let currentSeedHash = tmpl0.result.seed_hash;
 
-  const miner = new WorkerMinerPool(opts.threads, opts.backend);
+  const miner = new WorkerMinerPool(opts.threads);
 
   console.log(`Initializing RandomX (seed: ${currentSeedHash.slice(0, 16)}...)...`);
   await miner.init(currentSeedHash);
@@ -470,14 +493,9 @@ async function main() {
   const accepted = results.filter(r => r.status === 'accepted').length;
   const avgBlockTime = totalElapsed / Math.max(1, results.length);
 
-  let backendLabel;
-  if (opts.backend === 'rust') {
-    backendLabel = `Rust ${opts.mode} (${opts.threads} threads)`;
-  } else if (opts.backend === 'wasm') {
-    backendLabel = `WASM-JIT light (${opts.threads} threads)`;
-  } else {
-    backendLabel = `Pure JS light (${opts.threads} threads)`;
-  }
+  const backendLabel = opts.backend === 'rust'
+    ? `Rust ${opts.mode} (${opts.threads} threads)`
+    : `WASM-JIT light (${opts.threads} threads)`;
 
   console.log(`\n${'='.repeat(60)}`);
   console.log(`Solo Miner Summary — ${backendLabel}`);
