@@ -439,7 +439,7 @@ import {
   bytesToScalar,
   scalarToBytes,
   bytesToPoint,
-  hashToPoint as bpHashToPoint,
+  hashToPointMonero as bpHashToPoint,
   hashToScalar as bpHashToScalar,
   initGenerators,
   initTranscript,
