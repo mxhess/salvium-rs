@@ -236,7 +236,16 @@ impl MiningEngine {
                     };
 
                     let nonce_offset = find_nonce_offset(&job.hashing_blob);
-                    mine_job_rust(&mut vm, &job, &running, &hash_count, &result_tx, nonce_start, nonce_offset);
+                    let mut current_job = job;
+                    loop {
+                        match mine_job_rust(
+                            &mut vm, &current_job, &running, &hash_count,
+                            &result_tx, nonce_start, nonce_offset, &job_rx,
+                        ) {
+                            Some(new_job) => current_job = new_job,
+                            None => break,
+                        }
+                    }
                 }
             });
 
@@ -342,7 +351,9 @@ fn worker_loop(
     }
 }
 
-/// Mine a single job using the Rust RandomXVM wrapper (light mode)
+/// Mine a single job using the Rust RandomXVM wrapper (light mode).
+/// Checks for new jobs periodically so workers can switch to updated templates.
+/// Returns Some(new_job) if a new job arrived, None if mining was stopped.
 fn mine_job_rust(
     vm: &mut RandomXVM,
     job: &MiningJob,
@@ -351,12 +362,18 @@ fn mine_job_rust(
     result_tx: &mpsc::Sender<FoundBlock>,
     nonce_start: u32,
     nonce_offset: usize,
-) {
+    job_rx: &mpsc::Receiver<MiningJob>,
+) -> Option<MiningJob> {
     let mut nonce = nonce_start;
 
     loop {
         if !running.load(Ordering::Relaxed) {
-            break;
+            return None;
+        }
+
+        // Check for new job every iteration (try_recv is non-blocking)
+        if let Ok(new_job) = job_rx.try_recv() {
+            return Some(new_job);
         }
 
         let mut blob = job.hashing_blob.clone();
@@ -387,7 +404,7 @@ fn mine_job_rust(
 
         nonce = nonce.wrapping_add(1);
         if nonce == nonce_start {
-            break;
+            return None;
         }
     }
 }

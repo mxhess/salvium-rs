@@ -1,29 +1,32 @@
 /**
- * RandomX Worker Thread
+ * Pure JS RandomX Mining Worker
  *
- * This file runs in a separate thread/worker.
- * Each worker maintains its own RandomX VM instance.
+ * Uses the hand-written JavaScript RandomX VM (not the vendor WASM JIT).
+ * Each worker initializes its own 256MB Argon2d cache and RandomX VM.
  *
- * The mine handler uses async chunked processing so it can be
- * cancelled by sending a new mine/cancel message without requiring
- * worker termination.
+ * Message protocol is identical to randomx-worker.js for compatibility.
  */
 
 import { parentPort, workerData } from 'worker_threads';
-import { randomx_init_cache, randomx_create_vm } from './vendor/index.js';
 
 let vm = null;
-let cacheKey = null;
-let currentMineGeneration = 0; // Incremented on each new mine request
+let cache = null;
+let blake2bFn = null;
+let currentMineGeneration = 0;
 
 parentPort.on('message', async (msg) => {
   const { type, id, key, input } = msg;
 
   if (type === 'init') {
     try {
-      const cache = randomx_init_cache(key);
-      vm = randomx_create_vm(cache);
-      cacheKey = key;
+      const { RandomXCache } = await import('./dataset.js');
+      const { RandomXVM } = await import('./vm.js');
+      const { blake2b } = await import('../blake2b.js');
+      blake2bFn = blake2b;
+
+      cache = new RandomXCache();
+      cache.init(key);
+      vm = new RandomXVM(cache);
       parentPort.postMessage({ type: 'ready', id });
     } catch (err) {
       parentPort.postMessage({ type: 'error', id, error: err.message });
@@ -34,18 +37,7 @@ parentPort.on('message', async (msg) => {
       return;
     }
     try {
-      const hash = vm.calculate_hash(input);
-      parentPort.postMessage({ type: 'result', id, hash });
-    } catch (err) {
-      parentPort.postMessage({ type: 'error', id, error: err.message });
-    }
-  } else if (type === 'hashHex') {
-    if (!vm) {
-      parentPort.postMessage({ type: 'error', id, error: 'Worker not initialized' });
-      return;
-    }
-    try {
-      const hash = vm.calculate_hex_hash(input);
+      const hash = computeHash(input);
       parentPort.postMessage({ type: 'result', id, hash });
     } catch (err) {
       parentPort.postMessage({ type: 'error', id, error: err.message });
@@ -55,19 +47,20 @@ parentPort.on('message', async (msg) => {
       parentPort.postMessage({ type: 'error', id, error: 'Worker not initialized' });
       return;
     }
-    // Cancel any previous mine operation and start new one
     const generation = ++currentMineGeneration;
     mineChunked(input, id, generation);
   } else if (type === 'cancel') {
-    // Increment generation to cancel any running mine
     currentMineGeneration++;
   }
 });
 
-/**
- * Mine nonces in async chunks, yielding to the event loop periodically
- * so new messages (mine, cancel) can be processed.
- */
+function computeHash(input) {
+  const seed = blake2bFn(input, 64);
+  vm.initScratchpad(seed);
+  vm.run(seed);
+  return vm.getFinalResult();
+}
+
 async function mineChunked(input, id, generation) {
   try {
     const { template, nonceOffset, difficulty, startNonce, endNonce } = input;
@@ -76,18 +69,16 @@ async function mineChunked(input, id, generation) {
     const diffBig = BigInt(difficulty);
     const max256 = (1n << 256n) - 1n;
 
-    const CHUNK_SIZE = 50; // Yield every 50 hashes (~7s at 7 H/s)
+    const CHUNK_SIZE = 20; // Yield every 20 hashes (JS is ~0.5 H/s, so ~40s chunks)
     let hashCount = 0;
 
     for (let nonce = startNonce; nonce < endNonce; nonce++) {
-      // Check if this mine job was cancelled
       if (currentMineGeneration !== generation) return;
 
       view.setUint32(nonceOffset, nonce, true);
-      const hash = vm.calculate_hash(templateBuf);
+      const hash = computeHash(templateBuf);
       hashCount++;
 
-      // Check difficulty (little-endian, matching CryptoNote check_hash)
       let hashNum = 0n;
       for (let i = 31; i >= 0; i--) {
         hashNum = (hashNum << 8n) | BigInt(hash[i]);
@@ -99,7 +90,6 @@ async function mineChunked(input, id, generation) {
         return;
       }
 
-      // Yield to event loop periodically so we can receive cancel/new-mine messages
       if (hashCount % CHUNK_SIZE === 0) {
         await new Promise(r => setImmediate(r));
         if (currentMineGeneration !== generation) return;
