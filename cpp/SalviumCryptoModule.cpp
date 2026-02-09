@@ -8,7 +8,7 @@
  */
 
 #include "SalviumCryptoModule.h"
-#include "../../crates/salvium-crypto/include/salvium_crypto.h"
+#include "salvium_crypto.h"
 
 #include <jsi/jsi.h>
 #include <vector>

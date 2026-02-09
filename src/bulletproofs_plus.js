@@ -1082,13 +1082,18 @@ export function serializeProof(proof) {
   const { V, A, A1, B, r1, s1, d1, L, R } = proof;
 
   // Monero/Salvium binary format for BulletproofPlus:
+  //   varint(V.length), V[0..n] (32 bytes each)
   //   A (32), A1 (32), B (32)
   //   r1 (32), s1 (32), d1 (32)
   //   varint(L.length), L[0..n] (32 bytes each)
   //   varint(R.length), R[0..n] (32 bytes each)
-  // NOTE: V (commitments) are NOT serialized — they're restored via outPk
+  // Must match parseProof format for roundtrip compatibility.
 
   const chunks = [];
+
+  // V (commitments)
+  chunks.push(_encodeVarint(V.length));
+  for (const v of V) chunks.push(v.toBytes());
 
   // A, A1, B (points)
   chunks.push(A.toBytes());

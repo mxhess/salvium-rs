@@ -39,10 +39,9 @@ android {
         }
     }
 
-    // Pre-built Rust .so files
     sourceSets {
         main {
-            jniLibs.srcDirs = ["../../lib/android"]
+            jniLibs.srcDirs = ["../prebuilt/android"]
         }
     }
 }

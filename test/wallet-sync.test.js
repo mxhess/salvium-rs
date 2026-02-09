@@ -158,8 +158,8 @@ test('SYNC_STATUS has correct values', () => {
   assertEqual(SYNC_STATUS.ERROR, 'error');
 });
 
-test('DEFAULT_BATCH_SIZE is 10', () => {
-  assertEqual(DEFAULT_BATCH_SIZE, 10);
+test('DEFAULT_BATCH_SIZE is 100', () => {
+  assertEqual(DEFAULT_BATCH_SIZE, 100);
 });
 
 test('SYNC_UNLOCK_BLOCKS is 10', () => {

@@ -6,15 +6,16 @@
 #   Set ANDROID_NDK_HOME to your NDK path (e.g. ~/Android/Sdk/ndk/26.1.10909125)
 #
 # Produces:
-#   native/lib/android/arm64-v8a/libsalvium_crypto.so
-#   native/lib/android/armeabi-v7a/libsalvium_crypto.so
-#   native/lib/android/x86_64/libsalvium_crypto.so
+#   prebuilt/android/arm64-v8a/libsalvium_crypto.so
+#   prebuilt/android/armeabi-v7a/libsalvium_crypto.so
+#   prebuilt/android/x86_64/libsalvium_crypto.so
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CRATE_DIR="$SCRIPT_DIR/../crates/salvium-crypto"
-OUT_DIR="$SCRIPT_DIR/lib/android"
+ROOT_DIR="$SCRIPT_DIR/.."
+CRATE_DIR="$ROOT_DIR/crates/salvium-crypto"
+OUT_DIR="$ROOT_DIR/prebuilt/android"
 
 if [ -z "${ANDROID_NDK_HOME:-}" ]; then
   echo "Error: ANDROID_NDK_HOME is not set."
@@ -65,7 +66,7 @@ for target in "${!TARGET_ABI[@]}"; do
   cargo build --release --target "$target" --manifest-path "$CRATE_DIR/Cargo.toml"
 
   mkdir -p "$OUT_DIR/$abi"
-  cp "$CRATE_DIR/../../target/$target/release/libsalvium_crypto.so" \
+  cp "$CRATE_DIR/target/$target/release/libsalvium_crypto.so" \
      "$OUT_DIR/$abi/libsalvium_crypto.so"
 done
 

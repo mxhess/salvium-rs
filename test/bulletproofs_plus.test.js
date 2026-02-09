@@ -9,7 +9,7 @@ import {
   scalarToBytes,
   bytesToPoint,
   hashToScalar,
-  hashToPoint,
+  hashToPointMonero,
   initGenerators,
   initTranscript,
   parseProof,
@@ -152,9 +152,9 @@ test('hashToScalar produces different output for different input', () => {
   assertTrue(scalar1 !== scalar2, 'Different inputs should produce different outputs');
 });
 
-test('hashToPoint produces valid point', () => {
+test('hashToPointMonero produces valid point', () => {
   const data = new TextEncoder().encode('test data');
-  const point = hashToPoint(data);
+  const point = hashToPointMonero(data);
   assertExists(point);
   // Point should not be identity
   assertTrue(!point.equals(Point.ZERO), 'Should not be identity point');

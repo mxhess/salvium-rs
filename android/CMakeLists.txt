@@ -10,17 +10,18 @@ find_package(ReactAndroid REQUIRED CONFIG)
 # Pre-built Rust .so
 add_library(salvium_crypto SHARED IMPORTED)
 set_target_properties(salvium_crypto PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/../../lib/android/${ANDROID_ABI}/libsalvium_crypto.so"
+    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/../prebuilt/android/${ANDROID_ABI}/libsalvium_crypto.so"
 )
 
 # JSI bridge module
 add_library(${PROJECT_NAME} SHARED
-    ../../cpp/SalviumCryptoModule.cpp
+    ../cpp/SalviumCryptoModule.cpp
+    ../cpp/OnLoad.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
-    ../../cpp
-    ../../../../crates/salvium-crypto/include
+    ../cpp
+    ../crates/salvium-crypto/include
 )
 
 target_link_libraries(${PROJECT_NAME}

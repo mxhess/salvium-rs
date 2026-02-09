@@ -4,13 +4,14 @@
 # Prerequisites:
 #   rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 #
-# Produces: native/lib/ios/libsalvium_crypto.a (universal fat binary via lipo)
+# Produces: prebuilt/ios/libsalvium_crypto.a (universal fat binary via lipo)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CRATE_DIR="$SCRIPT_DIR/../crates/salvium-crypto"
-OUT_DIR="$SCRIPT_DIR/lib/ios"
+ROOT_DIR="$SCRIPT_DIR/.."
+CRATE_DIR="$ROOT_DIR/crates/salvium-crypto"
+OUT_DIR="$ROOT_DIR/prebuilt/ios"
 
 TARGETS=(
   aarch64-apple-ios         # Device (arm64)
@@ -31,7 +32,7 @@ mkdir -p "$OUT_DIR"
 # Collect all .a paths
 LIBS=()
 for target in "${TARGETS[@]}"; do
-  LIBS+=("$CRATE_DIR/../../target/$target/release/libsalvium_crypto.a")
+  LIBS+=("$CRATE_DIR/target/$target/release/libsalvium_crypto.a")
 done
 
 lipo -create "${LIBS[@]}" -output "$OUT_DIR/libsalvium_crypto.a"

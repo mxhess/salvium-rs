@@ -352,9 +352,9 @@ test('buildTransaction with no change (exact amount)', () => {
     fee
   });
 
-  // No change when amounts match exactly
-  assertEqual(tx.prefix.vout.length, 1, 'Should have only 1 output when no change');
-  assertEqual(tx._meta.changeIndex, -1, 'Change index should be -1');
+  // Change output is always added for privacy (even with 0 amount)
+  assertEqual(tx.prefix.vout.length, 2, 'Should have 2 outputs (destination + zero-change)');
+  assertEqual(tx._meta.changeIndex, -1, 'Change index should be -1 for zero change');
 });
 
 test('buildTransaction with multiple inputs', () => {
