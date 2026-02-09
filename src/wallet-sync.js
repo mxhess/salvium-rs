@@ -126,9 +126,14 @@ export class WalletSync {
     this.keys = options.keys ? _normalizeKeys(options.keys) : options.keys;
     this.carrotKeys = options.carrotKeys || null;
     this.subaddresses = options.subaddresses || new Map();
-    // Always include the primary address in subaddress map
-    if (this.keys?.spendPublicKey && !this.subaddresses.has(this.keys.spendPublicKey)) {
-      this.subaddresses.set(this.keys.spendPublicKey, { major: 0, minor: 0 });
+    // Always include the primary address in subaddress map (as hex string for consistent lookup)
+    if (this.keys?.spendPublicKey) {
+      const spendPubHex = this.keys.spendPublicKey instanceof Uint8Array
+        ? bytesToHex(this.keys.spendPublicKey)
+        : this.keys.spendPublicKey;
+      if (!this.subaddresses.has(spendPubHex)) {
+        this.subaddresses.set(spendPubHex, { major: 0, minor: 0 });
+      }
     }
     this.carrotSubaddresses = options.carrotSubaddresses || new Map();
     this.batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
@@ -536,33 +541,34 @@ export class WalletSync {
     const version = parsedTx.prefix?.version ?? 1;
     const rctType = parsedTx.rct?.type ?? 0;
 
-    // For v1 transactions: hash = keccak256(blob)
+    // _blockOffset is set by parseBlock; for standalone tx blobs it's 0
+    const txStart = parsedTx._blockOffset ?? 0;
+    const prefixEnd = parsedTx._prefixEndOffset ?? parsedTx._bytesRead;
+
+    // For v1 transactions: hash = keccak256(full tx blob)
     if (version < 2) {
-      // Can't easily extract the raw blob from blockBlob without offset tracking
-      // Fall back — this case is extremely rare on Salvium
-      return null;
+      try {
+        const txBytes = blockBlob.slice(txStart, txStart + parsedTx._bytesRead);
+        const hash = cnFastHash(txBytes);
+        return bytesToHex(hash instanceof Uint8Array ? hash : hexToBytes(hash));
+      } catch (e) {
+        return null;
+      }
     }
 
     // For v2+ with RCTTypeNull (coinbase, protocol):
-    // The blob is: prefix_bytes || 0x00 (rct type null)
-    // prefix_hash = keccak256(prefix_bytes)
-    // rct_base_hash = keccak256([0x00]) = constant
-    // prunable_hash = keccak256([]) = constant
+    // prefix_hash = keccak256(raw prefix bytes from blob)
+    // rct_base_hash = keccak256([0x00])
+    // prunable_hash = keccak256([])
+    // tx_hash = keccak256(prefix_hash || rct_base_hash || prunable_hash)
     if (rctType === 0) {
-      // We need prefix bytes. parseTransaction gives _bytesRead for the entire tx.
-      // For RCTTypeNull, the prefix ends 1 byte before the end (the 0x00 rct type).
-      // But we don't have the raw tx blob slice here directly.
-      // Use the prefix serialization approach instead.
       try {
-        const prefixHash = this._hashTxPrefix(parsedTx);
-        if (!prefixHash) return null;
+        const prefixBytes = blockBlob.slice(txStart, txStart + prefixEnd);
+        const prefixHash = cnFastHash(prefixBytes);
 
-        // keccak256([0x00]) — rct_base hash for type null
         const rctBaseHash = cnFastHash(new Uint8Array([0x00]));
-        // keccak256([]) — prunable hash (empty)
         const prunableHash = cnFastHash(new Uint8Array(0));
 
-        // Final: hash = keccak256(prefix_hash || rct_base_hash || prunable_hash)
         const combined = new Uint8Array(96);
         combined.set(prefixHash instanceof Uint8Array ? prefixHash : hexToBytes(prefixHash), 0);
         combined.set(rctBaseHash instanceof Uint8Array ? rctBaseHash : hexToBytes(rctBaseHash), 32);
@@ -577,19 +583,6 @@ export class WalletSync {
     // For non-null RCT types, we'd need to split rct_base and rct_prunable.
     // Skip — these won't appear in miner_tx/protocol_tx.
     return null;
-  }
-
-  /**
-   * Hash a transaction prefix by re-serializing it.
-   * @private
-   */
-  _hashTxPrefix(parsedTx) {
-    try {
-      const prefixBytes = serializeTxPrefix(parsedTx);
-      return cnFastHash(prefixBytes);
-    } catch (e) {
-      return null;
-    }
   }
 
   /**

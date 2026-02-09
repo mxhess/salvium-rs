@@ -269,7 +269,7 @@ export function parseTransaction(data) {
 
   // For v1 transactions, we're done
   if (version === 1) {
-    return { prefix, _bytesRead: offset };
+    return { prefix, _bytesRead: offset, _prefixEndOffset: offset };
   }
 
   // Track prefix end offset for _bytesRead calculation
@@ -285,7 +285,7 @@ export function parseTransaction(data) {
   const rctEndOffset = rct._endOffset || (prefixEndOffset + 1); // fallback to prefix + 1 byte for Null type
   delete rct._endOffset; // Clean up internal field
 
-  return { prefix, rct, _bytesRead: rctEndOffset };
+  return { prefix, rct, _bytesRead: rctEndOffset, _prefixEndOffset: prefixEndOffset };
 }
 
 // =============================================================================
@@ -1147,13 +1147,17 @@ export function parseBlock(data) {
   // ============================================
 
   // Parse miner_tx (coinbase transaction)
+  const minerTxStartOffset = offset;
   const minerTxData = data.slice(offset);
   const minerTx = parseTransaction(minerTxData);
+  minerTx._blockOffset = minerTxStartOffset;
   offset += minerTx._bytesRead || estimateTransactionSize(minerTxData);
 
   // Parse protocol_tx (Salvium-specific transaction)
+  const protocolTxStartOffset = offset;
   const protocolTxData = data.slice(offset);
   const protocolTx = parseTransaction(protocolTxData);
+  protocolTx._blockOffset = protocolTxStartOffset;
   offset += protocolTx._bytesRead || estimateTransactionSize(protocolTxData);
 
   // Parse tx_hashes vector
