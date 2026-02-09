@@ -42,5 +42,7 @@ export {
 } from './provider.js';
 
 // Backends (for direct access / testing)
+// Note: WasmCryptoBackend is NOT re-exported here because it uses import.meta
+// which is incompatible with React Native/Hermes. Import it directly:
+//   import { WasmCryptoBackend } from 'salvium-js/src/crypto/backend-wasm.js';
 export { JsCryptoBackend } from './backend-js.js';
-export { WasmCryptoBackend } from './backend-wasm.js';

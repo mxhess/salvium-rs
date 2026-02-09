@@ -28,10 +28,15 @@ export async function setCryptoBackend(type) {
     currentBackend = new JsCryptoBackend();
     await currentBackend.init();
   } else if (type === 'wasm') {
-    // Dynamic import to avoid loading WASM unless requested
-    const { WasmCryptoBackend } = await import('./backend-wasm.js');
-    currentBackend = new WasmCryptoBackend();
-    await currentBackend.init();
+    // Dynamic import() is not supported in React Native/Hermes.
+    // In Node/Bun, import backend-wasm.js directly:
+    //   import { WasmCryptoBackend } from './backend-wasm.js';
+    //   const backend = new WasmCryptoBackend(); await backend.init();
+    throw new Error(
+      "WASM backend cannot be loaded via setCryptoBackend() — dynamic import() " +
+      "is not available in all runtimes (e.g. Hermes). In Node/Bun, import " +
+      "WasmCryptoBackend from './crypto/backend-wasm.js' directly."
+    );
   } else {
     throw new Error(`Unknown crypto backend: ${type}. Use 'js' or 'wasm'.`);
   }
