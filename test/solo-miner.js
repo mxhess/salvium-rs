@@ -23,6 +23,7 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { DaemonRPC } from '../src/rpc/daemon.js';
+import { randomx_init_cache } from '../src/randomx/vendor/index.js';
 import {
   findNonceOffset, formatBlockForSubmission, formatHashrate, formatDuration
 } from '../src/mining.js';
@@ -112,9 +113,20 @@ class WorkerMinerPool {
     // Terminate old workers if re-initializing
     this.terminate();
 
+    // Initialize cache ONCE with shared memory (256MB total, not 256MB per worker)
+    const cache = randomx_init_cache(seedBytes, { shared: true });
+
     const initPromises = [];
     for (let i = 0; i < this.numThreads; i++) {
-      const worker = new Worker(this.workerPath);
+      // Workers receive shared cache via workerData — no per-worker init needed
+      const worker = new Worker(this.workerPath, {
+        workerData: {
+          id: i,
+          memory: cache.memory,
+          thunk: cache.thunk,
+          vm: cache.vm,
+        }
+      });
       this.workers.push(worker);
 
       const p = new Promise((resolve, reject) => {
@@ -130,14 +142,13 @@ class WorkerMinerPool {
         worker.on('error', reject);
       });
 
-      worker.postMessage({ type: 'init', id: i, key: seedBytes });
       initPromises.push(p);
     }
 
     await Promise.all(initPromises);
     this.ready = true;
 
-    console.log(`  ${this.numThreads} WASM-JIT workers initialized (${this.numThreads * 256}MB total)`);
+    console.log(`  ${this.numThreads} WASM-JIT workers initialized (256MB shared cache)`);
   }
 
   /**

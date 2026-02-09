@@ -78,9 +78,6 @@
   "engines": {
     "bun": ">=1.0.0"
   },
-  "browser": {
-    "./src/keccak.js": "./src/keccak.browser.js"
-  },
   "dependencies": {
     "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.0.1",

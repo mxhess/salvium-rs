@@ -1,8 +1,10 @@
 /**
  * RandomX Worker Thread (WASM-JIT)
  *
- * Each worker maintains its own RandomX VM instance (256MB cache).
- * Uses async chunked mining with generation-based cancellation.
+ * Supports two initialization modes:
+ * 1. Shared cache: receives WebAssembly.Memory + Modules via workerData
+ *    (one 256MB cache shared across all workers — correct light mode usage)
+ * 2. Standalone: each worker creates its own cache via 'init' message
  *
  * Performance optimizations:
  * - Precomputed target for byte-level difficulty comparison (no BigInt per hash)
@@ -10,17 +12,39 @@
  * - Periodic progress reporting
  */
 
-import { parentPort } from 'worker_threads';
+import { parentPort, workerData } from 'worker_threads';
 import { randomx_init_cache, randomx_create_vm } from './vendor/index.js';
 
 let vm = null;
 let cacheKey = null;
 let currentMineGeneration = 0;
 
+// ─── Shared cache init (via workerData) ──────────────────────────────────────
+// If workerData contains shared cache components, create VM immediately.
+// The cache memory is a SharedArrayBuffer — all workers read from the same 256MB.
+if (workerData?.memory && workerData?.thunk && workerData?.vm) {
+  try {
+    const cache = {
+      memory: workerData.memory,
+      thunk: workerData.thunk,
+      vm: workerData.vm,
+      shared: true,
+    };
+    vm = randomx_create_vm(cache);
+    // Signal ready after event loop starts
+    queueMicrotask(() => parentPort.postMessage({ type: 'ready', id: workerData.id ?? 0 }));
+  } catch (err) {
+    queueMicrotask(() => parentPort.postMessage({ type: 'error', id: 0, error: err.message }));
+  }
+}
+
+// ─── Message handler ─────────────────────────────────────────────────────────
+
 parentPort.on('message', async (msg) => {
   const { type, id, key, input } = msg;
 
   if (type === 'init') {
+    // Standalone mode: create own cache (256MB per worker)
     try {
       const cache = randomx_init_cache(key);
       vm = randomx_create_vm(cache);
@@ -108,10 +132,8 @@ async function mineChunked(input, id, jobId, generation) {
     // Precompute target once (no BigInt per hash)
     const target = computeTarget(difficulty);
 
-    // Yield every 500 hashes (~70s at 7 H/s light mode).
-    // Cancellation response time is bounded by chunk duration.
     const CHUNK_SIZE = 500;
-    const PROGRESS_INTERVAL = 100; // Report progress every 100 hashes
+    const PROGRESS_INTERVAL = 100;
     let hashCount = 0;
 
     for (let nonce = startNonce; nonce < endNonce; nonce++) {
@@ -127,12 +149,10 @@ async function mineChunked(input, id, jobId, generation) {
         return;
       }
 
-      // Report progress periodically
       if (hashCount % PROGRESS_INTERVAL === 0) {
         parentPort.postMessage({ type: 'progress', id, jobId, hashCount });
       }
 
-      // Yield to event loop periodically for cancel/new-mine messages
       if (hashCount % CHUNK_SIZE === 0) {
         await new Promise(r => setImmediate(r));
         if (currentMineGeneration !== generation) return;
