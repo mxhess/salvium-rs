@@ -97,6 +97,7 @@ class MockDaemon {
   async getBlock(opts) {
     const height = opts.height;
     this.callLog.push(`getBlock(${height})`);
+    const txHashes = this.blocks[height]?.txHashes || [];
     return {
       success: true,
       result: {
@@ -105,7 +106,11 @@ class MockDaemon {
           hash: `block_hash_${height}`,
           timestamp: 1700000000 + height * 120
         },
-        tx_hashes: this.blocks[height]?.txHashes || [],
+        json: JSON.stringify({
+          miner_tx: { version: 2, unlock_time: height + 60, vin: [{ gen: { height } }], vout: [], extra: [] },
+          tx_hashes: txHashes
+        }),
+        tx_hashes: txHashes,
         miner_tx_hash: `miner_tx_${height}`
       }
     };
@@ -153,8 +158,8 @@ test('SYNC_STATUS has correct values', () => {
   assertEqual(SYNC_STATUS.ERROR, 'error');
 });
 
-test('DEFAULT_BATCH_SIZE is 100', () => {
-  assertEqual(DEFAULT_BATCH_SIZE, 100);
+test('DEFAULT_BATCH_SIZE is 10', () => {
+  assertEqual(DEFAULT_BATCH_SIZE, 10);
 });
 
 test('SYNC_UNLOCK_BLOCKS is 10', () => {
