@@ -31,7 +31,7 @@ import {
 /**
  * Default number of blocks to fetch per batch
  */
-export const DEFAULT_BATCH_SIZE = 10;
+export const DEFAULT_BATCH_SIZE = 100;
 
 /**
  * Minimum batch size (floor)
@@ -1290,6 +1290,16 @@ export class WalletSync {
     const ownedOutputs = [];
     const outputs = tx.prefix?.vout || tx.outputs || [];
 
+    // Pre-compute key derivation once per tx (expensive Ed25519 point multiply)
+    // Derivation only depends on txPubKey + viewSecretKey, not output index
+    let cnDerivation = null;
+    if (txPubKey && this.keys?.viewSecretKey) {
+      try {
+        cnDerivation = generateKeyDerivation(txPubKey, this.keys.viewSecretKey);
+      } catch (e) {
+        // Invalid txPubKey — skip CN scanning for this tx
+      }
+    }
 
     for (let i = 0; i < outputs.length; i++) {
       const output = outputs[i];
@@ -1306,14 +1316,14 @@ export class WalletSync {
       if (isCarrotOutput && this.carrotKeys) {
         // CARROT scanning - pass txPubKey (D_e) from tx_extra
         scanResult = await this._scanCarrotOutput(output, i, tx, txHash, txPubKey, header);
-      } else if (txPubKey && this.keys.viewSecretKey) {
-        // CryptoNote (legacy) scanning
+      } else if (cnDerivation) {
+        // CryptoNote (legacy) scanning with pre-computed derivation
         // Skip if output is CARROT type but we couldn't scan it (missing carrotKeys or failed scan)
         if (output.type === 0x04) {
           continue; // CARROT output - don't try CN scanning
         }
         try {
-          scanResult = await this._scanCNOutput(output, i, tx, txHash, txPubKey, header);
+          scanResult = await this._scanCNOutput(output, i, tx, txHash, txPubKey, header, cnDerivation);
         } catch (e) {
           // Key derivation can fail for malformed outputs - skip silently
           continue;
@@ -1603,15 +1613,15 @@ export class WalletSync {
    * Uses subaddress map lookup (matches C++ wallet behavior)
    * @private
    */
-  async _scanCNOutput(output, outputIndex, tx, txHash, txPubKey, header) {
+  async _scanCNOutput(output, outputIndex, tx, txHash, txPubKey, header, precomputedDerivation) {
 
     const outputPubKey = this._extractOutputPubKey(output);
     if (!outputPubKey) {
       return null;
     }
 
-    // Compute key derivation: D = 8 * viewSecretKey * txPubKey
-    const derivation = generateKeyDerivation(txPubKey, this.keys.viewSecretKey);
+    // Use pre-computed derivation if available, otherwise compute per-output
+    const derivation = precomputedDerivation || generateKeyDerivation(txPubKey, this.keys.viewSecretKey);
     if (!derivation) {
       return null;
     }

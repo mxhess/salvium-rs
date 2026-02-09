@@ -1,0 +1,52 @@
+// ExpoSalviumCrypto — Android build config
+// Links the Rust-compiled .so + C++ JSI module
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.1.0"
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace "com.salvium.crypto"
+    compileSdkVersion 34
+
+    defaultConfig {
+        minSdkVersion 21
+        targetSdkVersion 34
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -fexceptions"
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "CMakeLists.txt"
+        }
+    }
+
+    // Pre-built Rust .so files
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["../../lib/android"]
+        }
+    }
+}
+
+dependencies {
+    implementation "com.facebook.react:react-android"
+}

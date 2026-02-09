@@ -7,6 +7,9 @@ use curve25519_dalek::traits::VartimeMultiscalarMul;
 
 mod elligator2;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod ffi;
+
 /// Keccak-256 hash (CryptoNote variant with 0x01 padding, NOT SHA3)
 /// Matches Salvium C++ cn_fast_hash / keccak()
 #[wasm_bindgen]

@@ -46,3 +46,4 @@ export {
 // which is incompatible with React Native/Hermes. Import it directly:
 //   import { WasmCryptoBackend } from 'salvium-js/src/crypto/backend-wasm.js';
 export { JsCryptoBackend } from './backend-js.js';
+export { JsiCryptoBackend } from './backend-jsi.js';
