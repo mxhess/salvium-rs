@@ -153,6 +153,21 @@ int32_t salvium_verify_signature(
     const uint8_t *signature, size_t sig_len,
     const uint8_t *pubkey_der, size_t key_len);
 
+/* ─── Key Derivation ───────────────────────────────────────────────────────── */
+
+/**
+ * Argon2id key derivation.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_argon2id(
+    const uint8_t *password, size_t password_len,
+    const uint8_t *salt, size_t salt_len,
+    uint32_t t_cost,      /* time cost (iterations/passes) */
+    uint32_t m_cost,      /* memory cost in KiB */
+    uint32_t parallelism, /* number of lanes */
+    size_t out_len,       /* desired output length in bytes (typically 32) */
+    uint8_t *out);
+
 #ifdef __cplusplus
 }
 #endif

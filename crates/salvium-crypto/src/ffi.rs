@@ -385,6 +385,40 @@ pub unsafe extern "C" fn salvium_verify_signature(
     crate::verify_signature(message, signature, pubkey_der)
 }
 
+// ─── Key Derivation ─────────────────────────────────────────────────────────
+
+/// Argon2id key derivation.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_argon2id(
+    password: *const u8,
+    password_len: usize,
+    salt: *const u8,
+    salt_len: usize,
+    t_cost: u32,
+    m_cost: u32,
+    parallelism: u32,
+    out_len: usize,
+    out: *mut u8,
+) -> i32 {
+    use argon2::{Argon2, Algorithm, Version, Params};
+
+    let password = slice::from_raw_parts(password, password_len);
+    let salt = slice::from_raw_parts(salt, salt_len);
+    let out = std::slice::from_raw_parts_mut(out, out_len);
+
+    let params = match Params::new(m_cost, t_cost, parallelism, Some(out_len)) {
+        Ok(p) => p,
+        Err(_) => return -1,
+    };
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    match argon2.hash_password_into(password, salt, out) {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -796,6 +830,51 @@ mod tests {
             )
         };
         assert_eq!(rc, 0); // invalid → 0
+    }
+
+    #[test]
+    fn test_argon2id() {
+        // Argon2id test: same params as RFC 9106 Section 4 but without
+        // secret/AD (which our FFI doesn't expose, matching wallet usage).
+        let password = [0x01u8; 32];
+        let salt = [0x02u8; 16];
+        // Known-good output from argon2 crate v0.5 (Argon2id, t=3, m=32, p=4)
+        let expected: [u8; 32] = [
+            0x03, 0xaa, 0xb9, 0x65, 0xc1, 0x20, 0x01, 0xc9,
+            0xd7, 0xd0, 0xd2, 0xde, 0x33, 0x19, 0x2c, 0x04,
+            0x94, 0xb6, 0x84, 0xbb, 0x14, 0x81, 0x96, 0xd7,
+            0x3c, 0x1d, 0xf1, 0xac, 0xaf, 0x6d, 0x0c, 0x2e,
+        ];
+        let mut out = [0u8; 32];
+        let rc = unsafe {
+            salvium_argon2id(
+                password.as_ptr(), password.len(),
+                salt.as_ptr(), salt.len(),
+                3,  // t_cost
+                32, // m_cost (32 KiB — tiny, just for test)
+                4,  // parallelism
+                32, // out_len
+                out.as_mut_ptr(),
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(out, expected, "Argon2id FFI output mismatch");
+    }
+
+    #[test]
+    fn test_argon2id_bad_params() {
+        // Invalid params (m_cost=0) should return -1
+        let password = b"test";
+        let salt = [0u8; 16];
+        let mut out = [0u8; 32];
+        let rc = unsafe {
+            salvium_argon2id(
+                password.as_ptr(), password.len(),
+                salt.as_ptr(), salt.len(),
+                1, 0, 1, 32, out.as_mut_ptr(),
+            )
+        };
+        assert_eq!(rc, -1);
     }
 
     #[test]

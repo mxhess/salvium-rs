@@ -135,4 +135,10 @@ export class JsiCryptoBackend {
     // Native module returns 1 for valid, 0 for invalid
     return this.native.verifySignature(message, signature, pubkeyDer) === 1;
   }
+
+  // ─── Key Derivation ─────────────────────────────────────────────────────
+
+  async argon2id(password, salt, tCost, mCost, parallelism, outLen) {
+    return this.native.argon2id(password, salt, tCost, mCost, parallelism, outLen);
+  }
 }

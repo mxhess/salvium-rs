@@ -395,18 +395,28 @@ async function phase4_sal1TxTests(daemon, daemonUrl, walletA, walletB) {
 async function phase5_mineToCarrot(daemon, daemonUrl, walletA) {
   console.log(`\n═══ Phase 5: Mine to CARROT (target height ${TARGET.CARROT_MATURE}) ═══`);
   const t0 = performance.now();
-  const address = walletA.getLegacyAddress();
+  const legacyAddr = walletA.getLegacyAddress();
+  const carrotAddr = walletA.getCarrotAddress();
 
-  // Rust fill to CARROT activation + maturity
-  await mineTo(daemon, TARGET.CARROT_MATURE, address, daemonUrl, 'rust');
+  // Mine up to HF10 boundary (1100) with legacy address
+  const HF10_HEIGHT = 1100;
+  const currentHeight = await getDaemonHeight(daemon);
+  if (currentHeight < HF10_HEIGHT) {
+    console.log(`  Mining to HF10 boundary (${HF10_HEIGHT}) with legacy address...`);
+    await mineTo(daemon, HF10_HEIGHT, legacyAddr, daemonUrl, 'rust');
+  }
+
+  // After HF10: daemon requires CARROT address for coinbase outputs
+  console.log(`  Switching to CARROT address for post-HF10 mining`);
+  await mineTo(daemon, TARGET.CARROT_MATURE, carrotAddr, daemonUrl, 'rust');
 
   // WASM probe 2: mine 3 blocks in the CARROT era to validate WASM still works
-  const currentHeight = await getDaemonHeight(daemon);
+  const postHeight = await getDaemonHeight(daemon);
   console.log('\n  ── WASM Probe 2 (CARROT era) ──');
-  await mineTo(daemon, currentHeight + WASM_PROBE_BLOCKS, address, daemonUrl, 'wasm');
+  await mineTo(daemon, postHeight + WASM_PROBE_BLOCKS, carrotAddr, daemonUrl, 'wasm');
 
   // Mine a few more for maturity
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS + 2, address, daemonUrl, 'rust');
+  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS + 2, carrotAddr, daemonUrl, 'rust');
 
   const finalHeight = await getDaemonHeight(daemon);
   const hfVer = getHfVersionForHeight(finalHeight, NETWORK_ID.TESTNET);
@@ -429,8 +439,8 @@ async function phase6_carrotTxTests(daemon, daemonUrl, walletA, walletB) {
   await doTransfer(walletA, walletB, sal(2), 'CARROT A→B 2 SAL');
   await doTransfer(walletA, walletB, sal(5), 'CARROT A→B 5 SAL');
 
-  // Mine maturity so B can spend
-  const address = walletA.getLegacyAddress();
+  // Mine maturity so B can spend (CARROT address required post-HF10)
+  const address = walletA.getCarrotAddress();
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
@@ -551,7 +561,8 @@ async function phaseExtra_mine(daemon, daemonUrl, walletA) {
     return;
   }
   console.log(`\n═══ Extra: Mine to ${TARGET.FINAL} ═══`);
-  const address = walletA.getLegacyAddress();
+  // Post-HF10: use CARROT address for coinbase outputs
+  const address = currentHeight >= 1100 ? walletA.getCarrotAddress() : walletA.getLegacyAddress();
   await mineTo(daemon, TARGET.FINAL, address, daemonUrl, 'rust');
 }
 
