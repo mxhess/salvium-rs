@@ -2,7 +2,7 @@
  * JSI Crypto Backend
  *
  * Calls native Rust crypto via React Native JSI (C++ bridge).
- * The native module installs `global.__SalviumCrypto` at app startup.
+ * The native module installs `globalThis.__SalviumCrypto` at app startup.
  * This backend provides the same interface as JS and WASM backends.
  *
  * @module crypto/backend-jsi
@@ -28,13 +28,13 @@ export class JsiCryptoBackend {
   }
 
   async init() {
-    if (!global.__SalviumCrypto) {
+    if (!globalThis.__SalviumCrypto) {
       throw new Error(
-        'JSI backend not available: global.__SalviumCrypto is not installed. ' +
+        'JSI backend not available: globalThis.__SalviumCrypto is not installed. ' +
         'Ensure the native SalviumCrypto module is linked and initialized.'
       );
     }
-    this.native = global.__SalviumCrypto;
+    this.native = globalThis.__SalviumCrypto;
   }
 
   // ─── Hashing ────────────────────────────────────────────────────────────
