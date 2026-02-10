@@ -135,6 +135,24 @@ int32_t salvium_zero_commit(
 int32_t salvium_gen_commitment_mask(
     const uint8_t *secret /* 32 */, uint8_t *out /* 32 */);
 
+/* ─── Oracle Signature Verification ───────────────────────────────────────── */
+
+/** SHA-256 hash */
+int32_t salvium_sha256(
+    const uint8_t *data, size_t data_len,
+    uint8_t *out /* 32 */);
+
+/**
+ * Verify signature against DER-encoded SPKI public key.
+ * Supports ECDSA P-256 (testnet) and DSA (mainnet).
+ * Message is hashed with SHA-256 internally.
+ * Returns 1 for valid, 0 for invalid/error.
+ */
+int32_t salvium_verify_signature(
+    const uint8_t *message, size_t msg_len,
+    const uint8_t *signature, size_t sig_len,
+    const uint8_t *pubkey_der, size_t key_len);
+
 #ifdef __cplusplus
 }
 #endif

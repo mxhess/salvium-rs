@@ -306,17 +306,17 @@ describe('Pricing Record Validation', () => {
 
   describe('validatePricingRecord', () => {
 
-    test('empty record is always valid', () => {
+    test('empty record is always valid', async () => {
       const pr = createEmptyPricingRecord();
-      const result = validatePricingRecord(pr);
+      const result = await validatePricingRecord(pr);
       expect(result.valid).toBe(true);
     });
 
-    test('non-empty record requires HF >= HF_VERSION_SLIPPAGE_YIELD', () => {
+    test('non-empty record requires HF >= HF_VERSION_SLIPPAGE_YIELD', async () => {
       const pr = createMockPricingRecord();
 
       // Before HF
-      const result1 = validatePricingRecord(pr, { hfVersion: 5 });
+      const result1 = await validatePricingRecord(pr, { hfVersion: 5 });
       expect(result1.valid).toBe(false);
       expect(result1.error).toContain('not allowed before oracle HF');
 
@@ -324,14 +324,14 @@ describe('Pricing Record Validation', () => {
       // Just testing the HF gate here
     });
 
-    test('rejects timestamp too far in future', () => {
+    test('rejects timestamp too far in future', async () => {
       const pr = createMockPricingRecord();
       const currentTime = Math.floor(Date.now() / 1000);
 
       // Set timestamp 200 seconds in future (> 120 seconds allowed)
       pr.timestamp = currentTime + 200;
 
-      const result = validatePricingRecord(pr, {
+      const result = await validatePricingRecord(pr, {
         hfVersion: 255,
         blockTimestamp: currentTime
       });
@@ -340,14 +340,14 @@ describe('Pricing Record Validation', () => {
       // but if we had a valid signature, timestamp would be checked
     });
 
-    test('rejects timestamp older than previous block', () => {
+    test('rejects timestamp older than previous block', async () => {
       const pr = createMockPricingRecord();
       const currentTime = Math.floor(Date.now() / 1000);
 
       // Set timestamp older than last block
       pr.timestamp = currentTime - 100;
 
-      const result = validatePricingRecord(pr, {
+      const result = await validatePricingRecord(pr, {
         hfVersion: 255,
         blockTimestamp: currentTime,
         lastBlockTimestamp: currentTime - 50  // Previous block was 50 seconds ago

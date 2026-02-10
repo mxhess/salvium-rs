@@ -83,31 +83,31 @@ export class ConnectionManager {
     this._racing = true;
 
     try {
-      const results = await Promise.allSettled(
+      const results = await Promise.all(
         this.urls.map(async (url) => {
           const start = Date.now();
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), this.raceTimeout);
 
           try {
-            const resp = await fetch(`${url.replace(/\/+$/, '')}/get_info`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: '{}',
-              signal: controller.signal,
-            });
-            clearTimeout(timer);
+            const resp = await Promise.race([
+              fetch(`${url.replace(/\/+$/, '')}/get_info`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+              }),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Race timeout')), this.raceTimeout)
+              ),
+            ]);
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             await resp.json(); // consume body
 
             const latency = Date.now() - start;
             this._latencies.set(url, latency);
-            return { url, latency };
+            return { status: 'fulfilled', value: { url, latency } };
           } catch (e) {
-            clearTimeout(timer);
             this._latencies.set(url, Infinity);
-            throw e;
+            return { status: 'rejected', reason: e };
           }
         })
       );

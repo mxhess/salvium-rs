@@ -245,14 +245,10 @@ test('multiScalarMul with empty arrays', () => {
 console.log('\n--- Proof Parsing Tests ---');
 
 test('parseProof extracts correct structure', () => {
-  // Build a proof in Salvium binary format:
-  // varint(V.len), V[], A, A1, B, r1, s1, d1, varint(L.len), L[], varint(R.len), R[]
+  // Build a proof in Salvium binary format (V is NOT serialized — restored from outPk):
+  // A, A1, B, r1, s1, d1, varint(L.len), L[], varint(R.len), R[]
   const baseBytes = Point.BASE.toBytes();
   const chunks = [];
-
-  // V: 1 commitment
-  chunks.push(new Uint8Array([1])); // varint(1)
-  chunks.push(baseBytes);
 
   // A, A1, B
   chunks.push(baseBytes);
@@ -286,7 +282,6 @@ test('parseProof extracts correct structure', () => {
   assertExists(proof.A);
   assertExists(proof.A1);
   assertExists(proof.B);
-  assertEqual(proof.V.length, 1);
   assertEqual(proof.r1, 1n);
   assertEqual(proof.s1, 2n);
   assertEqual(proof.d1, 3n);
@@ -467,9 +462,9 @@ test('serializeProof produces correct size', () => {
   const proof = proveRange(amount, mask);
   const bytes = serializeProof(proof);
 
-  // Salvium binary format: varint(V.len) + V + A + A1 + B + r1 + s1 + d1 + varint(L.len) + L + varint(R.len) + R
-  // For single amount: 1 + 32 + 3*32 + 3*32 + 1 + 6*32 + 1 + 6*32 = 611 bytes
-  assertEqual(bytes.length, 611, 'Serialized proof should be 611 bytes');
+  // Salvium binary format (no V): A + A1 + B + r1 + s1 + d1 + varint(L.len) + L + varint(R.len) + R
+  // For single amount: 3*32 + 3*32 + 1 + 6*32 + 1 + 6*32 = 578 bytes
+  assertEqual(bytes.length, 578, 'Serialized proof should be 578 bytes');
 });
 
 test('serialized proof can be parsed and verified', () => {

@@ -32,15 +32,18 @@ export async function setCryptoBackend(type) {
     currentBackend = new JsiCryptoBackend();
     await currentBackend.init();
   } else if (type === 'wasm') {
-    // Dynamic import() is not supported in React Native/Hermes.
-    // In Node/Bun, import backend-wasm.js directly:
-    //   import { WasmCryptoBackend } from './backend-wasm.js';
-    //   const backend = new WasmCryptoBackend(); await backend.init();
-    throw new Error(
-      "WASM backend cannot be loaded via setCryptoBackend() — dynamic import() " +
-      "is not available in all runtimes (e.g. Hermes). In Node/Bun, import " +
-      "WasmCryptoBackend from './crypto/backend-wasm.js' directly."
-    );
+    // Dynamic import() works in Node/Bun but not React Native/Hermes.
+    // On Hermes, use 'jsi' backend instead.
+    try {
+      const { WasmCryptoBackend } = await import('./backend-wasm.js');
+      currentBackend = new WasmCryptoBackend();
+      await currentBackend.init();
+    } catch (e) {
+      throw new Error(
+        "WASM backend failed to load: " + e.message + ". " +
+        "On React Native/Hermes, use setCryptoBackend('jsi') instead."
+      );
+    }
   } else {
     throw new Error(`Unknown crypto backend: ${type}. Use 'js', 'wasm', or 'jsi'.`);
   }
@@ -110,6 +113,12 @@ export function deriveSecretKey(derivation, outputIndex, baseSec) { return getCr
 export function commit(amount, mask) { return getCryptoBackend().commit(amount, mask); }
 export function zeroCommit(amount) { return getCryptoBackend().zeroCommit(amount); }
 export function genCommitmentMask(sharedSecret) { return getCryptoBackend().genCommitmentMask(sharedSecret); }
+
+// Oracle signature verification
+export function sha256(data) { return getCryptoBackend().sha256(data); }
+export async function verifySignature(message, signature, pubkeyDer) {
+  return getCryptoBackend().verifySignature(message, signature, pubkeyDer);
+}
 
 // =============================================================================
 // Composite functions — built on top of backend primitives

@@ -34,6 +34,7 @@ import {
 } from './consensus.js';
 
 import { TX_TYPE, RCT_TYPE } from './transaction.js';
+import { hexToBytes } from './address.js';
 
 // =============================================================================
 // CONSTANTS
@@ -372,7 +373,7 @@ export function validateOutputPubkeySorting(tx, hfVersion) {
     if (!key) continue;
 
     const keyBytes = typeof key === 'string'
-      ? Buffer.from(key, 'hex')
+      ? hexToBytes(key)
       : key;
 
     if (prevKey !== null) {
@@ -533,10 +534,10 @@ export function validateInputs(tx, hfVersion) {
       const keyImage = input.k_image || input.keyImage;
       if (keyImage && prevKeyImage) {
         const kiBytes = typeof keyImage === 'string'
-          ? Buffer.from(keyImage, 'hex')
+          ? hexToBytes(keyImage)
           : keyImage;
         const prevKiBytes = typeof prevKeyImage === 'string'
-          ? Buffer.from(prevKeyImage, 'hex')
+          ? hexToBytes(prevKeyImage)
           : prevKeyImage;
 
         // Compare lexicographically (must be strictly increasing)

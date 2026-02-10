@@ -12,6 +12,21 @@
 
 import { ConnectionManager, SEED_NODES } from './connection-manager.js';
 
+/** Base64 encode a string (works in QuickJS, browsers, Node.js) */
+function _toBase64(str) {
+  if (typeof btoa === 'function') return btoa(str);
+  const bytes = new TextEncoder().encode(str);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i + 1] || 0, c = bytes[i + 2] || 0;
+    result += chars[a >> 2] + chars[((a & 3) << 4) | (b >> 4)]
+      + (i + 1 < bytes.length ? chars[((b & 15) << 2) | (c >> 6)] : '=')
+      + (i + 2 < bytes.length ? chars[c & 63] : '=');
+  }
+  return result;
+}
+
 /**
  * @typedef {Object} RPCClientOptions
  * @property {string} url - RPC server URL (e.g., 'http://localhost:19081')
@@ -151,7 +166,7 @@ export class RPCClient {
 
     // Add basic auth if credentials provided
     if (this.username && this.password) {
-      const credentials = btoa(`${this.username}:${this.password}`);
+      const credentials = _toBase64(`${this.username}:${this.password}`);
       headers['Authorization'] = `Basic ${credentials}`;
     }
 
@@ -176,18 +191,12 @@ export class RPCClient {
    * @private
    */
   async _fetchWithTimeout(url, options) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal
-      });
-      return response;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return Promise.race([
+      fetch(url, options),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out')), this.timeout)
+      ),
+    ]);
   }
 
   /**
@@ -519,13 +528,10 @@ export class RPCClient {
           : `${this.url}/${endpoint}`;
 
         // Add query parameters
-        const queryParams = new URLSearchParams();
-        for (const [key, value] of Object.entries(params)) {
-          if (value !== undefined && value !== null) {
-            queryParams.append(key, String(value));
-          }
-        }
-        const queryString = queryParams.toString();
+        const queryString = Object.entries(params)
+          .filter(([, v]) => v !== undefined && v !== null)
+          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+          .join('&');
         if (queryString) {
           url += `?${queryString}`;
         }
@@ -597,7 +603,7 @@ export class RPCClient {
         headers: this._buildHeaders()
       });
       return response.ok || response.status === 404; // 404 is OK, server is reachable
-    } catch {
+    } catch (_e) {
       return false;
     }
   }

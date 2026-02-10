@@ -13,6 +13,17 @@ blake2b_simd = "1.0"
 wasm-bindgen = "0.2"
 curve25519-dalek = { version = "4", features = ["alloc"] }
 
+# Oracle signature verification (SHA-256, ECDSA P-256, DSA)
+# Only for native targets — WASM uses the JS crypto shim
+sha2 = "0.10"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+p256 = { version = "0.13", features = ["ecdsa"] }
+dsa = "0.6"
+spki = "0.7"
+signature = "2"
+der = "0.7"
+
 [features]
 default = []
 ffi = []

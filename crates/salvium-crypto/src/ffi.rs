@@ -354,6 +354,37 @@ pub unsafe extern "C" fn salvium_gen_commitment_mask(
     0
 }
 
+// ─── Oracle Signature Verification ──────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn salvium_sha256(
+    data: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> i32 {
+    let data = slice::from_raw_parts(data, data_len);
+    let result = crate::sha256(data);
+    ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
+    0
+}
+
+/// Verify a signature against a DER-encoded SPKI public key.
+/// Returns 1 for valid, 0 for invalid/error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_verify_signature(
+    message: *const u8,
+    msg_len: usize,
+    signature: *const u8,
+    sig_len: usize,
+    pubkey_der: *const u8,
+    key_len: usize,
+) -> i32 {
+    let message = slice::from_raw_parts(message, msg_len);
+    let signature = slice::from_raw_parts(signature, sig_len);
+    let pubkey_der = slice::from_raw_parts(pubkey_der, key_len);
+    crate::verify_signature(message, signature, pubkey_der)
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -725,5 +756,72 @@ mod tests {
         let rc = unsafe { salvium_gen_commitment_mask(secret.as_ptr(), out.as_mut_ptr()) };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::gen_commitment_mask(&secret));
+    }
+
+    #[test]
+    fn test_sha256() {
+        let data = b"test data";
+        let mut out = [0u8; 32];
+        let rc = unsafe { salvium_sha256(data.as_ptr(), data.len(), out.as_mut_ptr()) };
+        assert_eq!(rc, 0);
+        // Known SHA-256 of "test data"
+        let expected = crate::sha256(data);
+        assert_eq!(&out[..], &expected[..]);
+        // Verify against known hash
+        assert_ne!(out, [0u8; 32]); // not all zeros
+    }
+
+    #[test]
+    fn test_sha256_empty() {
+        let mut out = [0u8; 32];
+        let rc = unsafe { salvium_sha256([].as_ptr(), 0, out.as_mut_ptr()) };
+        assert_eq!(rc, 0);
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        assert_eq!(out[0], 0xe3);
+        assert_eq!(out[1], 0xb0);
+        assert_eq!(out[31], 0x55);
+    }
+
+    #[test]
+    fn test_verify_signature_invalid() {
+        // Invalid inputs should return 0, not crash
+        let message = b"test";
+        let bad_sig = [0u8; 64];
+        let bad_key = [0u8; 32];
+        let rc = unsafe {
+            salvium_verify_signature(
+                message.as_ptr(), message.len(),
+                bad_sig.as_ptr(), bad_sig.len(),
+                bad_key.as_ptr(), bad_key.len(),
+            )
+        };
+        assert_eq!(rc, 0); // invalid → 0
+    }
+
+    #[test]
+    fn test_verify_signature_ecdsa_p256() {
+        // Testnet oracle public key (ECDSA P-256, DER-encoded SPKI)
+        let key_der: [u8; 91] = [
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+            0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03,
+            0x42, 0x00, 0x04, 0xe5, 0x80, 0x71, 0x5b, 0x1d, 0x40, 0x64, 0x20, 0x3d,
+            0x8d, 0x35, 0x24, 0xf0, 0xfa, 0xf6, 0xb9, 0x9f, 0x63, 0xa5, 0xf4, 0x6d,
+            0x29, 0x6b, 0xf7, 0x56, 0x8d, 0x7f, 0x1a, 0x7c, 0xbe, 0xd6, 0xf7, 0xda,
+            0xc6, 0xc5, 0xe1, 0x05, 0x08, 0x86, 0xd4, 0xa9, 0x47, 0x91, 0xa7, 0xcd,
+            0x19, 0xaa, 0xf3, 0xa0, 0xbd, 0x16, 0x1d, 0x6e, 0x28, 0x72, 0xa6, 0x9a,
+            0xa8, 0x5e, 0x62, 0xbf, 0xc8, 0xb7, 0xe4,
+        ];
+        // Verify that parsing the key doesn't crash with an invalid signature
+        let message = b"test message";
+        let bad_sig = [0u8; 70];
+        let rc = unsafe {
+            salvium_verify_signature(
+                message.as_ptr(), message.len(),
+                bad_sig.as_ptr(), bad_sig.len(),
+                key_der.as_ptr(), key_der.len(),
+            )
+        };
+        // Should return 0 (invalid sig), not crash
+        assert_eq!(rc, 0);
     }
 }

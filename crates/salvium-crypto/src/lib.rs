@@ -4,6 +4,7 @@ use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
+use sha2::{Sha256, Digest};
 
 mod elligator2;
 
@@ -313,4 +314,112 @@ pub fn gen_commitment_mask(shared_secret: &[u8]) -> Vec<u8> {
     data.extend_from_slice(shared_secret);
     let hash = keccak256_internal(&data);
     Scalar::from_bytes_mod_order(hash).to_bytes().to_vec()
+}
+
+// ============================================================================
+// Oracle Signature Verification (SHA-256, ECDSA P-256, DSA)
+// ============================================================================
+
+/// SHA-256 hash
+#[wasm_bindgen]
+pub fn sha256(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}
+
+/// Verify a signature against a DER-encoded SubjectPublicKeyInfo (SPKI) key.
+///
+/// Supports:
+///   - ECDSA P-256 (testnet oracle) — OID 1.2.840.10045.2.1
+///   - DSA (mainnet oracle) — OID 1.2.840.10040.4.1
+///
+/// The message is hashed with SHA-256 internally (matching Node.js createVerify('SHA256')).
+/// Signature must be DER-encoded (ASN.1 SEQUENCE of two INTEGERs r, s).
+/// Public key is the raw DER bytes of the SPKI structure (base64-decoded PEM body).
+///
+/// Returns 1 for valid, 0 for invalid/error.
+///
+/// Only available on native targets (not WASM). On WASM, the JS crypto shim is used.
+#[cfg(not(target_arch = "wasm32"))]
+#[wasm_bindgen]
+pub fn verify_signature(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> i32 {
+    verify_signature_internal(message, signature, pubkey_der)
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn verify_signature_internal(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
+    use spki::SubjectPublicKeyInfoRef;
+    use der::Decode;
+
+    // Parse the SPKI structure to determine algorithm
+    let spki = SubjectPublicKeyInfoRef::from_der(pubkey_der).ok()?;
+    let algorithm_oid = spki.algorithm.oid;
+
+    // OID 1.2.840.10045.2.1 = id-ecPublicKey (ECDSA)
+    const EC_PUBLIC_KEY_OID: der::oid::ObjectIdentifier =
+        der::oid::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+    // OID 1.2.840.10040.4.1 = id-dsa (DSA)
+    const DSA_OID: der::oid::ObjectIdentifier =
+        der::oid::ObjectIdentifier::new_unwrap("1.2.840.10040.4.1");
+
+    if algorithm_oid == EC_PUBLIC_KEY_OID {
+        verify_ecdsa_p256(message, signature, pubkey_der)
+    } else if algorithm_oid == DSA_OID {
+        verify_dsa(message, signature, pubkey_der)
+    } else {
+        None // Unknown algorithm
+    }
+}
+
+/// Verify ECDSA P-256 signature (SHA-256 digest)
+#[cfg(not(target_arch = "wasm32"))]
+fn verify_ecdsa_p256(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
+    use p256::ecdsa::{VerifyingKey, Signature};
+    use spki::DecodePublicKey;
+
+    let verifying_key = VerifyingKey::from_public_key_der(pubkey_der).ok()?;
+    let sig = Signature::from_der(signature).ok()?;
+
+    // SHA-256 hash the message first (matching createVerify('SHA256'))
+    let digest = {
+        let mut hasher = Sha256::new();
+        hasher.update(message);
+        hasher.finalize()
+    };
+
+    // p256 ecdsa Verifier::verify expects pre-hashed when using verify_prehash
+    // But the standard Verifier trait hashes internally. Since createVerify('SHA256')
+    // hashes with SHA-256 then verifies, we use verify_prehash.
+    use p256::ecdsa::signature::hazmat::PrehashVerifier;
+    match verifying_key.verify_prehash(&digest, &sig) {
+        Ok(()) => Some(1),
+        Err(_) => Some(0),
+    }
+}
+
+/// Verify DSA signature (SHA-256 digest)
+#[cfg(not(target_arch = "wasm32"))]
+fn verify_dsa(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
+    use dsa::{VerifyingKey, Signature, signature::hazmat::PrehashVerifier};
+    use spki::DecodePublicKey;
+    use der::Decode as _;
+
+    let verifying_key = VerifyingKey::from_public_key_der(pubkey_der).ok()?;
+
+    // Parse DER signature
+    let sig = Signature::from_der(signature).ok()?;
+
+    // SHA-256 hash the message
+    let digest = {
+        let mut hasher = Sha256::new();
+        hasher.update(message);
+        hasher.finalize()
+    };
+
+    match verifying_key.verify_prehash(&digest, &sig) {
+        Ok(()) => Some(1),
+        Err(_) => Some(0),
+    }
 }

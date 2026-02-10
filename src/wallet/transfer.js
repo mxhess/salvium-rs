@@ -170,7 +170,7 @@ function extractRejectionReason(respData) {
   try {
     const detail = JSON.stringify(respData, null, 0);
     return detail.length > 200 ? `${status} (response too large)` : `${status}: ${detail}`;
-  } catch {
+  } catch (_e) {
     return status;
   }
 }

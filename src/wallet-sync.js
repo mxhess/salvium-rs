@@ -462,9 +462,12 @@ export class WalletSync {
           : new Uint8Array(binBlock.block);
         const parsed = parseBlock(blockBlob);
 
-        // Compute miner_tx and protocol_tx hashes from the raw blob
-        const minerTxHash = this._computeTxHashFromBlob(blockBlob, parsed.minerTx);
-        const protocolTxHash = this._computeTxHashFromBlob(blockBlob, parsed.protocolTx);
+        // Use tx hashes from block header (reliable) instead of computing from blob
+        // (Salvium v3 tx hashing differs from Monero v2 — blob-based hash is wrong)
+        const minerTxHash = header.miner_tx_hash
+          || this._computeTxHashFromBlob(blockBlob, parsed.minerTx);
+        const protocolTxHash = header.protocol_tx_hash
+          || this._computeTxHashFromBlob(blockBlob, parsed.protocolTx);
 
         // Process miner_tx (coinbase)
         if (parsed.minerTx && minerTxHash) {

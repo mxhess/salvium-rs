@@ -64,7 +64,7 @@ export function getAvailableCores() {
   try {
     const os = require('os');
     return os.cpus().length;
-  } catch {
+  } catch (_e) {
     return 4; // Default fallback
   }
 }

@@ -166,7 +166,7 @@ export function decryptWalletJSON(envelope, password) {
   let plaintext;
   try {
     plaintext = gcm(encryptionKey, hexToBytes(enc.iv)).decrypt(hexToBytes(enc.ciphertext));
-  } catch {
+  } catch (_e) {
     throw new Error('Decryption failed: incorrect password or corrupted data');
   }
 
@@ -254,7 +254,7 @@ export function encryptData(key, plaintext) {
 export function decryptData(key, envelope) {
   try {
     return gcm(key, hexToBytes(envelope.iv)).decrypt(hexToBytes(envelope.ciphertext));
-  } catch {
+  } catch (_e) {
     throw new Error('Data decryption failed: wrong key or corrupted data');
   }
 }

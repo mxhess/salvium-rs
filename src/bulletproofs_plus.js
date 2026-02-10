@@ -265,16 +265,8 @@ export function parseProof(proofBytes) {
 
   let offset = 0;
 
-  // Salvium binary format: varint(V.len), V[], A, A1, B, r1, s1, d1, varint(L.len), L[], varint(R.len), R[]
-
-  // V (commitments)
-  const { value: vCount, bytesRead: vBytes } = _decodeVarint(proofBytes, offset);
-  offset += vBytes;
-  const V = [];
-  for (let i = 0; i < vCount; i++) {
-    V.push(bytesToPoint(proofBytes.slice(offset, offset + 32)));
-    offset += 32;
-  }
+  // Salvium binary format: A, A1, B, r1, s1, d1, varint(L.len), L[], varint(R.len), R[]
+  // Note: V (commitments) is NOT in the wire format — restored from outPk.
 
   // A, A1, B (points)
   const A = bytesToPoint(proofBytes.slice(offset, offset + 32));
@@ -310,7 +302,7 @@ export function parseProof(proofBytes) {
     offset += 32;
   }
 
-  return { V, A, A1, B, r1, s1, d1, L, R };
+  return { A, A1, B, r1, s1, d1, L, R };
 }
 
 function _decodeVarint(bytes, offset) {
@@ -1079,21 +1071,17 @@ export function bulletproofPlusProve(amounts, masks) {
  * Serialize a Bulletproof+ proof to bytes
  */
 export function serializeProof(proof) {
-  const { V, A, A1, B, r1, s1, d1, L, R } = proof;
+  const { A, A1, B, r1, s1, d1, L, R } = proof;
 
   // Monero/Salvium binary format for BulletproofPlus:
-  //   varint(V.length), V[0..n] (32 bytes each)
   //   A (32), A1 (32), B (32)
   //   r1 (32), s1 (32), d1 (32)
   //   varint(L.length), L[0..n] (32 bytes each)
   //   varint(R.length), R[0..n] (32 bytes each)
+  // Note: V (commitments) is NOT serialized — restored from outPk.
   // Must match parseProof format for roundtrip compatibility.
 
   const chunks = [];
-
-  // V (commitments)
-  chunks.push(_encodeVarint(V.length));
-  for (const v of V) chunks.push(v.toBytes());
 
   // A, A1, B (points)
   chunks.push(A.toBytes());

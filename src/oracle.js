@@ -11,7 +11,7 @@
  * @module oracle
  */
 
-import { createHash, createVerify } from 'crypto';
+import { verifySignature } from './crypto/provider.js';
 
 // ============================================================================
 // CONSTANTS
@@ -205,6 +205,55 @@ export function getAssetMaPrice(pr, assetType) {
 // ============================================================================
 
 /**
+ * Convert PEM-encoded public key to DER bytes.
+ * Strips the -----BEGIN/END PUBLIC KEY----- headers and base64-decodes.
+ *
+ * @param {string} pem - PEM-encoded public key
+ * @returns {Uint8Array} DER-encoded SPKI public key
+ */
+function pemToDer(pem) {
+  const b64 = pem
+    .replace(/-----BEGIN PUBLIC KEY-----/, '')
+    .replace(/-----END PUBLIC KEY-----/, '')
+    .replace(/\s+/g, '');
+  return _base64Decode(b64);
+}
+
+/** Decode base64 string to Uint8Array (works on QuickJS, browsers, Node.js) */
+function _base64Decode(b64) {
+  if (typeof Buffer !== 'undefined') {
+    return new Uint8Array(Buffer.from(b64, 'base64'));
+  }
+  if (typeof atob === 'function') {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  // Manual base64 decoder for QuickJS and other minimal runtimes
+  const lookup = new Uint8Array(128);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+  const len = b64.length;
+  let pad = 0;
+  if (b64[len - 1] === '=') pad++;
+  if (b64[len - 2] === '=') pad++;
+  const outLen = (len * 3 / 4) - pad;
+  const bytes = new Uint8Array(outLen);
+  let j = 0;
+  for (let i = 0; i < len; i += 4) {
+    const a = lookup[b64.charCodeAt(i)];
+    const b = lookup[b64.charCodeAt(i + 1)];
+    const c = lookup[b64.charCodeAt(i + 2)];
+    const d = lookup[b64.charCodeAt(i + 3)];
+    bytes[j++] = (a << 2) | (b >> 4);
+    if (j < outLen) bytes[j++] = ((b & 15) << 4) | (c >> 2);
+    if (j < outLen) bytes[j++] = ((c & 3) << 6) | d;
+  }
+  return bytes;
+}
+
+/**
  * Build the JSON message that was signed
  *
  * The signature covers a compact JSON (no whitespace) with specific field ordering.
@@ -241,30 +290,32 @@ export function buildSignatureMessage(pr) {
 /**
  * Verify pricing record signature
  *
+ * Uses the crypto provider's verifySignature which dispatches to the active
+ * backend (Rust FFI, WASM, WebCrypto, or Node.js crypto). No direct
+ * dependency on Node.js crypto module.
+ *
  * Reference: ~/github/salvium/src/oracle/pricing_record.cpp (verifySignature)
  *
  * @param {PricingRecord} pr - Pricing record to verify
  * @param {string} publicKeyPem - Oracle public key in PEM format
- * @returns {boolean} True if signature is valid
+ * @returns {Promise<boolean>} True if signature is valid
  */
-export function verifyPricingRecordSignature(pr, publicKeyPem) {
+export async function verifyPricingRecordSignature(pr, publicKeyPem) {
   if (!pr.signature || pr.signature.length === 0) {
     return false;
   }
 
   try {
-    // Build the message that was signed
+    // Build the message that was signed and encode to UTF-8 bytes
     const message = buildSignatureMessage(pr);
+    const messageBytes = new TextEncoder().encode(message);
 
-    // Create verifier
-    // Note: The mainnet key is DSA, testnet is ECDSA
-    // Node.js crypto handles both with the 'dsa' or 'ecdsa' algorithm
-    const verifier = createVerify('SHA256');
-    verifier.update(message);
+    // Convert PEM public key to DER bytes for the crypto provider
+    const pubkeyDer = pemToDer(publicKeyPem);
 
-    // Verify the signature
-    return verifier.verify(publicKeyPem, Buffer.from(pr.signature));
-  } catch (error) {
+    // Verify via crypto provider (backend handles SHA-256 hashing internally)
+    return await verifySignature(messageBytes, pr.signature, pubkeyDer);
+  } catch (_e) {
     // Signature verification failed
     return false;
   }
@@ -300,7 +351,7 @@ export function getOraclePublicKey(network = 'mainnet') {
  * @param {number} options.lastBlockTimestamp - Previous block timestamp
  * @returns {{valid: boolean, error?: string}} Validation result
  */
-export function validatePricingRecord(pr, options = {}) {
+export async function validatePricingRecord(pr, options = {}) {
   const {
     network = 'mainnet',
     hfVersion = 0,
@@ -322,7 +373,7 @@ export function validatePricingRecord(pr, options = {}) {
 
   // Rule 3: Signature must be valid
   const publicKey = getOraclePublicKey(network);
-  if (!verifyPricingRecordSignature(pr, publicKey)) {
+  if (!await verifyPricingRecordSignature(pr, publicKey)) {
     return { valid: false, error: 'Invalid pricing record signature' };
   }
 
@@ -600,25 +651,21 @@ export async function fetchPricingRecord(options = {}) {
   } = options;
 
   // Build request URL
-  const queryParams = new URLSearchParams({
-    height: height.toString(),
-    sal: salSupply.toString(),
-    vsd: vsdSupply.toString()
-  });
+  const queryString = [
+    `height=${encodeURIComponent(height.toString())}`,
+    `sal=${encodeURIComponent(salSupply.toString())}`,
+    `vsd=${encodeURIComponent(vsdSupply.toString())}`,
+  ].join('&');
 
-  const fullUrl = `${url}/price?${queryParams}`;
+  const fullUrl = `${url}/price?${queryString}`;
 
   try {
-    // Create abort controller for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    const response = await fetch(fullUrl, {
-      method: 'GET',
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
+    const response = await Promise.race([
+      fetch(fullUrl, { method: 'GET' }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Oracle request timed out')), timeout)
+      ),
+    ]);
 
     if (!response.ok) {
       return {

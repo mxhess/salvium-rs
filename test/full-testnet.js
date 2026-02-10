@@ -37,12 +37,14 @@ const WALLET_DIR = join(homedir(), 'testnet-wallet');
 const LOG_PATH = join(WALLET_DIR, 'full-testnet-log.json');
 const DEFAULT_DAEMON = 'http://web.whiskymine.io:29081';
 
-// Target heights (HF activation + coinbase maturity window)
+// Target heights (HF activation + coinbase maturity + ring buffer)
+// Coinbase outputs lock for 60 blocks. After a fork, new-era outputs need
+// to unlock before they can be spent. Need: 60 (lock) + 16 (ring size) + 4 buffer = 80.
 const TARGET = {
-  HF2_MATURE: 270,   // HF2 at 250 + 20 extra
-  HF6_MATURE: 835,   // HF6 at 815 + 20 extra
-  CARROT_MATURE: 1120, // HF10 at 1100 + 20 extra
-  FINAL: 1200,
+  HF2_MATURE: 270,    // HF2 at 250 + 20 (SAL outputs already plentiful)
+  HF6_MATURE: 895,    // HF6 at 815 + 80 (SAL1 coinbase needs 60-block unlock)
+  CARROT_MATURE: 1180, // HF10 at 1100 + 80 (same coinbase maturity requirement)
+  FINAL: 1260,
 };
 
 const MATURITY_BLOCKS = 10; // blocks to mine after TX for spendable age
@@ -344,7 +346,7 @@ async function phase2_cnTxTests(daemon, daemonUrl, walletA, walletB) {
 }
 
 async function phase3_mineToHF6(daemon, daemonUrl, walletA) {
-  console.log('\n═══ Phase 3: Mine to HF6 / SAL1 (target height 835) ═══');
+  console.log(`\n═══ Phase 3: Mine to HF6 / SAL1 (target height ${TARGET.HF6_MATURE}) ═══`);
   const t0 = performance.now();
   const address = walletA.getLegacyAddress();
   await mineTo(daemon, TARGET.HF6_MATURE, address, daemonUrl, 'rust');
@@ -391,7 +393,7 @@ async function phase4_sal1TxTests(daemon, daemonUrl, walletA, walletB) {
 }
 
 async function phase5_mineToCarrot(daemon, daemonUrl, walletA) {
-  console.log('\n═══ Phase 5: Mine to CARROT (target height 1120) ═══');
+  console.log(`\n═══ Phase 5: Mine to CARROT (target height ${TARGET.CARROT_MATURE}) ═══`);
   const t0 = performance.now();
   const address = walletA.getLegacyAddress();
 

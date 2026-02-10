@@ -1198,9 +1198,11 @@ export class GammaPicker {
     this.shape = options.shape || GAMMA_SHAPE;
     this.scale = options.scale || GAMMA_SCALE;
 
-    // Use coinbase maturity window (60) as the exclusion zone to ensure
-    // all selected decoys are unlocked (coinbase outputs need 60 blocks)
-    const unlockExclusion = CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
+    // Match C++ gamma_picker: use DEFAULT_TX_SPENDABLE_AGE (10) as the
+    // exclusion zone, not MINED_MONEY_UNLOCK_WINDOW (60). Locked coinbase
+    // outputs still have valid public keys and are fine as ring decoys.
+    // The C++ wallet over-requests outputs to compensate for locked picks.
+    const unlockExclusion = CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE;
 
     if (rctOffsets.length <= unlockExclusion) {
       throw new Error('Not enough blocks for decoy selection');
@@ -1276,7 +1278,7 @@ export class GammaPicker {
   findBlockIndex(outputIndex) {
     // Binary search
     let low = 0;
-    let high = this.rctOffsets.length - CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
+    let high = this.rctOffsets.length - CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE;
 
     while (low < high) {
       const mid = Math.floor((low + high) / 2);
@@ -2151,16 +2153,21 @@ export function buildTransaction(params, options = {}) {
 
   // Generate Bulletproofs+ range proofs BEFORE pre-MLSAG hash
   // (C++ genRctSimple generates BP+ first, then hashes components for CLSAG message)
-  const bpAmounts = outputs.map(o => o.amount);
-  const bpMasks = outputMasks.map(m => {
-    const bytes = typeof m === 'string' ? hexToBytes(m) : m;
-    return _bytesToBigInt(bytes);
-  });
-  const bpProof = bulletproofPlusProve(bpAmounts, bpMasks);
-  const bulletproofPlus = {
-    ...bpProof,
-    serialized: serializeBpPlus(bpProof)
-  };
+  // Skip for transactions with no outputs (e.g. AUDIT — all coins locked, no change)
+  let bpProof = null;
+  let bulletproofPlus = null;
+  if (outputs.length > 0) {
+    const bpAmounts = outputs.map(o => o.amount);
+    const bpMasks = outputMasks.map(m => {
+      const bytes = typeof m === 'string' ? hexToBytes(m) : m;
+      return _bytesToBigInt(bytes);
+    });
+    bpProof = bulletproofPlusProve(bpAmounts, bpMasks);
+    bulletproofPlus = {
+      ...bpProof,
+      serialized: serializeBpPlus(bpProof)
+    };
+  }
 
   // Build RingCT base (needed for pre-MLSAG hash)
   // Must include ecdhInfo, outPk, p_r, and salvium_data — matches C++ serialize_rctsig_base

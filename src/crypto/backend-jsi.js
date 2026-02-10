@@ -124,4 +124,15 @@ export class JsiCryptoBackend {
     sharedSecret = ensureBytes(sharedSecret);
     return this.native.genCommitmentMask(sharedSecret);
   }
+
+  // ─── Oracle Signature Verification ──────────────────────────────────────
+
+  sha256(data) {
+    return this.native.sha256(data);
+  }
+
+  async verifySignature(message, signature, pubkeyDer) {
+    // Native module returns 1 for valid, 0 for invalid
+    return this.native.verifySignature(message, signature, pubkeyDer) === 1;
+  }
 }

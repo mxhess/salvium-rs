@@ -36,6 +36,8 @@ export {
   ecdhDecode, ecdhDecodeFull, ecdhEncode,
   // Pedersen commitments
   commit, zeroCommit, genCommitmentMask,
+  // Oracle signature verification
+  sha256, verifySignature,
   // CARROT key derivation
   computeCarrotSpendPubkey, computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey,

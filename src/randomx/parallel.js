@@ -24,7 +24,7 @@ export const DATASET_SIZE = RANDOMX_DATASET_ITEM_COUNT * DATASET_ITEM_SIZE;
 export function getCpuCount() {
   try {
     return cpus().length;
-  } catch {
+  } catch (_e) {
     if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) {
       return navigator.hardwareConcurrency;
     }

@@ -7,6 +7,8 @@
  * Reference: salvium/src/cryptonote_config.h, cryptonote_basic_impl.cpp, difficulty.cpp
  */
 
+import { bytesToHex } from './address.js';
+
 // =============================================================================
 // CORE CONSTANTS
 // =============================================================================
@@ -891,11 +893,11 @@ export function validateBlockLinkage(currentHeader, previousHeader) {
   // Check previous hash matches
   const prevHashHex = typeof currentHeader.prevId === 'string'
     ? currentHeader.prevId
-    : Buffer.from(currentHeader.prevId).toString('hex');
+    : bytesToHex(new Uint8Array(currentHeader.prevId));
 
   const expectedPrevHash = typeof previousHeader.hash === 'string'
     ? previousHeader.hash
-    : Buffer.from(previousHeader.hash).toString('hex');
+    : bytesToHex(new Uint8Array(previousHeader.hash));
 
   if (prevHashHex !== expectedPrevHash) {
     return {
