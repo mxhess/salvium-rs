@@ -331,6 +331,35 @@ pub fn sha256(data: &[u8]) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
+/// Argon2id key derivation (WASM-accessible).
+/// password, salt: arbitrary-length byte slices.
+/// t_cost: number of iterations, m_cost: memory in KiB, parallelism: threads.
+/// dk_len: desired output length in bytes.
+/// Returns the derived key bytes, or empty vec on error.
+#[wasm_bindgen]
+pub fn argon2id_hash(
+    password: &[u8],
+    salt: &[u8],
+    t_cost: u32,
+    m_cost: u32,
+    parallelism: u32,
+    dk_len: u32,
+) -> Vec<u8> {
+    use argon2::{Argon2, Algorithm, Version, Params};
+
+    let params = match Params::new(m_cost, t_cost, parallelism, Some(dk_len as usize)) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut out = vec![0u8; dk_len as usize];
+    match argon2.hash_password_into(password, salt, &mut out) {
+        Ok(_) => out,
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Verify a signature against a DER-encoded SubjectPublicKeyInfo (SPKI) key.
 ///
 /// Supports:

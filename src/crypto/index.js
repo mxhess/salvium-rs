@@ -39,6 +39,8 @@ export {
   commit, zeroCommit, genCommitmentMask,
   // Oracle signature verification
   sha256, verifySignature,
+  // Key derivation
+  argon2id,
   // CARROT key derivation
   computeCarrotSpendPubkey, computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey,

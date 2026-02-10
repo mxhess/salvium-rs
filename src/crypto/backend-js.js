@@ -10,6 +10,7 @@
 import { keccak256 as jsKeccak } from '../keccak.js';
 import { blake2b as jsBlake2b } from '../blake2b.js';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
+import { argon2id as nobleArgon2id } from '@noble/hashes/argon2.js';
 import {
   scAdd, scSub, scMul, scMulAdd, scMulSub,
   scReduce32, scReduce64, scInvert, scCheck, scIsZero
@@ -89,6 +90,12 @@ export class JsCryptoBackend {
 
   // Oracle signature verification
   sha256(data) { return nobleSha256(data); }
+
+  // Argon2id key derivation (JS fallback via Noble — slow, use WASM/JSI when possible)
+  argon2id(password, salt, opts) {
+    console.warn('[salvium-js] suboptimal crypto path: js->argon2id (call initCrypto() for WASM acceleration)');
+    return nobleArgon2id(password, salt, opts);
+  }
 
   /**
    * Verify signature using WebCrypto (browser/Node.js 15+) or Node.js crypto.

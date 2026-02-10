@@ -222,6 +222,13 @@ export class WasmCryptoBackend {
   // Oracle signature verification
   sha256(data) { return nobleSha256(data); }
 
+  // Argon2id key derivation via Rust/WASM
+  argon2id(password, salt, opts) {
+    const result = this.wasm.argon2id_hash(password, salt, opts.t, opts.m, opts.p, opts.dkLen);
+    if (result.length === 0) throw new Error('Argon2id failed');
+    return result;
+  }
+
   async verifySignature(message, signature, pubkeyDer) {
     // WASM can't do ECDSA/DSA verification (native-only crates).
     // Use WebCrypto (browser/Node 15+) or Node.js crypto as fallback.

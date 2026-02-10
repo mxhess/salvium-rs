@@ -133,6 +133,9 @@ export async function verifySignature(message, signature, pubkeyDer) {
   return getCryptoBackend().verifySignature(message, signature, pubkeyDer);
 }
 
+// Key derivation
+export function argon2id(password, salt, opts) { return getCryptoBackend().argon2id(password, salt, opts); }
+
 // =============================================================================
 // Composite functions — built on top of backend primitives
 // =============================================================================

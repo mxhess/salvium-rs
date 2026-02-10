@@ -188,8 +188,8 @@ export class JsiCryptoBackend {
 
   // ─── Key Derivation ─────────────────────────────────────────────────────
 
-  async argon2id(password, salt, tCost, mCost, parallelism, outLen) {
-    return this.native.argon2id(password, salt, tCost, mCost, parallelism, outLen);
+  argon2id(password, salt, opts) {
+    return this.native.argon2id(password, salt, opts.t, opts.m, opts.p, opts.dkLen);
   }
 }
 

@@ -17,9 +17,9 @@
 
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { gcm } from '@noble/ciphers/aes.js';
-import { argon2id } from '@noble/hashes/argon2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { argon2id } from './crypto/index.js';
 import { randomBytes, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { bytesToHex, hexToBytes } from './address.js';
 
