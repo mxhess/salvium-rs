@@ -315,6 +315,15 @@ function bytesToHex(bytes) {
 
 function ensureBytes(v) {
   if (typeof v === 'string') return hexToBytes(v);
+  if (typeof v === 'bigint') {
+    const bytes = new Uint8Array(32);
+    let n = v;
+    for (let i = 0; i < 32; i++) {
+      bytes[i] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+    return bytes;
+  }
   return v;
 }
 

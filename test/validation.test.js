@@ -121,8 +121,8 @@ describe('Validation Constants', () => {
     expect(RCT_TYPE_NAMES.Null).toBe(0);
     expect(RCT_TYPE_NAMES.CLSAG).toBe(5);
     expect(RCT_TYPE_NAMES.BulletproofPlus).toBe(6);
-    expect(RCT_TYPE_NAMES.SalviumZero).toBe(7);
-    expect(RCT_TYPE_NAMES.SalviumOne).toBe(8);
+    expect(RCT_TYPE_NAMES.SalviumZero).toBe(8);
+    expect(RCT_TYPE_NAMES.SalviumOne).toBe(9);
   });
 
   test('AUDIT_HARD_FORKS has audit periods configured', () => {

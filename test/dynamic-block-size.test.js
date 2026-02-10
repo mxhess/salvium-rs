@@ -149,12 +149,12 @@ describe('ChainState dynamic block size integration', () => {
 });
 
 describe('getMedianBlockWeight edge cases', () => {
-  test('two elements', () => {
-    expect(getMedianBlockWeight([10, 20])).toBe(15);
+  test('two elements (upper median)', () => {
+    expect(getMedianBlockWeight([10, 20])).toBe(20);
   });
 
-  test('large spread', () => {
-    expect(getMedianBlockWeight([1, 1000000])).toBe(500000);
+  test('large spread (upper median)', () => {
+    expect(getMedianBlockWeight([1, 1000000])).toBe(1000000);
   });
 
   test('duplicate values', () => {

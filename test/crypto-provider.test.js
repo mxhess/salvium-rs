@@ -428,10 +428,14 @@ console.log('\n=== Pedersen Commitment Equivalence ===\n');
 
 const H_HEX = '8b655970153799af2aeadc9ff1add0ea6c7251d54154cfa92c173a0dd39c1f94';
 
-await asyncTest('zeroCommit(1) = H', async () => {
+await asyncTest('zeroCommit(1) = G + H (Salvium uses blinding factor 1)', async () => {
   const js = new JsCryptoBackend();
   const result = js.zeroCommit(1n);
-  assertEqual(result, hexToBytes(H_HEX), 'zeroCommit(1) should be H');
+  // Salvium zeroCommit uses mask=1, so zeroCommit(1) = 1*G + 1*H
+  const G = js.scalarMultBase(new Uint8Array([1, ...new Array(31).fill(0)]));
+  const H = hexToBytes(H_HEX);
+  const expected = js.pointAddCompressed(G, H);
+  assertEqual(result, expected, 'zeroCommit(1) should be G + H');
 });
 
 await asyncTest('commit equivalence (random)', async () => {
@@ -462,15 +466,19 @@ await asyncTest('genCommitmentMask equivalence', async () => {
   assertEqual(jsResult, wasmResult, 'genCommitmentMask JS vs WASM');
 });
 
-await asyncTest('commit homomorphic: commit(a,m) - zeroCommit(a) = m*G', async () => {
+await asyncTest('commit homomorphic: commit(a,m) - zeroCommit(a) = (m-1)*G', async () => {
   const js = new JsCryptoBackend();
   const amount = 42n;
   const mask = scalarA;
   const c = js.commit(amount, mask);
   const z = js.zeroCommit(amount);
+  // commit(a,m) = m*G + a*H, zeroCommit(a) = 1*G + a*H
+  // diff = (m-1)*G
   const diff = js.pointSubCompressed(c, z);
-  const mG = js.scalarMultBase(mask);
-  assertEqual(diff, mG, 'homomorphic property');
+  const scalarOne = new Uint8Array(32); scalarOne[0] = 1;
+  const mMinusOne = js.scSub(mask, scalarOne);
+  const expected = js.scalarMultBase(mMinusOne);
+  assertEqual(diff, expected, 'homomorphic property');
 });
 
 // ─── Benchmark ──────────────────────────────────────────────────────────────

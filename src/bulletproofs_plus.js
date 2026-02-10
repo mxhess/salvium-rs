@@ -805,7 +805,15 @@ export function bulletproofPlusProve(amounts, masks) {
   // Try accelerated backend (WASM/JSI)
   const backend = getCryptoBackend();
   const nativeResult = backend.bulletproofPlusProve(amounts, masks);
-  if (nativeResult !== null) return nativeResult;
+  if (nativeResult !== null) {
+    // WASM/JSI returns { V, proofBytes } — parse into full field set
+    // so serializeProof and getPreMlsagHash can access A, A1, B, etc.
+    if (nativeResult.proofBytes && !nativeResult.A) {
+      const parsed = parseProof(nativeResult.proofBytes);
+      return { V: nativeResult.V, ...parsed, proofBytes: nativeResult.proofBytes };
+    }
+    return nativeResult;
+  }
 
   // Compute M (smallest power of 2 >= amounts.length)
   let M = 1;
@@ -1085,6 +1093,9 @@ export function bulletproofPlusProve(amounts, masks) {
  * Serialize a Bulletproof+ proof to bytes
  */
 export function serializeProof(proof) {
+  // Short-circuit: WASM/JSI backend already provides serialized bytes
+  if (proof.proofBytes) return proof.proofBytes;
+
   const { A, A1, B, r1, s1, d1, L, R } = proof;
 
   // Monero/Salvium binary format for BulletproofPlus:

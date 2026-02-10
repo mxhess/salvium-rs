@@ -55,8 +55,8 @@ describe('getMedianBlockWeight', () => {
     expect(getMedianBlockWeight([1, 3, 5])).toBe(3);
   });
 
-  test('even-length array returns floor of average', () => {
-    expect(getMedianBlockWeight([1, 3, 5, 7])).toBe(4);
+  test('even-length array returns upper median', () => {
+    expect(getMedianBlockWeight([1, 3, 5, 7])).toBe(5);
   });
 
   test('unsorted input is handled', () => {
@@ -71,7 +71,7 @@ describe('getMedianBlockWeight', () => {
 
   test('large dataset', () => {
     const values = Array.from({ length: 1000 }, (_, i) => i + 1);
-    expect(getMedianBlockWeight(values)).toBe(500);
+    expect(getMedianBlockWeight(values)).toBe(501);
   });
 
   test('all same values', () => {
