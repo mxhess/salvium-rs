@@ -13,6 +13,9 @@ blake2b_simd = "1.0"
 wasm-bindgen = "0.2"
 curve25519-dalek = { version = "4", features = ["alloc"] }
 
+# Random number generation (needed for CLSAG/TCLSAG/BP+ signing)
+getrandom = { version = "0.2", features = ["js"] }
+
 # Oracle signature verification (SHA-256, ECDSA P-256, DSA)
 # Only for native targets — WASM uses the JS crypto shim
 sha2 = "0.10"

@@ -168,6 +168,90 @@ int32_t salvium_argon2id(
     size_t out_len,       /* desired output length in bytes (typically 32) */
     uint8_t *out);
 
+/* ─── CLSAG Ring Signatures ──────────────────────────────────────────────── */
+
+/**
+ * CLSAG sign. Output: s[0..n] || c1 || I || D (each 32 bytes).
+ * out must be ring_count*32 + 96 bytes.
+ */
+int32_t salvium_clsag_sign(
+    const uint8_t *message /* 32 */,
+    const uint8_t *ring /* ring_count * 32 */, uint32_t ring_count,
+    const uint8_t *secret_key /* 32 */,
+    const uint8_t *commitments /* ring_count * 32 */,
+    const uint8_t *commitment_mask /* 32 */,
+    const uint8_t *pseudo_output /* 32 */,
+    uint32_t secret_index,
+    uint8_t *out /* ring_count*32 + 96 */);
+
+/**
+ * CLSAG verify.
+ * sig format: s[0..n] || c1 || I || D (each 32 bytes, no length prefix).
+ * Returns 1 for valid, 0 for invalid.
+ */
+int32_t salvium_clsag_verify(
+    const uint8_t *message /* 32 */,
+    const uint8_t *sig, size_t sig_len,
+    const uint8_t *ring /* ring_count * 32 */, uint32_t ring_count,
+    const uint8_t *commitments /* ring_count * 32 */,
+    const uint8_t *pseudo_output /* 32 */);
+
+/* ─── TCLSAG Ring Signatures ────────────────────────────────────────────── */
+
+/**
+ * TCLSAG sign. Output: sx[0..n] || sy[0..n] || c1 || I || D (each 32 bytes).
+ * out must be 2*ring_count*32 + 96 bytes.
+ */
+int32_t salvium_tclsag_sign(
+    const uint8_t *message /* 32 */,
+    const uint8_t *ring /* ring_count * 32 */, uint32_t ring_count,
+    const uint8_t *secret_key_x /* 32 */,
+    const uint8_t *secret_key_y /* 32 */,
+    const uint8_t *commitments /* ring_count * 32 */,
+    const uint8_t *commitment_mask /* 32 */,
+    const uint8_t *pseudo_output /* 32 */,
+    uint32_t secret_index,
+    uint8_t *out /* 2*ring_count*32 + 96 */);
+
+/**
+ * TCLSAG verify.
+ * sig format: sx[0..n] || sy[0..n] || c1 || I || D (each 32 bytes).
+ * Returns 1 for valid, 0 for invalid.
+ */
+int32_t salvium_tclsag_verify(
+    const uint8_t *message /* 32 */,
+    const uint8_t *sig, size_t sig_len,
+    const uint8_t *ring /* ring_count * 32 */, uint32_t ring_count,
+    const uint8_t *commitments /* ring_count * 32 */,
+    const uint8_t *pseudo_output /* 32 */);
+
+/* ─── Bulletproofs+ Range Proofs ─────────────────────────────────────────── */
+
+/**
+ * Bulletproof+ prove.
+ * amounts: count * 8 bytes (u64 LE), masks: count * 32 bytes (scalars).
+ * Output: [v_count u32 LE][V_0..V_n 32B each][proof_bytes]
+ * out_len receives actual output length.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_bulletproof_plus_prove(
+    const uint8_t *amounts /* count * 8 */,
+    const uint8_t *masks /* count * 32 */,
+    uint32_t count,
+    uint8_t *out,
+    size_t out_max,
+    size_t *out_len);
+
+/**
+ * Bulletproof+ verify.
+ * proof_bytes: serialized proof, commitments: commitment_count * 32 bytes.
+ * Returns 1 for valid, 0 for invalid.
+ */
+int32_t salvium_bulletproof_plus_verify(
+    const uint8_t *proof_bytes, size_t proof_len,
+    const uint8_t *commitments /* commitment_count * 32 */,
+    uint32_t commitment_count);
+
 #ifdef __cplusplus
 }
 #endif

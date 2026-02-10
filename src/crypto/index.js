@@ -12,6 +12,7 @@ export {
   setCryptoBackend,
   getCryptoBackend,
   getCurrentBackendType,
+  initCrypto,
   // Hashing
   keccak256, keccak256Hex, cnFastHash,
   blake2b,

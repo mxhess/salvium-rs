@@ -77,6 +77,16 @@ export class JsCryptoBackend {
   zeroCommit(amount) { return zeroCommit(amount); }
   genCommitmentMask(sharedSecret) { return genCommitmentMask(sharedSecret); }
 
+  // ─── CLSAG/TCLSAG/BP+ — no native implementation, return null ──────────
+  // The JS fallback for these lives in transaction.js and bulletproofs_plus.js.
+  // The backend returning null signals callers to use the JS fallback path.
+  clsagSign() { return null; }
+  clsagVerify() { return null; }
+  tclsagSign() { return null; }
+  tclsagVerify() { return null; }
+  bulletproofPlusProve() { return null; }
+  bulletproofPlusVerify() { return null; }
+
   // Oracle signature verification
   sha256(data) { return nobleSha256(data); }
 

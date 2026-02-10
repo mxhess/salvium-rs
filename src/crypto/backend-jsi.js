@@ -136,9 +136,143 @@ export class JsiCryptoBackend {
     return this.native.verifySignature(message, signature, pubkeyDer) === 1;
   }
 
+  // ─── CLSAG Ring Signatures ──────────────────────────────────────────────
+
+  clsagSign(message, ring, secretKey, commitments, commitmentMask, pseudoOutput, secretIndex) {
+    const ringFlat = flattenRing(ring);
+    const commFlat = flattenRing(commitments);
+    return deserializeClsagNative(
+      this.native.clsagSign(message, ringFlat, ring.length, secretKey, commFlat, commitmentMask, pseudoOutput, secretIndex),
+      ring.length
+    );
+  }
+
+  clsagVerify(message, sig, ring, commitments, pseudoOutput) {
+    const sigBuf = serializeClsagNative(sig);
+    const ringFlat = flattenRing(ring);
+    const commFlat = flattenRing(commitments);
+    return this.native.clsagVerify(message, sigBuf, sigBuf.length, ringFlat, ring.length, commFlat, pseudoOutput) === 1;
+  }
+
+  // ─── TCLSAG Ring Signatures ────────────────────────────────────────────
+
+  tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, commitmentMask, pseudoOutput, secretIndex) {
+    const ringFlat = flattenRing(ring);
+    const commFlat = flattenRing(commitments);
+    return deserializeTclsagNative(
+      this.native.tclsagSign(message, ringFlat, ring.length, secretKeyX, secretKeyY, commFlat, commitmentMask, pseudoOutput, secretIndex),
+      ring.length
+    );
+  }
+
+  tclsagVerify(message, sig, ring, commitments, pseudoOutput) {
+    const sigBuf = serializeTclsagNative(sig);
+    const ringFlat = flattenRing(ring);
+    const commFlat = flattenRing(commitments);
+    return this.native.tclsagVerify(message, sigBuf, sigBuf.length, ringFlat, ring.length, commFlat, pseudoOutput) === 1;
+  }
+
+  // ─── Bulletproofs+ Range Proofs ────────────────────────────────────────
+
+  bulletproofPlusProve(amounts, masks) {
+    const amountBytes = serializeAmountsJsi(amounts);
+    const masksFlat = flattenRing(masks);
+    const result = this.native.bulletproofPlusProve(amountBytes, masksFlat, amounts.length);
+    return deserializeBpProveJsi(result);
+  }
+
+  bulletproofPlusVerify(commitmentBytes, proofBytes) {
+    const commFlat = flattenRing(commitmentBytes);
+    return this.native.bulletproofPlusVerify(proofBytes, proofBytes.length, commFlat, commitmentBytes.length) === 1;
+  }
+
   // ─── Key Derivation ─────────────────────────────────────────────────────
 
   async argon2id(password, salt, tCost, mCost, parallelism, outLen) {
     return this.native.argon2id(password, salt, tCost, mCost, parallelism, outLen);
   }
+}
+
+// ─── Serialization helpers ──────────────────────────────────────────────────
+
+function flattenRing(arr) {
+  const flat = new Uint8Array(arr.length * 32);
+  for (let i = 0; i < arr.length; i++) {
+    const item = ensureBytes(arr[i]);
+    flat.set(item, i * 32);
+  }
+  return flat;
+}
+
+function bytesToHexJsi(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function serializeAmountsJsi(amounts) {
+  const buf = new Uint8Array(amounts.length * 8);
+  for (let i = 0; i < amounts.length; i++) {
+    let n = BigInt(amounts[i]);
+    for (let j = 0; j < 8; j++) {
+      buf[i * 8 + j] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+  }
+  return buf;
+}
+
+function deserializeClsagNative(bytes, n) {
+  let offset = 0;
+  const s = [];
+  for (let i = 0; i < n; i++) { s.push(bytesToHexJsi(bytes.slice(offset, offset + 32))); offset += 32; }
+  const c1 = bytesToHexJsi(bytes.slice(offset, offset + 32)); offset += 32;
+  const I = bytesToHexJsi(bytes.slice(offset, offset + 32)); offset += 32;
+  const D = bytesToHexJsi(bytes.slice(offset, offset + 32));
+  return { s, c1, I, D };
+}
+
+function serializeClsagNative(sig) {
+  const s = sig.s.map(ensureBytes);
+  const n = s.length;
+  const buf = new Uint8Array(n * 32 + 96);
+  let offset = 0;
+  for (const si of s) { buf.set(si, offset); offset += 32; }
+  buf.set(ensureBytes(sig.c1), offset); offset += 32;
+  buf.set(ensureBytes(sig.I), offset); offset += 32;
+  buf.set(ensureBytes(sig.D), offset);
+  return buf;
+}
+
+function deserializeTclsagNative(bytes, n) {
+  let offset = 0;
+  const sx = [];
+  for (let i = 0; i < n; i++) { sx.push(bytesToHexJsi(bytes.slice(offset, offset + 32))); offset += 32; }
+  const sy = [];
+  for (let i = 0; i < n; i++) { sy.push(bytesToHexJsi(bytes.slice(offset, offset + 32))); offset += 32; }
+  const c1 = bytesToHexJsi(bytes.slice(offset, offset + 32)); offset += 32;
+  const I = bytesToHexJsi(bytes.slice(offset, offset + 32)); offset += 32;
+  const D = bytesToHexJsi(bytes.slice(offset, offset + 32));
+  return { sx, sy, c1, I, D };
+}
+
+function serializeTclsagNative(sig) {
+  const sx = sig.sx.map(ensureBytes);
+  const sy = sig.sy.map(ensureBytes);
+  const n = sx.length;
+  const buf = new Uint8Array(2 * n * 32 + 96);
+  let offset = 0;
+  for (const s of sx) { buf.set(s, offset); offset += 32; }
+  for (const s of sy) { buf.set(s, offset); offset += 32; }
+  buf.set(ensureBytes(sig.c1), offset); offset += 32;
+  buf.set(ensureBytes(sig.I), offset); offset += 32;
+  buf.set(ensureBytes(sig.D), offset);
+  return buf;
+}
+
+function deserializeBpProveJsi(bytes) {
+  const vCount = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
+  let offset = 4;
+  const V = [];
+  for (let i = 0; i < vCount; i++) { V.push(bytes.slice(offset, offset + 32)); offset += 32; }
+  const proofBytes = bytes.slice(offset);
+  return { V, proofBytes };
 }

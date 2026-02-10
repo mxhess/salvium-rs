@@ -419,6 +419,260 @@ pub unsafe extern "C" fn salvium_argon2id(
     }
 }
 
+// ─── CLSAG Ring Signatures ──────────────────────────────────────────────────
+
+/// CLSAG sign. Output buffer must be ring_count*32 + 96 bytes.
+/// Format: [s_0..s_n (32 bytes each)][c1 (32)][I (32)][D (32)]
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_clsag_sign(
+    message: *const u8,
+    ring: *const u8,
+    ring_count: u32,
+    secret_key: *const u8,
+    commitments: *const u8,
+    commitment_mask: *const u8,
+    pseudo_output: *const u8,
+    secret_index: u32,
+    out: *mut u8,
+) -> i32 {
+    let n = ring_count as usize;
+    let message = crate::to32(slice::from_raw_parts(message, 32));
+    let ring_flat = slice::from_raw_parts(ring, n * 32);
+    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
+    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let sk = crate::to32(slice::from_raw_parts(secret_key, 32));
+    let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
+    let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+
+    let sig = crate::clsag::clsag_sign(&message, &ring_arr, &sk, &comms_arr, &cm, &po, secret_index as usize);
+
+    // Write output: s[0..n], c1, I, D
+    let mut offset = 0;
+    for s in &sig.s {
+        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
+        offset += 32;
+    }
+    ptr::copy_nonoverlapping(sig.c1.as_ptr(), out.add(offset), 32);
+    offset += 32;
+    ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out.add(offset), 32);
+    offset += 32;
+    ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out.add(offset), 32);
+    0
+}
+
+/// CLSAG verify.
+/// sig format: [s_0..s_n (32 bytes each)][c1 (32)][I (32)][D (32)]
+/// Returns 1 for valid, 0 for invalid.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_clsag_verify(
+    message: *const u8,
+    sig: *const u8,
+    sig_len: usize,
+    ring: *const u8,
+    ring_count: u32,
+    commitments: *const u8,
+    pseudo_output: *const u8,
+) -> i32 {
+    let n = ring_count as usize;
+    let expected = n * 32 + 96;
+    if sig_len < expected { return 0; }
+
+    let message = crate::to32(slice::from_raw_parts(message, 32));
+    let sig_bytes = slice::from_raw_parts(sig, sig_len);
+    let ring_flat = slice::from_raw_parts(ring, n * 32);
+    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
+    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+
+    // Parse sig: s[0..n], c1, I, D (no length prefix in FFI format)
+    let mut s = Vec::with_capacity(n);
+    let mut offset = 0;
+    for _ in 0..n {
+        s.push(crate::to32(&sig_bytes[offset..offset + 32]));
+        offset += 32;
+    }
+    let c1 = crate::to32(&sig_bytes[offset..offset + 32]); offset += 32;
+    let key_image = crate::to32(&sig_bytes[offset..offset + 32]); offset += 32;
+    let commitment_image = crate::to32(&sig_bytes[offset..offset + 32]);
+
+    let sig_struct = crate::clsag::ClsagSignature { s, c1, key_image, commitment_image };
+    if crate::clsag::clsag_verify(&message, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+}
+
+// ─── TCLSAG Ring Signatures ────────────────────────────────────────────────
+
+/// TCLSAG sign. Output buffer must be 2*ring_count*32 + 96 bytes.
+/// Format: [sx_0..sx_n][sy_0..sy_n][c1][I][D] (each 32 bytes)
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_tclsag_sign(
+    message: *const u8,
+    ring: *const u8,
+    ring_count: u32,
+    secret_key_x: *const u8,
+    secret_key_y: *const u8,
+    commitments: *const u8,
+    commitment_mask: *const u8,
+    pseudo_output: *const u8,
+    secret_index: u32,
+    out: *mut u8,
+) -> i32 {
+    let n = ring_count as usize;
+    let message = crate::to32(slice::from_raw_parts(message, 32));
+    let ring_flat = slice::from_raw_parts(ring, n * 32);
+    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
+    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let skx = crate::to32(slice::from_raw_parts(secret_key_x, 32));
+    let sky = crate::to32(slice::from_raw_parts(secret_key_y, 32));
+    let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
+    let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+
+    let sig = crate::tclsag::tclsag_sign(&message, &ring_arr, &skx, &sky, &comms_arr, &cm, &po, secret_index as usize);
+
+    let mut offset = 0;
+    for s in &sig.sx {
+        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
+        offset += 32;
+    }
+    for s in &sig.sy {
+        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
+        offset += 32;
+    }
+    ptr::copy_nonoverlapping(sig.c1.as_ptr(), out.add(offset), 32); offset += 32;
+    ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out.add(offset), 32); offset += 32;
+    ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out.add(offset), 32);
+    0
+}
+
+/// TCLSAG verify.
+/// sig format: [sx_0..sx_n][sy_0..sy_n][c1][I][D] (each 32 bytes)
+/// Returns 1 for valid, 0 for invalid.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_tclsag_verify(
+    message: *const u8,
+    sig: *const u8,
+    sig_len: usize,
+    ring: *const u8,
+    ring_count: u32,
+    commitments: *const u8,
+    pseudo_output: *const u8,
+) -> i32 {
+    let n = ring_count as usize;
+    let expected = 2 * n * 32 + 96;
+    if sig_len < expected { return 0; }
+
+    let message = crate::to32(slice::from_raw_parts(message, 32));
+    let sig_bytes = slice::from_raw_parts(sig, sig_len);
+    let ring_flat = slice::from_raw_parts(ring, n * 32);
+    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
+    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+
+    let mut offset = 0;
+    let mut sx = Vec::with_capacity(n);
+    for _ in 0..n { sx.push(crate::to32(&sig_bytes[offset..offset+32])); offset += 32; }
+    let mut sy = Vec::with_capacity(n);
+    for _ in 0..n { sy.push(crate::to32(&sig_bytes[offset..offset+32])); offset += 32; }
+    let c1 = crate::to32(&sig_bytes[offset..offset+32]); offset += 32;
+    let key_image = crate::to32(&sig_bytes[offset..offset+32]); offset += 32;
+    let commitment_image = crate::to32(&sig_bytes[offset..offset+32]);
+
+    let sig_struct = crate::tclsag::TclsagSignature { sx, sy, c1, key_image, commitment_image };
+    if crate::tclsag::tclsag_verify(&message, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+}
+
+// ─── Bulletproofs+ Range Proofs ─────────────────────────────────────────────
+
+/// Bulletproof+ prove.
+/// amounts: n * 8 bytes (u64 LE), masks: n * 32 bytes (scalars)
+/// Output: serialized proof bytes + V commitments.
+/// Format: [v_count as u32 LE][V_0..V_n (32 bytes each)][proof_bytes...]
+/// out_len receives the actual output length.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_bulletproof_plus_prove(
+    amounts: *const u8,
+    masks: *const u8,
+    count: u32,
+    out: *mut u8,
+    out_max: usize,
+    out_len: *mut usize,
+) -> i32 {
+    use curve25519_dalek::scalar::Scalar;
+
+    let n = count as usize;
+    let amounts_slice = slice::from_raw_parts(amounts, n * 8);
+    let masks_slice = slice::from_raw_parts(masks, n * 32);
+
+    let amounts_vec: Vec<u64> = (0..n).map(|i| {
+        u64::from_le_bytes([
+            amounts_slice[i*8], amounts_slice[i*8+1], amounts_slice[i*8+2], amounts_slice[i*8+3],
+            amounts_slice[i*8+4], amounts_slice[i*8+5], amounts_slice[i*8+6], amounts_slice[i*8+7],
+        ])
+    }).collect();
+    let masks_vec: Vec<Scalar> = (0..n).map(|i| {
+        Scalar::from_bytes_mod_order(crate::to32(&masks_slice[i*32..(i+1)*32]))
+    }).collect();
+
+    let proof = crate::bulletproofs_plus::bulletproof_plus_prove(&amounts_vec, &masks_vec);
+    let proof_bytes = crate::bulletproofs_plus::serialize_proof(&proof);
+
+    // Output: [v_count u32 LE][V_0..V_n 32 bytes each][proof_bytes]
+    let total = 4 + proof.v.len() * 32 + proof_bytes.len();
+    if total > out_max { return -1; }
+
+    let mut off = 0;
+    let v_count = proof.v.len() as u32;
+    ptr::copy_nonoverlapping(v_count.to_le_bytes().as_ptr(), out.add(off), 4);
+    off += 4;
+    for v in &proof.v {
+        let bytes = v.compress().to_bytes();
+        ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(off), 32);
+        off += 32;
+    }
+    ptr::copy_nonoverlapping(proof_bytes.as_ptr(), out.add(off), proof_bytes.len());
+    off += proof_bytes.len();
+
+    *out_len = off;
+    0
+}
+
+/// Bulletproof+ verify.
+/// proof_bytes: serialized proof, commitments: n * 32 bytes
+/// Returns 1 for valid, 0 for invalid.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
+    proof_bytes: *const u8,
+    proof_len: usize,
+    commitments: *const u8,
+    commitment_count: u32,
+) -> i32 {
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+
+    let n = commitment_count as usize;
+    let proof_data = slice::from_raw_parts(proof_bytes, proof_len);
+    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+
+    let v: Vec<_> = (0..n).map(|i| {
+        match CompressedEdwardsY(crate::to32(&comms_flat[i*32..(i+1)*32])).decompress() {
+            Some(p) => p,
+            None => return curve25519_dalek::edwards::EdwardsPoint::default(),
+        }
+    }).collect();
+
+    let proof = match crate::bulletproofs_plus::parse_proof(proof_data) {
+        Some(p) => p,
+        None => return 0,
+    };
+
+    if crate::bulletproofs_plus::bulletproof_plus_verify(&v, &proof) { 1 } else { 0 }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

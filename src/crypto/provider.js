@@ -56,10 +56,23 @@ export async function setCryptoBackend(type) {
  */
 export function getCryptoBackend() {
   if (!currentBackend) {
-    // Lazy-init JS backend (sync, no await needed)
+    // Sync fallback to JS — WASM is set as default via initCrypto()
     currentBackend = new JsCryptoBackend();
   }
   return currentBackend;
+}
+
+/**
+ * Initialize crypto with best available backend.
+ * Attempts WASM first, falls back to JS if unavailable (QuickJS, etc.).
+ * Call at app startup before any crypto operations.
+ */
+export async function initCrypto() {
+  try {
+    await setCryptoBackend('wasm');
+  } catch (_e) {
+    // WASM unavailable (QuickJS, etc.) — JS fallback already active
+  }
 }
 
 /**

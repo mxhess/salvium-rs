@@ -165,6 +165,60 @@ export class WasmCryptoBackend {
     return this.wasm.gen_commitment_mask(sharedSecret);
   }
 
+  // ─── CLSAG Ring Signatures ──────────────────────────────────────────────
+
+  clsagSign(message, ring, secretKey, commitments, commitmentMask, pseudoOutput, secretIndex) {
+    const ringFlat = flattenArrayOf32(ring);
+    const commFlat = flattenArrayOf32(commitments);
+    const resultBytes = this.wasm.clsag_sign_wasm(
+      message, ringFlat, secretKey, commFlat, commitmentMask, pseudoOutput, secretIndex
+    );
+    return deserializeClsagSig(resultBytes, ring.length);
+  }
+
+  clsagVerify(message, sig, ring, commitments, pseudoOutput) {
+    const sigBytes = serializeClsagSig(sig);
+    const ringFlat = flattenArrayOf32(ring);
+    const commFlat = flattenArrayOf32(commitments);
+    return this.wasm.clsag_verify_wasm(
+      message, sigBytes, ringFlat, commFlat, pseudoOutput
+    );
+  }
+
+  // ─── TCLSAG Ring Signatures ────────────────────────────────────────────
+
+  tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, commitmentMask, pseudoOutput, secretIndex) {
+    const ringFlat = flattenArrayOf32(ring);
+    const commFlat = flattenArrayOf32(commitments);
+    const resultBytes = this.wasm.tclsag_sign_wasm(
+      message, ringFlat, secretKeyX, secretKeyY, commFlat, commitmentMask, pseudoOutput, secretIndex
+    );
+    return deserializeTclsagSig(resultBytes, ring.length);
+  }
+
+  tclsagVerify(message, sig, ring, commitments, pseudoOutput) {
+    const sigBytes = serializeTclsagSig(sig);
+    const ringFlat = flattenArrayOf32(ring);
+    const commFlat = flattenArrayOf32(commitments);
+    return this.wasm.tclsag_verify_wasm(
+      message, sigBytes, ringFlat, commFlat, pseudoOutput
+    );
+  }
+
+  // ─── Bulletproofs+ Range Proofs ────────────────────────────────────────
+
+  bulletproofPlusProve(amounts, masks) {
+    const amountBytes = serializeAmounts(amounts);
+    const masksFlat = flattenArrayOf32(masks);
+    const resultBytes = this.wasm.bulletproof_plus_prove_wasm(amountBytes, masksFlat);
+    return deserializeBpProveResult(resultBytes);
+  }
+
+  bulletproofPlusVerify(commitmentBytes, proofBytes) {
+    const commFlat = flattenArrayOf32(commitmentBytes);
+    return this.wasm.bulletproof_plus_verify_wasm(proofBytes, commFlat);
+  }
+
   // Oracle signature verification
   sha256(data) { return nobleSha256(data); }
 
@@ -234,6 +288,130 @@ function derToRawWasm(der, componentLen) {
   const sTrim = sBytes[0] === 0 ? sBytes.slice(1) : sBytes;
   raw.set(sTrim, componentLen * 2 - sTrim.length);
   return raw;
+}
+
+// ─── Serialization helpers for ring signatures ────────────────────────────
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return bytes;
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function ensureBytes(v) {
+  if (typeof v === 'string') return hexToBytes(v);
+  return v;
+}
+
+function flattenArrayOf32(arr) {
+  const flat = new Uint8Array(arr.length * 32);
+  for (let i = 0; i < arr.length; i++) {
+    const item = ensureBytes(arr[i]);
+    flat.set(item, i * 32);
+  }
+  return flat;
+}
+
+function serializeAmounts(amounts) {
+  const buf = new Uint8Array(amounts.length * 8);
+  for (let i = 0; i < amounts.length; i++) {
+    let n = BigInt(amounts[i]);
+    for (let j = 0; j < 8; j++) {
+      buf[i * 8 + j] = Number(n & 0xffn);
+      n >>= 8n;
+    }
+  }
+  return buf;
+}
+
+/**
+ * Deserialize CLSAG signature from WASM output.
+ * Format: [n as u32 LE][s_0..s_n (32 each)][c1 (32)][I (32)][D (32)]
+ */
+function deserializeClsagSig(bytes, ringSize) {
+  const n = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
+  let offset = 4;
+  const s = [];
+  for (let i = 0; i < n; i++) {
+    s.push(bytesToHex(bytes.slice(offset, offset + 32)));
+    offset += 32;
+  }
+  const c1 = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32;
+  const I = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32;
+  const D = bytesToHex(bytes.slice(offset, offset + 32));
+  return { s, c1, I, D };
+}
+
+/**
+ * Serialize CLSAG signature for WASM verification.
+ * Format: [n as u32 LE][s_0..s_n][c1][I][D]
+ */
+function serializeClsagSig(sig) {
+  const s = sig.s.map(ensureBytes);
+  const n = s.length;
+  const buf = new Uint8Array(4 + n * 32 + 96);
+  new DataView(buf.buffer).setUint32(0, n, true);
+  let offset = 4;
+  for (const si of s) { buf.set(si, offset); offset += 32; }
+  buf.set(ensureBytes(sig.c1), offset); offset += 32;
+  buf.set(ensureBytes(sig.I), offset); offset += 32;
+  buf.set(ensureBytes(sig.D), offset);
+  return buf;
+}
+
+/**
+ * Deserialize TCLSAG signature from WASM output.
+ * Format: [n as u32 LE][sx_0..sx_n][sy_0..sy_n][c1][I][D]
+ */
+function deserializeTclsagSig(bytes, ringSize) {
+  const n = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
+  let offset = 4;
+  const sx = [];
+  for (let i = 0; i < n; i++) { sx.push(bytesToHex(bytes.slice(offset, offset + 32))); offset += 32; }
+  const sy = [];
+  for (let i = 0; i < n; i++) { sy.push(bytesToHex(bytes.slice(offset, offset + 32))); offset += 32; }
+  const c1 = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32;
+  const I = bytesToHex(bytes.slice(offset, offset + 32)); offset += 32;
+  const D = bytesToHex(bytes.slice(offset, offset + 32));
+  return { sx, sy, c1, I, D };
+}
+
+/**
+ * Serialize TCLSAG signature for WASM verification.
+ */
+function serializeTclsagSig(sig) {
+  const sx = sig.sx.map(ensureBytes);
+  const sy = sig.sy.map(ensureBytes);
+  const n = sx.length;
+  const buf = new Uint8Array(4 + 2 * n * 32 + 96);
+  new DataView(buf.buffer).setUint32(0, n, true);
+  let offset = 4;
+  for (const s of sx) { buf.set(s, offset); offset += 32; }
+  for (const s of sy) { buf.set(s, offset); offset += 32; }
+  buf.set(ensureBytes(sig.c1), offset); offset += 32;
+  buf.set(ensureBytes(sig.I), offset); offset += 32;
+  buf.set(ensureBytes(sig.D), offset);
+  return buf;
+}
+
+/**
+ * Deserialize BP+ prove result from WASM output.
+ * Format: [v_count u32 LE][V_0..V_n 32B each][proof_bytes]
+ */
+function deserializeBpProveResult(bytes) {
+  const vCount = new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
+  let offset = 4;
+  const V = [];
+  for (let i = 0; i < vCount; i++) {
+    V.push(bytes.slice(offset, offset + 32));
+    offset += 32;
+  }
+  const proofBytes = bytes.slice(offset);
+  return { V, proofBytes };
 }
 
 function containsBytesWasm(haystack, needle) {

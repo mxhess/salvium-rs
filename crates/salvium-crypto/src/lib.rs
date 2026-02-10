@@ -6,7 +6,10 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 use sha2::{Sha256, Digest};
 
-mod elligator2;
+pub(crate) mod elligator2;
+pub mod clsag;
+pub mod tclsag;
+pub mod bulletproofs_plus;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod ffi;
@@ -48,7 +51,7 @@ pub fn blake2b_keyed(data: &[u8], out_len: usize, key: &[u8]) -> Vec<u8> {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn to32(s: &[u8]) -> [u8; 32] {
+pub(crate) fn to32(s: &[u8]) -> [u8; 32] {
     let mut buf = [0u8; 32];
     let len = s.len().min(32);
     buf[..len].copy_from_slice(&s[..len]);
@@ -177,7 +180,7 @@ pub fn double_scalar_mult_base(a: &[u8], p: &[u8], b: &[u8]) -> Vec<u8> {
 
 // ─── Phase 3: Hash-to-Point & Key Derivation ────────────────────────────────
 
-fn keccak256_internal(data: &[u8]) -> [u8; 32] {
+pub(crate) fn keccak256_internal(data: &[u8]) -> [u8; 32] {
     let mut keccak = Keccak::v256();
     let mut output = [0u8; 32];
     keccak.update(data);
@@ -270,7 +273,7 @@ pub fn derive_secret_key(derivation: &[u8], output_index: u32, base_sec: &[u8]) 
 
 /// H generator for Pedersen commitments: H = H_p(G)
 /// Precomputed from Salvium/CryptoNote rctTypes.h
-const H_POINT_BYTES: [u8; 32] = [
+pub(crate) const H_POINT_BYTES: [u8; 32] = [
     0x8b, 0x65, 0x59, 0x70, 0x15, 0x37, 0x99, 0xaf,
     0x2a, 0xea, 0xdc, 0x9f, 0xf1, 0xad, 0xd0, 0xea,
     0x6c, 0x72, 0x51, 0xd5, 0x41, 0x54, 0xcf, 0xa9,

@@ -16,6 +16,7 @@ import {
   generateKeyDerivation, derivePublicKey, deriveSecretKey,
   derivationToScalar, deriveViewTag,
   hashToPoint, generateKeyImage,
+  getCryptoBackend,
 } from './crypto/index.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { bulletproofPlusProve, serializeProof as serializeBpPlus } from './bulletproofs_plus.js';
@@ -452,11 +453,16 @@ export function clsagSign(message, ring, secretKey, commitments, commitmentMask,
   if (typeof commitmentMask === 'string') commitmentMask = hexToBytes(commitmentMask);
   if (typeof pseudoOutputCommitment === 'string') pseudoOutputCommitment = hexToBytes(pseudoOutputCommitment);
 
-  const n = ring.length; // Ring size
-
   // Normalize inputs
   ring = ring.map(k => typeof k === 'string' ? hexToBytes(k) : k);
   commitments = commitments.map(c => typeof c === 'string' ? hexToBytes(c) : c);
+
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.clsagSign(message, ring, secretKey, commitments, commitmentMask, pseudoOutputCommitment, secretIndex);
+  if (nativeResult !== null) return nativeResult;
+
+  const n = ring.length; // Ring size
 
   // Validate ring data
   for (let _i = 0; _i < ring.length; _i++) {
@@ -644,11 +650,16 @@ export function tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, c
   if (typeof commitmentMask === 'string') commitmentMask = hexToBytes(commitmentMask);
   if (typeof pseudoOutputCommitment === 'string') pseudoOutputCommitment = hexToBytes(pseudoOutputCommitment);
 
-  const n = ring.length; // Ring size
-
   // Normalize inputs
   ring = ring.map(k => typeof k === 'string' ? hexToBytes(k) : k);
   commitments = commitments.map(c => typeof c === 'string' ? hexToBytes(c) : c);
+
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.tclsagSign(message, ring, secretKeyX, secretKeyY, commitments, commitmentMask, pseudoOutputCommitment, secretIndex);
+  if (nativeResult !== null) return nativeResult;
+
+  const n = ring.length; // Ring size
 
   // Get generator T (second basis point)
   const T = getGeneratorT();
@@ -845,11 +856,17 @@ export function clsagVerify(message, sig, ring, commitments, pseudoOutputCommitm
   if (typeof message === 'string') message = hexToBytes(message);
   if (typeof pseudoOutputCommitment === 'string') pseudoOutputCommitment = hexToBytes(pseudoOutputCommitment);
 
-  const n = ring.length;
-
   // Normalize inputs
   ring = ring.map(k => typeof k === 'string' ? hexToBytes(k) : k);
   commitments = commitments.map(c => typeof c === 'string' ? hexToBytes(c) : c);
+
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.clsagVerify(message, sig, ring, commitments, pseudoOutputCommitment);
+  if (nativeResult !== null) return nativeResult;
+
+  const n = ring.length;
+
   const s = sig.s.map(si => typeof si === 'string' ? hexToBytes(si) : si);
   const c1 = typeof sig.c1 === 'string' ? hexToBytes(sig.c1) : sig.c1;
   const I = typeof sig.I === 'string' ? hexToBytes(sig.I) : sig.I;
@@ -930,11 +947,17 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
   if (typeof message === 'string') message = hexToBytes(message);
   if (typeof pseudoOutputCommitment === 'string') pseudoOutputCommitment = hexToBytes(pseudoOutputCommitment);
 
-  const n = ring.length;
-
   // Normalize inputs
   ring = ring.map(k => typeof k === 'string' ? hexToBytes(k) : k);
   commitments = commitments.map(c => typeof c === 'string' ? hexToBytes(c) : c);
+
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.tclsagVerify(message, sig, ring, commitments, pseudoOutputCommitment);
+  if (nativeResult !== null) return nativeResult;
+
+  const n = ring.length;
+
   const sx = sig.sx.map(si => typeof si === 'string' ? hexToBytes(si) : si);
   const sy = sig.sy.map(si => typeof si === 'string' ? hexToBytes(si) : si);
   const c1 = typeof sig.c1 === 'string' ? hexToBytes(sig.c1) : sig.c1;

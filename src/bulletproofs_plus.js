@@ -9,7 +9,7 @@
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { mod, invert, Field } from '@noble/curves/abstract/modular.js';
-import { keccak256, hashToPoint as cryptoHashToPoint } from './crypto/index.js';
+import { keccak256, hashToPoint as cryptoHashToPoint, getCryptoBackend } from './crypto/index.js';
 
 // Ed25519 curve order (L)
 const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');
@@ -668,6 +668,11 @@ export function verifyBulletproofPlusBatch(proofs) {
  * @returns {boolean} - True if proof is valid
  */
 export function verifyRangeProof(commitmentBytes, proofBytes) {
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.bulletproofPlusVerify(commitmentBytes, proofBytes);
+  if (nativeResult !== null) return nativeResult;
+
   const V = commitmentBytes.map(bytesToPoint);
   const proof = parseProof(proofBytes);
   return verifyBulletproofPlus(V, proof);
@@ -792,6 +797,11 @@ export function bulletproofPlusProve(amounts, masks) {
       throw new Error(`Amount ${i} out of range`);
     }
   }
+
+  // Try accelerated backend (WASM/JSI)
+  const backend = getCryptoBackend();
+  const nativeResult = backend.bulletproofPlusProve(amounts, masks);
+  if (nativeResult !== null) return nativeResult;
 
   // Compute M (smallest power of 2 >= amounts.length)
   let M = 1;
