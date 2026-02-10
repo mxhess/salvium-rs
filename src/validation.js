@@ -76,18 +76,18 @@ export const RCT_TYPE_NAMES = {
   Bulletproof2: 4,
   CLSAG: 5,
   BulletproofPlus: 6,
-  SalviumZero: 7,
-  SalviumOne: 8,
-  FullProofs: 9,
+  FullProofs: 7,
+  SalviumZero: 8,
+  SalviumOne: 9,
 };
 
 /**
  * Output types (matching C++ cryptonote_basic.h)
  */
 export const TXOUT_TYPE = {
-  to_key: 0,
-  to_tagged_key: 1,
-  to_carrot_v1: 2,
+  to_key: 0x02,
+  to_tagged_key: 0x03,
+  to_carrot_v1: 0x04,
 };
 
 /**

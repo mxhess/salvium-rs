@@ -191,8 +191,9 @@ export function x25519ScalarMult(scalar, u) {
  * @returns {Uint8Array} 32-byte shared secret (s_sender_receiver_unctx)
  */
 export function carrotEcdhKeyExchange(viewIncomingKey, enoteEphemeralPubkey) {
-  // enoteEphemeralPubkey (D_e / p_r) is ALREADY in X25519 format (Montgomery u-coordinate)
-  // No conversion needed - just perform X25519 scalar multiplication directly
+  // D_e is stored as X25519 Montgomery u-coordinate in tx_extra (verified against C++:
+  // carrot_enote_types.h uses mx25519_pubkey, format_utils.cpp stores via raw_byte_convert).
+  // No ed25519→Montgomery conversion needed.
   // s_sr = k_vi * D_e
   const sharedSecret = x25519ScalarMult(viewIncomingKey, enoteEphemeralPubkey);
 

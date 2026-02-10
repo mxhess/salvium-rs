@@ -124,7 +124,9 @@ import {
   scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scMulAdd as _scMulAdd, scRandom as _scRandom,
   commit as _commit, genCommitmentMask as _genCommitmentMask,
   serializeTxPrefix as _serializeTxPrefix, getTxPrefixHash as _getTxPrefixHash,
-  serializeRctBase as _serializeRctBase
+  serializeRctBase as _serializeRctBase,
+  serializeCLSAG as _serializeCLSAG, serializeTCLSAG as _serializeTCLSAG,
+  encodeVarint as _encodeVarint, concatBytes as _concatBytes
 } from './transaction/serialization.js';
 
 // Local aliases for use in this file
@@ -1122,17 +1124,59 @@ export function getTxPublicKey(txSecretKey) {
  * @returns {Uint8Array} 32-byte transaction hash
  */
 export function getTransactionHash(tx) {
-  // For RingCT transactions, the hash is computed over:
-  // H(H(prefix) || H(rctBase) || H(rctPrunable))
-  // But for simplicity, if we have serialized data, we can hash that
+  // CryptoNote v2+ transaction hash: H(H(prefix) || H(rctBase) || H(rctPrunable))
+  const prefixBytes = serializeTxPrefix(tx);
+  const prefixHash = keccak256(prefixBytes);
 
-  // This is simplified - full implementation needs proper RingCT serialization
-  const prefix = serializeTxPrefix(tx);
-  const prefixHash = keccak256(prefix);
+  // If no RCT data, just return prefix hash (e.g. coinbase with RCT type 0)
+  if (!tx.rct || !tx.rct.type) {
+    return prefixHash;
+  }
 
-  // For a complete implementation, we'd also hash RingCT data
-  // For now, return prefix hash
-  return prefixHash;
+  // Hash the RCT base (type, fee, ecdhInfo, outPk, etc.)
+  const rctBaseBytes = serializeRctBase(tx.rct);
+  const rctBaseHash = keccak256(rctBaseBytes);
+
+  // Hash the RCT prunable section (BP+ proofs, ring signatures, pseudoOuts)
+  const prunableChunks = [];
+
+  // BP+ proofs
+  if (tx.rct.bulletproofPlus && tx.rct.bulletproofPlus.serialized) {
+    prunableChunks.push(_encodeVarint(1));
+    prunableChunks.push(tx.rct.bulletproofPlus.serialized);
+  }
+
+  // Ring signatures
+  if (tx.rct.type === 9 && tx.rct.TCLSAGs) {
+    for (const sig of tx.rct.TCLSAGs) {
+      prunableChunks.push(_serializeTCLSAG(sig));
+    }
+  } else if (tx.rct.CLSAGs) {
+    for (const sig of tx.rct.CLSAGs) {
+      prunableChunks.push(_serializeCLSAG(sig));
+    }
+  }
+
+  // pseudoOuts
+  if (tx.rct.pseudoOuts) {
+    for (const po of tx.rct.pseudoOuts) {
+      prunableChunks.push(typeof po === 'string' ? hexToBytes(po) : po);
+    }
+  }
+
+  let rctPrunableHash;
+  if (prunableChunks.length > 0) {
+    rctPrunableHash = keccak256(_concatBytes(prunableChunks));
+  } else {
+    rctPrunableHash = new Uint8Array(32); // zeros if no prunable data
+  }
+
+  // Final hash: H(prefixHash || rctBaseHash || rctPrunableHash)
+  const combined = new Uint8Array(96);
+  combined.set(prefixHash, 0);
+  combined.set(rctBaseHash, 32);
+  combined.set(rctPrunableHash, 64);
+  return keccak256(combined);
 }
 
 // =============================================================================
@@ -1152,7 +1196,20 @@ export const GAMMA_SCALE = 1 / 1.61;
 export const DEFAULT_UNLOCK_TIME = 10 * 120; // 1200 seconds
 
 /**
+ * Generate a cryptographically secure random float in [0, 1).
+ * Uses crypto.getRandomValues instead of Math.random() to prevent
+ * statistical leakage of the real spend in ring signatures.
+ * @returns {number} Random float in [0, 1)
+ */
+function secureRandomFloat() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 0x100000000;
+}
+
+/**
  * Gamma distribution sampler using the Marsaglia and Tsang method
+ * Uses CSPRNG (crypto.getRandomValues) for privacy-critical decoy selection.
  * @param {number} shape - Shape parameter (k or alpha)
  * @param {number} scale - Scale parameter (theta)
  * @returns {number} Random sample from gamma distribution
@@ -1174,22 +1231,22 @@ export function sampleGamma(shape, scale) {
   while (true) {
     let x, v;
 
-    // Generate standard normal using Box-Muller
+    // Generate standard normal using Box-Muller (CSPRNG)
     do {
-      const u1 = Math.random();
-      const u2 = Math.random();
+      const u1 = secureRandomFloat();
+      const u2 = secureRandomFloat();
       x = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
       v = 1 + c * x;
     } while (v <= 0);
 
     v = v * v * v;
-    const u = Math.random();
+    const u = secureRandomFloat();
 
     // Accept/reject
     if (u < 1 - 0.0331 * x * x * x * x) {
       let result = d * v * scale;
       if (shape < 1) {
-        result *= Math.pow(Math.random(), 1 / shape);
+        result *= Math.pow(secureRandomFloat(), 1 / shape);
       }
       return result;
     }
@@ -1197,7 +1254,7 @@ export function sampleGamma(shape, scale) {
     if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) {
       let result = d * v * scale;
       if (shape < 1) {
-        result *= Math.pow(Math.random(), 1 / shape);
+        result *= Math.pow(secureRandomFloat(), 1 / shape);
       }
       return result;
     }
@@ -1262,7 +1319,7 @@ export class GammaPicker {
       x -= DEFAULT_UNLOCK_TIME;
     } else {
       // Output would be too recent, pick from recent spend window
-      x = Math.floor(Math.random() * RECENT_SPEND_WINDOW);
+      x = Math.floor(secureRandomFloat() * RECENT_SPEND_WINDOW);
     }
 
     // Convert time to output index
@@ -1290,7 +1347,7 @@ export class GammaPicker {
       return -1;
     }
 
-    return firstInBlock + Math.floor(Math.random() * countInBlock);
+    return firstInBlock + Math.floor(secureRandomFloat() * countInBlock);
   }
 
   /**
@@ -1448,13 +1505,24 @@ export function estimateTxSize(numInputs, ringSize, numOutputs, extraSize = 0, o
   const {
     bulletproofPlus = true,
     clsag = true,
-    viewTags = true
+    viewTags = true,
+    txType = 0,           // Salvium TX type (0=none, 3=TRANSFER, 5=BURN, 6=STAKE, etc.)
+    numReturnAddresses = 0 // Number of return addresses in return_address_list
   } = options;
 
   let size = 0;
 
   // Transaction prefix
   size += 1 + 6; // version + unlock_time varint
+
+  // Salvium-specific prefix fields (HF3+)
+  if (txType > 0) {
+    size += 1;  // txType varint
+    size += 6;  // amount_burnt varint
+    // return_address_list: varint count + addresses (each ~70 bytes encoded)
+    size += 4 + numReturnAddresses * 70;
+    size += 32; // change_mask (32 bytes)
+  }
 
   // Inputs
   // vin: type(1) + amount varint(6) + key_offsets count(4) + key_offsets values(ringSize*2) + key_image(32)

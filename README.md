@@ -1,6 +1,6 @@
 # salvium-js
 
-JavaScript library for Salvium cryptocurrency - wallet generation, address handling, RPC clients, key derivation, and cryptographic utilities.
+JavaScript/TypeScript library for Salvium cryptocurrency — wallet management, transaction construction, blockchain validation, and cryptographic operations with a high-performance Rust/WASM backend.
 
 ## Features
 
@@ -8,25 +8,57 @@ JavaScript library for Salvium cryptocurrency - wallet generation, address handl
 - **Mnemonic Support** - 25-word seed phrases in 12 languages
 - **Key Derivation** - CryptoNote and CARROT key derivation from seeds
 - **Address Creation** - Create all 18 Salvium address types
-- **Subaddress Generation** - Generate CryptoNote and CARROT subaddresses
+- **Subaddress Generation** - CryptoNote and CARROT subaddresses
 - **Integrated Addresses** - Create and parse integrated addresses with payment IDs
 - **Address Validation** - Parse and validate any Salvium address
-- **Transaction Scanning** - Detect owned outputs, decrypt amounts, view tags
+- **Transaction Scanning** - CryptoNote + CARROT output detection, amount decryption, view tags
 - **Key Images** - Generate and validate key images for spend detection
 - **Transaction Construction** - Pedersen commitments, CLSAG/TCLSAG signatures, serialization
-- **Bulletproofs+ Range Proofs** - Pure JS proof generation AND verification (mobile-friendly)
+- **Bulletproofs+ Range Proofs** - Proof generation and verification
+- **Blockchain Validation** - Full consensus rules, difficulty, fees, block/TX validation
 - **RandomX Proof-of-Work** - WASM-JIT implementation with official test vectors
 - **Stratum Mining Client** - Connect to mining pools with multi-threaded hashing
-- **Wallet Class** - Unified wallet management with view-only mode support
+- **Wallet Class** - Unified wallet management with view-only mode, sync, and encrypted storage
 - **UTXO Selection** - Multiple strategies (minimize inputs, minimize change, etc.)
 - **Transaction Builder** - High-level buildTransaction() and signTransaction() API
 - **Transaction Parser** - Decode and analyze transaction data
 - **RPC Clients** - Full daemon and wallet RPC implementations
 - **Signature Verification** - Verify message signatures (V1 and V2 formats)
-- **Cryptographic Primitives** - Blake2b, Keccak-256, Ed25519, Base58
+- **Cryptographic Primitives** - Blake2b, Keccak-256, Ed25519, X25519, Base58
 - **Multi-Network Support** - Mainnet, Testnet, Stagenet
 - **TypeScript Support** - Full type definitions included
 - **Minimal Dependencies** - Only @noble/curves and @noble/hashes
+
+## Crypto Backends
+
+salvium-js includes three interchangeable crypto backends behind a unified provider API:
+
+| Backend | Environment | Performance | Size |
+|---------|-------------|-------------|------|
+| **WASM** (default) | Browser, Node, Bun | 8-26x faster than JS | 319KB |
+| **JSI** | React Native (iOS/Android) | Native speed via FFI | Static lib |
+| **JS** | QuickJS, any JS runtime | Baseline (Noble curves) | Zero deps |
+
+The WASM backend is loaded automatically via `initCrypto()`. All 28+ low-level primitives plus the expensive high-level protocols (CLSAG, TCLSAG, Bulletproofs+) run in Rust-compiled WASM. The JS backend is a transparent fallback for environments without WASM support.
+
+```javascript
+import { initCrypto, getCryptoBackend } from 'salvium-js';
+
+// Initialize at app startup — loads WASM, falls back to JS
+await initCrypto();
+
+console.log(getCryptoBackend().name);  // 'wasm' or 'js'
+```
+
+### Performance (WASM vs JS)
+
+| Operation | JS (Noble) | WASM (curve25519-dalek) | Speedup |
+|-----------|-----------|-------------------------|---------|
+| CLSAG sign (16-ring) | ~200ms | ~15ms | ~13x |
+| TCLSAG sign (16-ring) | ~250ms | ~18ms | ~14x |
+| BP+ prove (2 outputs) | ~1100ms | ~45ms | ~24x |
+| BP+ verify (2 outputs) | ~300ms | ~20ms | ~15x |
+| Key derivation | ~2ms | ~0.2ms | ~10x |
 
 ## Address Types Supported
 
@@ -560,7 +592,7 @@ const tclsagValid = tclsagVerify(message, tclsagSig, ring, commitments, pseudoCo
 
 ## Bulletproofs+ Range Proofs
 
-Generate and verify range proofs that prove transaction amounts are in valid range (0 to 2^64-1) without revealing the actual amounts. **100% pure JavaScript** - no WASM required.
+Generate and verify range proofs that prove transaction amounts are in valid range (0 to 2^64-1) without revealing the actual amounts.
 
 ```javascript
 import {
@@ -610,16 +642,6 @@ const isValid = verifyRangeProof(
 const parsedProof = parseProof(proofBytes);
 const verified = verifyBulletproofPlus(commitments, parsedProof);
 ```
-
-**Performance** (pure JavaScript, no WASM):
-| Operation | Time |
-|-----------|------|
-| Generator init (1024 pts) | ~800ms (one-time, cached) |
-| Single proof generation | ~1100ms |
-| Proof verification | ~300ms |
-| Round-trip (generate + verify) | ~1400ms |
-
-This is fast enough for mobile wallets (React Native on iOS/Android).
 
 ```javascript
 // Serialize transaction
@@ -789,6 +811,15 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `toStandardAddress(addr)` | Extract standard from integrated |
 | `describeAddress(addr)` | Human-readable description |
 
+### Crypto Backend Functions
+
+| Function | Description |
+|----------|-------------|
+| `initCrypto()` | Initialize crypto (loads WASM, falls back to JS) |
+| `setCryptoBackend(type)` | Set backend: `'wasm'`, `'jsi'`, or `'js'` |
+| `getCryptoBackend()` | Get active backend instance |
+| `getCurrentBackendType()` | Get active backend name string |
+
 ### Transaction Scanning Functions
 
 | Function | Description |
@@ -884,6 +915,8 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `wallet.getAddress()` | Get main wallet address |
 | `wallet.getSubaddress(major, minor)` | Generate subaddress |
 | `wallet.getBalance()` | Get balance (total, unlocked, locked) |
+| `wallet.syncWithDaemon(daemonRpc)` | Sync wallet with daemon (CARROT-aware) |
+| `wallet.transfer(options)` | Send transaction via synced wallet |
 | `wallet.canSign()` | Check if wallet can sign transactions |
 | `wallet.canScan()` | Check if wallet can scan for outputs |
 | `wallet.toJSON(includeSecrets?)` | Serialize wallet to JSON |
@@ -1090,7 +1123,46 @@ bun test/all.js --integration
 bun test/all.js --integration http://localhost:19081
 ```
 
-Test coverage: 19 test suites including CLSAG/TCLSAG signing and official RandomX test vectors.
+25 test suites, 899+ tests covering addresses, keys, mnemonics, scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, and cross-backend WASM/JS interop.
+
+## Project Structure
+
+```
+salvium-js/
+  src/
+    address.js          # Address creation, parsing, validation
+    blake2b.js          # Blake2b hashing
+    blockchain.js       # Chain state, reorg detection
+    bulletproofs_plus.js # BP+ range proofs
+    carrot.js           # CARROT key derivation
+    carrot-scanning.js  # CARROT output scanning (X25519 ECDH)
+    consensus.js        # Difficulty, rewards, fees, median
+    keccak.js           # Keccak-256 hashing
+    keyimage.js         # Key image generation
+    mining.js           # RandomX mining
+    mnemonic.js         # 25-word seed phrases
+    scanning.js         # CryptoNote output scanning
+    signature.js        # Message signature verification
+    subaddress.js       # Subaddress generation
+    transaction.js      # TX construction, CLSAG/TCLSAG, decoy selection
+    validation.js       # TX/block validation rules
+    wallet.js           # Wallet class
+    wallet-sync.js      # Daemon sync engine (CARROT-aware)
+    crypto/
+      provider.js       # Backend-agnostic crypto API
+      backend-js.js     # Pure JS backend (Noble curves)
+      backend-wasm.js   # Rust/WASM backend (curve25519-dalek)
+      backend-jsi.js    # React Native JSI backend (FFI)
+      wasm/             # Compiled WASM binary (319KB)
+    rpc/
+      daemon.js         # Daemon RPC client
+      wallet.js         # Wallet RPC client
+    transaction/        # TX parsing, serialization, constants
+    wallet/             # Account, storage, encryption
+  crates/
+    salvium-crypto/     # Rust crate (CLSAG, TCLSAG, BP+, 28 primitives)
+  test/                 # 25 test suites
+```
 
 ## Contributing
 

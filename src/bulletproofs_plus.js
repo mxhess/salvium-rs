@@ -523,19 +523,23 @@ export function verifyBulletproofPlusBatch(proofs) {
             m, M, MN, rounds, y, z, e, challenges, challengeInverses, yInv } = data;
 
     // Random weight for batch verification (for single proof, use 1)
-    const w = proofs.length === 1 ? 1n : mod(BigInt(Math.floor(Math.random() * 2**32)), L);
+    // Must use cryptographically secure random to prevent proof forgery
+    let w;
+    if (proofs.length === 1) {
+      w = 1n;
+    } else {
+      const wBytes = new Uint8Array(32);
+      crypto.getRandomValues(wBytes);
+      let wBig = 0n;
+      for (let i = 0; i < 32; i++) wBig |= BigInt(wBytes[i]) << BigInt(i * 8);
+      w = mod(wBig, L);
+      if (w === 0n) w = 1n;
+    }
 
     const e2 = mod(e * e, L);
 
-    // Compute y^MN
+    // Compute y^MN via square-and-multiply
     let yMN = 1n;
-    let yPow = y;
-    for (let i = 0; i < MN; i++) {
-      yMN = mod(yMN * yPow, L);
-      yPow = mod(yPow * y, L);
-    }
-    // Actually compute correctly: y^MN via squaring
-    yMN = 1n;
     let base = y;
     let exp = BigInt(MN);
     while (exp > 0n) {

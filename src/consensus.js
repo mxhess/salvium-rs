@@ -248,8 +248,9 @@ export function getNetworkConfig(network) {
   // Accept string names (e.g. 'testnet') as well as numeric NETWORK_ID values
   if (typeof network === 'string') {
     const NAME_MAP = { mainnet: NETWORK_ID.MAINNET, testnet: NETWORK_ID.TESTNET, stagenet: NETWORK_ID.STAGENET, fakechain: NETWORK_ID.FAKECHAIN };
+    const networkName = network;
     network = NAME_MAP[network.toLowerCase()];
-    if (network === undefined) throw new Error(`Unknown network name: ${network}`);
+    if (network === undefined) throw new Error(`Unknown network name: ${networkName}`);
   }
   switch (network) {
     case NETWORK_ID.MAINNET:
@@ -530,8 +531,12 @@ export function nextDifficulty(timestamps, cumulativeDifficulties, targetSeconds
     return 1n;
   }
 
-  // Sort timestamps
-  timestamps = [...timestamps].sort((a, b) => a - b);
+  // Sort (timestamp, difficulty) pairs together by timestamp
+  // C++ sorts pairs so timestamps and difficulties stay correlated
+  const pairs = timestamps.map((t, i) => ({ t, d: cumulativeDifficulties[i] }));
+  pairs.sort((a, b) => a.t - b.t);
+  timestamps = pairs.map(p => p.t);
+  cumulativeDifficulties = pairs.map(p => p.d);
 
   // Calculate cut points
   let cutBegin, cutEnd;
@@ -565,7 +570,7 @@ export function nextDifficulty(timestamps, cumulativeDifficulties, targetSeconds
  * @returns {bigint} Next difficulty
  */
 export function nextDifficultyV2(timestamps, cumulativeDifficulties, targetSeconds = DIFFICULTY_TARGET_V2) {
-  const T = targetSeconds;
+  const T = BigInt(targetSeconds);
   let N = DIFFICULTY_WINDOW_V2;
 
   // Trim to window
@@ -585,35 +590,48 @@ export function nextDifficultyV2(timestamps, cumulativeDifficulties, targetSecon
   // If height < N+1, adjust N
   if (n < N + 1) N = n - 1;
 
-  // Adjustment factor for average solvetime accuracy
-  const adjust = 0.998;
-  // Normalization divisor
-  const k = N * (N + 1) / 2;
+  const Nbig = BigInt(N);
 
-  let LWMA = 0;
-  let sumInverseD = 0;
+  // Normalization divisor: k = N * (N + 1) / 2
+  const k = Nbig * (Nbig + 1n) / 2n;
 
-  // Loop through N most recent blocks
+  // Use BigInt arithmetic throughout to avoid precision loss at high difficulties.
+  // We accumulate weighted solve times and difficulty sums, then compute
+  // the LWMA difficulty using integer division with a scaling factor.
+
+  // Scale factor for fixed-point arithmetic (replaces floating-point adjust=0.998 and division)
+  const SCALE = 1000000n;
+  const ADJUST_NUM = 998n;   // 0.998 * 1000
+  const ADJUST_DEN = 1000n;
+
+  let weightedSolveTime = 0n;  // sum of (solveTime * i), will divide by k later
+  let totalDifficulty = 0n;
+
   for (let i = 1; i <= N; i++) {
-    let solveTime = Number(timestamps[i]) - Number(timestamps[i - 1]);
+    let solveTime = BigInt(timestamps[i]) - BigInt(timestamps[i - 1]);
     // Clamp solve time to [-7T, 7T]
-    solveTime = Math.min(T * 7, Math.max(solveTime, -7 * T));
+    const maxST = 7n * T;
+    if (solveTime > maxST) solveTime = maxST;
+    if (solveTime < -maxST) solveTime = -maxST;
 
-    const difficulty = Number(cumulativeDifficulties[i] - cumulativeDifficulties[i - 1]);
-    LWMA += (solveTime * i) / k;
-    sumInverseD += 1 / difficulty;
+    const difficulty = cumulativeDifficulties[i] - cumulativeDifficulties[i - 1];
+    weightedSolveTime += solveTime * BigInt(i);
+    totalDifficulty += difficulty;
   }
 
-  // Sanity check
-  if (LWMA < T / 20) LWMA = T / 20;
+  // LWMA = weightedSolveTime / k (but keep in scaled form)
+  // Sanity check: LWMA >= T / 20
+  let lwmaScaled = weightedSolveTime * SCALE / k;
+  const minLwma = T * SCALE / 20n;
+  if (lwmaScaled < minLwma) lwmaScaled = minLwma;
 
-  // Calculate harmonic mean of difficulties
-  const harmonicMeanD = N / sumInverseD * adjust;
+  // Average difficulty = totalDifficulty / N
+  // Next difficulty = avgD * T * adjust / LWMA
+  // = (totalDifficulty / N) * T * (998/1000) / (lwmaScaled / SCALE)
+  // = totalDifficulty * T * 998 * SCALE / (N * 1000 * lwmaScaled)
+  const nextDiff = totalDifficulty * T * ADJUST_NUM * SCALE / (Nbig * ADJUST_DEN * lwmaScaled);
 
-  // Next difficulty
-  const nextDiff = harmonicMeanD * T / LWMA;
-
-  return BigInt(Math.floor(nextDiff));
+  return nextDiff < 1n ? 1n : nextDiff;
 }
 
 /**
@@ -630,10 +648,18 @@ export function checkHash(hash, difficulty) {
     throw new Error('Hash must be 32 bytes');
   }
 
-  // Convert hash to big-endian bigint
+  // Convert hash to 256-bit integer matching C++ byte order:
+  // C++ reads four 64-bit little-endian words from word[3] down to word[0].
+  // Word[3] is bytes[24..31], Word[2] is bytes[16..23], etc.
+  // Each word is read in native LE order (byte[0] is least significant).
   let hashVal = 0n;
-  for (let i = 0; i < 32; i++) {
-    hashVal = (hashVal << 8n) | BigInt(hash[i]);
+  for (let word = 3; word >= 0; word--) {
+    let w = 0n;
+    const base = word * 8;
+    for (let b = 7; b >= 0; b--) {
+      w = (w << 8n) | BigInt(hash[base + b]);
+    }
+    hashVal = (hashVal << 64n) | w;
   }
 
   // Check: hash * difficulty <= 2^256
@@ -654,12 +680,8 @@ export function getMedianTimestamp(timestamps) {
   if (timestamps.length === 0) return 0;
 
   const sorted = [...timestamps].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-
-  if (sorted.length % 2 === 0) {
-    return Math.floor((sorted[mid - 1] + sorted[mid]) / 2);
-  }
-  return sorted[mid];
+  // CryptoNote uses sorted[n/2] for median (not the average of two middle values)
+  return sorted[Math.floor(sorted.length / 2)];
 }
 
 /**
@@ -1049,11 +1071,8 @@ export function buildCumulativeDifficulties(difficulties) {
 export function getMedianBlockWeight(values) {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return Math.floor((sorted[mid - 1] + sorted[mid]) / 2);
-  }
-  return sorted[mid];
+  // CryptoNote uses sorted[n/2] for median (not the average of two middle values)
+  return sorted[Math.floor(sorted.length / 2)];
 }
 
 // =============================================================================
