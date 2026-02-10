@@ -138,6 +138,14 @@ export class WalletSync {
     this.carrotSubaddresses = options.carrotSubaddresses || new Map();
     this.batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
 
+    // Cache main spend pubkey as Uint8Array for fast binary comparison in scanning
+    // (avoids hex conversion for the 99%+ of outputs that aren't ours)
+    this._mainSpendPubKeyBytes = this.keys?.spendPublicKey
+      ? (this.keys.spendPublicKey instanceof Uint8Array
+          ? this.keys.spendPublicKey
+          : hexToBytes(this.keys.spendPublicKey))
+      : null;
+
     // State
     this.status = SYNC_STATUS.IDLE;
     this.currentHeight = 0;
@@ -164,7 +172,13 @@ export class WalletSync {
    * @param {Function} callback - Callback function
    */
   on(event, callback) {
-    this._listeners.push({ event, callback });
+    // Prevent duplicate listeners (e.g., from sync restart after node switch)
+    const exists = this._listeners.some(
+      l => l.event === event && l.callback === callback
+    );
+    if (!exists) {
+      this._listeners.push({ event, callback });
+    }
   }
 
   /**
@@ -522,7 +536,8 @@ export class WalletSync {
       this.currentHeight = header.height + 1;
       this._emit('syncProgress', this.getProgress());
 
-      if (idx % 20 === 19) {
+      // Yield to event loop every 5 blocks to prevent UI freeze on mobile
+      if (idx % 5 === 4) {
         await new Promise(r => setTimeout(r, 0));
       }
     }
@@ -657,7 +672,8 @@ export class WalletSync {
       this.currentHeight = header.height + 1;
       this._emit('syncProgress', this.getProgress());
 
-      if (idx % 20 === 19) {
+      // Yield to event loop every 5 blocks to prevent UI freeze on mobile
+      if (idx % 5 === 4) {
         await new Promise(r => setTimeout(r, 0));
       }
     }
@@ -1645,14 +1661,19 @@ export class WalletSync {
       return null;
     }
 
-    const derivedSpendPubKeyHex = bytesToHex(derivedSpendPubKey);
-
-    // Look up in subaddress map
+    // Check main address first with binary comparison (avoids hex allocation for 99%+ of outputs)
     let subaddressIndex = null;
-    if (this.subaddresses && this.subaddresses.has(derivedSpendPubKeyHex)) {
-      subaddressIndex = this.subaddresses.get(derivedSpendPubKeyHex);
+    if (this._mainSpendPubKeyBytes &&
+        derivedSpendPubKey.length === this._mainSpendPubKeyBytes.length &&
+        derivedSpendPubKey.every((b, i) => b === this._mainSpendPubKeyBytes[i])) {
+      subaddressIndex = { major: 0, minor: 0 };
+    } else if (this.subaddresses) {
+      // Fall back to hex map lookup only for non-main-address outputs
+      const derivedSpendPubKeyHex = bytesToHex(derivedSpendPubKey);
+      if (this.subaddresses.has(derivedSpendPubKeyHex)) {
+        subaddressIndex = this.subaddresses.get(derivedSpendPubKeyHex);
+      }
     }
-
 
     if (!subaddressIndex) {
       return null; // Not our output

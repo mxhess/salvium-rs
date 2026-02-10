@@ -1981,7 +1981,16 @@ export class Wallet {
    */
   setDaemon(daemon) {
     this._daemon = daemon;
-    this._walletSync = null; // reset so next sync picks up new daemon
+    // Update daemon reference on existing WalletSync instead of destroying it.
+    // Destroying _walletSync discards sync state, listeners, and cached derivations,
+    // forcing a full re-sync and breaking event subscriptions.
+    if (this._walletSync) {
+      // Stop any in-progress sync so it picks up the new daemon cleanly
+      if (this._walletSync.status === 'syncing') {
+        this._walletSync.stop();
+      }
+      this._walletSync.daemon = daemon;
+    }
   }
 
   /** @private Lazy-init MemoryStorage */

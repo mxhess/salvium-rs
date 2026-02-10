@@ -426,15 +426,40 @@ async function runIntegrationTest() {
   const transactions = await storage.getTransactions();
   const syncHeight = await storage.getSyncHeight();
 
-  // Calculate balance
+  // Calculate balance with locked/unlocked split
+  const DEFAULT_UNLOCK_BLOCKS = 10;
   let balance = 0n;
+  let unlockedBalance = 0n;
   let unspentCount = 0;
+  let unlockedCount = 0;
   for (const output of outputs) {
     if (!output.isSpent) {
-      balance += output.amount;
+      const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
+      balance += amount;
       unspentCount++;
+
+      // Check unlock status (mirrors WalletOutput.isUnlocked logic)
+      const unlockTime = BigInt(output.unlockTime || 0);
+      let isUnlocked = false;
+      if (unlockTime === 0n) {
+        // Standard: unlocked after DEFAULT_UNLOCK_BLOCKS confirmations
+        isUnlocked = output.blockHeight != null &&
+          (syncHeight - output.blockHeight) >= DEFAULT_UNLOCK_BLOCKS;
+      } else if (unlockTime < 500000000n) {
+        // Unlock time is a block height
+        isUnlocked = syncHeight >= Number(unlockTime);
+      } else {
+        // Unlock time is a Unix timestamp
+        isUnlocked = Date.now() / 1000 >= Number(unlockTime);
+      }
+
+      if (isUnlocked) {
+        unlockedBalance += amount;
+        unlockedCount++;
+      }
     }
   }
+  const lockedBalance = balance - unlockedBalance;
 
   // Report results
   console.log('\n' + '='.repeat(60));
@@ -446,10 +471,12 @@ async function runIntegrationTest() {
   console.log(`Final sync height:  ${syncHeight}`);
   console.log('');
   console.log(`Outputs found:      ${outputs.length}`);
-  console.log(`Unspent outputs:    ${unspentCount}`);
+  console.log(`Unspent outputs:    ${unspentCount} (${unlockedCount} unlocked, ${unspentCount - unlockedCount} locked)`);
   console.log(`Transactions:       ${transactions.length}`);
-  console.log(`Balance:            ${balance} atomic units`);
-  console.log(`Balance (SAL):      ${Number(balance) / 1e8} SAL`);
+  console.log('');
+  console.log(`Total balance:      ${balance} atomic (${(Number(balance) / 1e8).toFixed(8)} SAL)`);
+  console.log(`Unlocked balance:   ${unlockedBalance} atomic (${(Number(unlockedBalance) / 1e8).toFixed(8)} SAL)`);
+  console.log(`Locked balance:     ${lockedBalance} atomic (${(Number(lockedBalance) / 1e8).toFixed(8)} SAL)`);
 
   // List outputs
   if (outputs.length > 0) {

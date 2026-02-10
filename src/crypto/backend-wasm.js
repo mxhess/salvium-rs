@@ -298,8 +298,12 @@ function hexToBytes(hex) {
   return bytes;
 }
 
+const _hexLUT = new Array(256);
+for (let i = 0; i < 256; i++) _hexLUT[i] = i.toString(16).padStart(2, '0');
 function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += _hexLUT[bytes[i]];
+  return hex;
 }
 
 function ensureBytes(v) {

@@ -400,8 +400,17 @@ export function describeAddress(address) {
  * @param {Uint8Array} bytes - Bytes to convert
  * @returns {string} - Hex string
  */
+// Pre-computed hex lookup table — avoids Array.from().map().join() per call
+const _hexLUT = /* @__PURE__ */ (() => {
+  const t = new Array(256);
+  for (let i = 0; i < 256; i++) t[i] = i.toString(16).padStart(2, '0');
+  return t;
+})();
+
 export function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += _hexLUT[bytes[i]];
+  return hex;
 }
 
 /**

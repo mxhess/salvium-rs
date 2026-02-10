@@ -672,19 +672,22 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
   // Need amount commitment for this - if not provided, use zero commitment
   const commitment = amountCommitment || new Uint8Array(32);
   const recoveredSpendPubkey = recoverAddressSpendPubkey(onetimeAddress, senderReceiverCtx, commitment);
-  const recoveredSpendPubkeyHex = bytesToHex(recoveredSpendPubkey);
 
   // 5. Check if this matches our account or any subaddress
   let subaddressIndex = null;
   let isMainAddress = false;
 
-  // Check main address (account spend pubkey)
-  if (bytesToHex(accountSpendPubkey) === recoveredSpendPubkeyHex) {
+  // Check main address first with direct binary comparison (no hex allocation)
+  if (recoveredSpendPubkey.length === accountSpendPubkey.length &&
+      recoveredSpendPubkey.every((b, i) => b === accountSpendPubkey[i])) {
     isMainAddress = true;
     subaddressIndex = { major: 0, minor: 0 };
-  } else if (subaddressMap && subaddressMap.has(recoveredSpendPubkeyHex)) {
-    // Check subaddresses
-    subaddressIndex = subaddressMap.get(recoveredSpendPubkeyHex);
+  } else if (subaddressMap) {
+    // Subaddress map uses hex keys — only convert if main address didn't match
+    const recoveredSpendPubkeyHex = bytesToHex(recoveredSpendPubkey);
+    if (subaddressMap.has(recoveredSpendPubkeyHex)) {
+      subaddressIndex = subaddressMap.get(recoveredSpendPubkeyHex);
+    }
   }
 
   if (!subaddressIndex) {

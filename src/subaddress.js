@@ -336,13 +336,19 @@ export function isValidPaymentId(paymentId) {
 export const SUBADDRESS_LOOKAHEAD_MAJOR = 50;
 export const SUBADDRESS_LOOKAHEAD_MINOR = 200;
 
+// Pre-computed hex lookup table — avoids Array.from().map().join() per call
+const _hexLUT = new Array(256);
+for (let i = 0; i < 256; i++) _hexLUT[i] = i.toString(16).padStart(2, '0');
+
 /**
- * Convert bytes to hex string
+ * Convert bytes to hex string (fast path using lookup table)
  * @param {Uint8Array} bytes
  * @returns {string}
  */
 function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += _hexLUT[bytes[i]];
+  return hex;
 }
 
 /**
