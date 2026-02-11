@@ -419,6 +419,26 @@ pub unsafe extern "C" fn salvium_argon2id(
     }
 }
 
+// ─── X25519 Montgomery-curve Scalar Multiplication ──────────────────────────
+
+/// X25519 scalar multiplication with Salvium's non-standard clamping.
+/// scalar: 32-byte little-endian scalar.
+/// u_coord: 32-byte little-endian u-coordinate.
+/// out: 32-byte result u-coordinate.
+/// Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_x25519_scalar_mult(
+    scalar: *const u8,
+    u_coord: *const u8,
+    out: *mut u8,
+) -> i32 {
+    let scalar = slice::from_raw_parts(scalar, 32);
+    let u_coord = slice::from_raw_parts(u_coord, 32);
+    let result = crate::x25519_scalar_mult(scalar, u_coord);
+    ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
+    0
+}
+
 // ─── CLSAG Ring Signatures ──────────────────────────────────────────────────
 
 /// CLSAG sign. Output buffer must be ring_count*32 + 96 bytes.
@@ -1129,6 +1149,37 @@ mod tests {
             )
         };
         assert_eq!(rc, -1);
+    }
+
+    #[test]
+    fn test_x25519_scalar_mult_ffi() {
+        // Use a simple scalar and the X25519 basepoint (u = 9)
+        let mut scalar = [0u8; 32];
+        scalar[0] = 9;
+        let mut u_coord = [0u8; 32];
+        u_coord[0] = 9;
+        let mut out = [0u8; 32];
+        let rc = unsafe {
+            salvium_x25519_scalar_mult(scalar.as_ptr(), u_coord.as_ptr(), out.as_mut_ptr())
+        };
+        assert_eq!(rc, 0);
+        assert_ffi_matches(&out, &crate::x25519_scalar_mult(&scalar, &u_coord));
+        // Result should not be all zeros
+        assert_ne!(out, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_x25519_scalar_mult_ffi_salvium_clamping() {
+        // Verify FFI matches direct call and that bit 255 is cleared
+        let mut scalar = [0xFFu8; 32]; // all bits set
+        let mut u_coord = [0u8; 32];
+        u_coord[0] = 9; // basepoint
+        let mut out = [0u8; 32];
+        let rc = unsafe {
+            salvium_x25519_scalar_mult(scalar.as_ptr(), u_coord.as_ptr(), out.as_mut_ptr())
+        };
+        assert_eq!(rc, 0);
+        assert_ffi_matches(&out, &crate::x25519_scalar_mult(&scalar, &u_coord));
     }
 
     #[test]

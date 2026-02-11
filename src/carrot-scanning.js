@@ -613,30 +613,23 @@ export function deriveCarrotCommitmentMask(senderReceiverCtx, amount, addressSpe
  * @param {bigint} [options.clearTextAmount] - Clear-text amount for coinbase (rctType=0) outputs
  * @returns {Object|null} Scan result or null if not owned
  */
-export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, inputContext, subaddressMap, amountCommitment, options = {}) {
-  // Convert keys if passed as hex strings
-  if (typeof viewIncomingKey === 'string') viewIncomingKey = hexToBytes(viewIncomingKey);
-  if (typeof accountSpendPubkey === 'string') accountSpendPubkey = hexToBytes(accountSpendPubkey);
-  if (typeof inputContext === 'string') inputContext = hexToBytes(inputContext);
-  if (typeof amountCommitment === 'string') amountCommitment = hexToBytes(amountCommitment);
-
-  // Extract CARROT-specific fields
+/**
+ * Extract and normalize CARROT output fields from a parsed transaction output.
+ * @private
+ */
+function _normalizeCarrotOutputFields(output) {
   const onetimeAddress = typeof output.key === 'string' ? hexToBytes(output.key) : output.key;
   const enoteEphemeralPubkey = typeof output.enoteEphemeralPubkey === 'string'
     ? hexToBytes(output.enoteEphemeralPubkey)
     : output.enoteEphemeralPubkey;
   const encryptedAmount = output.encryptedAmount;
 
-  // Normalize viewTag to Uint8Array
   let viewTag = output.viewTag;
   if (typeof viewTag === 'string') {
-    // Hex string - convert to bytes
     viewTag = hexToBytes(viewTag);
   } else if (Array.isArray(viewTag)) {
-    // Array of numbers - convert to Uint8Array
     viewTag = new Uint8Array(viewTag);
   }
-  // Now viewTag should be Uint8Array or original format
 
   if (!onetimeAddress) {
     throw new Error('scanCarrotOutput: onetimeAddress is required');
@@ -648,9 +641,27 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     throw new Error('scanCarrotOutput: enoteEphemeralPubkey is required');
   }
 
-  // 1. Compute uncontextualized shared secret using X25519
-  const senderReceiverUnctx = carrotEcdhKeyExchange(viewIncomingKey, enoteEphemeralPubkey);
+  return { onetimeAddress, enoteEphemeralPubkey, viewTag, encryptedAmount };
+}
 
+/**
+ * Core CARROT scanning logic (steps 2-7).
+ * Shared between standard (X25519 ECDH) and internal (s_view_balance) scanning paths.
+ *
+ * @param {Uint8Array} senderReceiverUnctx - 32-byte uncontextualized shared secret
+ * @param {Uint8Array} onetimeAddress - 32-byte onetime address (Ko)
+ * @param {Uint8Array} enoteEphemeralPubkey - 32-byte enote ephemeral pubkey (D_e)
+ * @param {Uint8Array} viewTag - 3-byte view tag
+ * @param {*} encryptedAmount - Encrypted amount data
+ * @param {Uint8Array} accountSpendPubkey - Account spend public key (K_s)
+ * @param {Uint8Array} inputContext - Input context bytes
+ * @param {Map} subaddressMap - Map of address spend pubkeys (hex) to {major, minor}
+ * @param {Uint8Array|null} amountCommitment - Amount commitment (C_a)
+ * @param {Object} options - Additional options
+ * @returns {Object|null} Scan result or null if not owned
+ * @private
+ */
+function _scanCarrotCore(senderReceiverUnctx, onetimeAddress, enoteEphemeralPubkey, viewTag, encryptedAmount, accountSpendPubkey, inputContext, subaddressMap, amountCommitment, options = {}) {
   // 2. Test view tag (fast filter - 3 bytes)
   const expectedViewTag = computeCarrotViewTag(senderReceiverUnctx, inputContext, onetimeAddress);
   const viewTagMatch = expectedViewTag[0] === viewTag[0] &&
@@ -756,6 +767,94 @@ export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, in
     subaddressIndex,
     isMainAddress,
     isCarrot: true
+  };
+}
+
+export function scanCarrotOutput(output, viewIncomingKey, accountSpendPubkey, inputContext, subaddressMap, amountCommitment, options = {}) {
+  // Convert keys if passed as hex strings
+  if (typeof viewIncomingKey === 'string') viewIncomingKey = hexToBytes(viewIncomingKey);
+  if (typeof accountSpendPubkey === 'string') accountSpendPubkey = hexToBytes(accountSpendPubkey);
+  if (typeof inputContext === 'string') inputContext = hexToBytes(inputContext);
+  if (typeof amountCommitment === 'string') amountCommitment = hexToBytes(amountCommitment);
+
+  const { onetimeAddress, enoteEphemeralPubkey, viewTag, encryptedAmount } =
+    _normalizeCarrotOutputFields(output);
+
+  // 1. Compute uncontextualized shared secret using X25519
+  const senderReceiverUnctx = carrotEcdhKeyExchange(viewIncomingKey, enoteEphemeralPubkey);
+
+  return _scanCarrotCore(senderReceiverUnctx, onetimeAddress, enoteEphemeralPubkey,
+    viewTag, encryptedAmount, accountSpendPubkey, inputContext, subaddressMap,
+    amountCommitment, options);
+}
+
+/**
+ * Scan a CARROT output using the internal (self-send) path.
+ * Uses view-balance secret (s_vb) directly as s_sender_receiver_unctx,
+ * instead of computing X25519 ECDH (k_vi * D_e).
+ *
+ * This detects self-send/change outputs in STAKE and other transactions
+ * where the sender is the same wallet as the receiver.
+ *
+ * References: Salvium carrot_core/scan.cpp try_scan_carrot_enote_internal_receiver
+ *
+ * @param {Object} output - Output from parsed transaction
+ * @param {Uint8Array} viewBalanceSecret - 32-byte view-balance secret (s_vb)
+ * @param {Uint8Array} accountSpendPubkey - Account spend public key (K_s)
+ * @param {Uint8Array} inputContext - Input context
+ * @param {Map} subaddressMap - Map of address spend pubkeys (hex) to {major, minor}
+ * @param {Uint8Array} amountCommitment - Amount commitment (C_a) from RingCT
+ * @param {Object} [options] - Additional options
+ * @returns {Object|null} Scan result or null if not owned
+ */
+export function scanCarrotInternalOutput(output, viewBalanceSecret, accountSpendPubkey, inputContext, subaddressMap, amountCommitment, options = {}) {
+  if (typeof viewBalanceSecret === 'string') viewBalanceSecret = hexToBytes(viewBalanceSecret);
+  if (typeof accountSpendPubkey === 'string') accountSpendPubkey = hexToBytes(accountSpendPubkey);
+  if (typeof inputContext === 'string') inputContext = hexToBytes(inputContext);
+  if (typeof amountCommitment === 'string') amountCommitment = hexToBytes(amountCommitment);
+
+  const { onetimeAddress, enoteEphemeralPubkey, viewTag, encryptedAmount } =
+    _normalizeCarrotOutputFields(output);
+
+  // Internal path: use s_view_balance directly as s_sender_receiver_unctx
+  // (instead of X25519 ECDH with k_vi * D_e)
+  return _scanCarrotCore(viewBalanceSecret, onetimeAddress, enoteEphemeralPubkey,
+    viewTag, encryptedAmount, accountSpendPubkey, inputContext, subaddressMap,
+    amountCommitment, options);
+}
+
+/**
+ * Compute the expected return output address for a staking return.
+ * When a wallet detects a self-send output in a STAKE transaction,
+ * it can predict the onetime address (K_r) of the future protocol_tx return output.
+ *
+ * K_r = k_return * G + Ko, where:
+ *   k_return = H_n[s_vb]("SPARC return address scalar" || input_context || Ko)
+ *
+ * References: Salvium carrot_core/enote_utils.cpp make_sparc_return_privkey
+ *
+ * @param {Uint8Array} viewBalanceSecret - 32-byte view-balance secret (s_vb)
+ * @param {Uint8Array} inputContext - Input context from the STAKE transaction
+ * @param {Uint8Array} onetimeAddress - 32-byte Ko of the detected self-send output
+ * @returns {{ returnAddressHex: string, kReturn: Uint8Array }}
+ */
+export function computeReturnAddress(viewBalanceSecret, inputContext, onetimeAddress) {
+  if (typeof viewBalanceSecret === 'string') viewBalanceSecret = hexToBytes(viewBalanceSecret);
+  if (typeof inputContext === 'string') inputContext = hexToBytes(inputContext);
+  if (typeof onetimeAddress === 'string') onetimeAddress = hexToBytes(onetimeAddress);
+
+  // k_return = H_n[s_vb]("SPARC return address scalar", input_context, Ko)
+  const kReturn = deriveScalar(viewBalanceSecret, 'SPARC return address scalar', inputContext, onetimeAddress);
+
+  // K_return = k_return * G (ed25519 base point multiplication)
+  const KReturn = scalarMultBase(kReturn);
+
+  // K_r = K_return + Ko (ed25519 point addition)
+  const Kr = pointAddCompressed(KReturn, onetimeAddress);
+
+  return {
+    returnAddressHex: bytesToHex(Kr),
+    kReturn
   };
 }
 

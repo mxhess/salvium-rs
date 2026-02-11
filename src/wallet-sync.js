@@ -12,7 +12,7 @@
 
 import { WalletOutput, WalletTransaction } from './wallet-store.js';
 import { cnSubaddressSecretKey, carrotIndexExtensionGenerator, carrotSubaddressScalar } from './subaddress.js';
-import { scanCarrotOutput, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage } from './carrot-scanning.js';
+import { scanCarrotOutput, scanCarrotInternalOutput, computeReturnAddress, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage } from './carrot-scanning.js';
 import { parseTransaction, parseBlock, extractTxPubKey, extractPaymentId, extractAdditionalPubKeys, serializeTxPrefix } from './transaction.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { TX_TYPE } from './wallet.js';
@@ -145,6 +145,13 @@ export class WalletSync {
           ? this.keys.spendPublicKey
           : hexToBytes(this.keys.spendPublicKey))
       : null;
+
+    // Return output map: maps expected return address (Ko hex) to origin data.
+    // Built when we detect self-send outputs in transactions (internal CARROT path).
+    // Used to detect staking return outputs in protocol_tx.
+    // Key: returnAddressHex (K_r = k_return*G + Ko_selfsend)
+    // Value: { inputContext, originalKo, kReturn }
+    this._returnOutputMap = new Map();
 
     // State
     this.status = SYNC_STATUS.IDLE;
@@ -1524,6 +1531,7 @@ export class WalletSync {
 
     // Scan with CARROT algorithm
     let result;
+    let isReturnOutput = false;
     try {
       result = scanCarrotOutput(
         outputForScan,
@@ -1537,6 +1545,85 @@ export class WalletSync {
     } catch (e) {
       // Missing required fields in CARROT output - skip this output
       return null;
+    }
+
+    // If standard scan fails, try internal (self-send) path using s_view_balance.
+    // This detects change outputs from our own STAKE/send transactions.
+    // Only for regular transactions with key images (not coinbase/protocol_tx).
+    if (!result && this.carrotKeys.viewBalanceSecret && firstKi) {
+      try {
+        result = scanCarrotInternalOutput(
+          outputForScan,
+          this.carrotKeys.viewBalanceSecret,
+          this.carrotKeys.accountSpendPubkey,
+          inputContext,
+          this.carrotSubaddresses,
+          amountCommitment,
+          scanOptions
+        );
+
+        // If we detected a self-send, compute the expected return address.
+        // When this wallet's STAKE tx unlocks, the return output will appear
+        // in a protocol_tx with Ko = K_r = k_return*G + Ko_selfsend.
+        if (result && this.carrotKeys.viewBalanceSecret) {
+          const Ko = typeof outputForScan.key === 'string'
+            ? hexToBytes(outputForScan.key) : outputForScan.key;
+          try {
+            const ret = computeReturnAddress(
+              this.carrotKeys.viewBalanceSecret,
+              inputContext,
+              Ko
+            );
+            this._returnOutputMap.set(ret.returnAddressHex, {
+              inputContext,
+              originalKo: Ko,
+              kReturn: ret.kReturn
+            });
+          } catch (_e) {
+            // Non-fatal: return address computation failed
+          }
+        }
+      } catch (_e) {
+        // Internal scan failed - continue
+      }
+    }
+
+    // If both standard and internal scans fail, check the return output map.
+    // Protocol_tx return outputs have Ko = K_r which we pre-computed from self-send detection.
+    if (!result && !firstKi) {
+      const outputKey = this._extractOutputPubKey(output);
+      if (outputKey) {
+        const koHex = bytesToHex(outputKey);
+        if (this._returnOutputMap.has(koHex)) {
+          isReturnOutput = true;
+          // Protocol_tx has cleartext amounts (rctType=0) — use it directly
+          const amount = typeof output.amount === 'bigint'
+            ? output.amount
+            : BigInt(output.amount || 0);
+
+          // Blinding factor = 1 for coinbase-like outputs
+          const SCALAR_ONE = hexToBytes('0100000000000000000000000000000000000000000000000000000000000000');
+
+          result = {
+            owned: true,
+            onetimeAddress: koHex,
+            addressSpendPubkey: bytesToHex(
+              typeof this.carrotKeys.accountSpendPubkey === 'string'
+                ? hexToBytes(this.carrotKeys.accountSpendPubkey)
+                : this.carrotKeys.accountSpendPubkey
+            ),
+            sharedSecret: null,
+            viewTag: null,
+            amount,
+            mask: SCALAR_ONE,
+            enoteType: 0,
+            subaddressIndex: { major: 0, minor: 0 },
+            isMainAddress: true,
+            isCarrot: true,
+            isReturn: true
+          };
+        }
+      }
     }
 
     if (!result) {

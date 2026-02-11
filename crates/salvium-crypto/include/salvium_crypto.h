@@ -94,6 +94,20 @@ int32_t salvium_double_scalar_mult_base(
     const uint8_t *a /* 32 */, const uint8_t *p /* 32 */,
     const uint8_t *b /* 32 */, uint8_t *out /* 32 */);
 
+/* ─── X25519 Montgomery-curve Scalar Multiplication ──────────────────────── */
+
+/**
+ * X25519 scalar multiplication with Salvium's non-standard clamping.
+ * Only clears bit 255 (scalar[31] &= 0x7F). Does NOT clear bits 0-2
+ * or set bit 254 (unlike RFC 7748).
+ * scalar: 32-byte LE scalar, u_coord: 32-byte LE u-coordinate.
+ * out: 32-byte result u-coordinate.
+ * Returns 0 on success.
+ */
+int32_t salvium_x25519_scalar_mult(
+    const uint8_t *scalar /* 32 */, const uint8_t *u_coord /* 32 */,
+    uint8_t *out /* 32 */);
+
 /* ─── Hash-to-Point & Key Derivation ─────────────────────────────────────── */
 
 int32_t salvium_hash_to_point(

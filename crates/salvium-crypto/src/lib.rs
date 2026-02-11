@@ -6,6 +6,8 @@ use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 use sha2::{Sha256, Digest};
 
+mod x25519;
+
 pub(crate) mod elligator2;
 pub mod clsag;
 pub mod tclsag;
@@ -454,4 +456,22 @@ fn verify_dsa(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32
         Ok(()) => Some(1),
         Err(_) => Some(0),
     }
+}
+
+// ─── X25519 Montgomery-curve Scalar Multiplication ──────────────────────────
+
+/// X25519 scalar multiplication with Salvium's non-standard clamping.
+///
+/// Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).
+/// Unlike RFC 7748, bits 0-2 are NOT cleared and bit 254 is NOT set.
+///
+/// Uses a Montgomery ladder on Curve25519 (a24 = 121666, p = 2^255 - 19).
+/// scalar and u_coord must each be 32 bytes (little-endian).
+/// Returns the 32-byte u-coordinate of the result point.
+#[wasm_bindgen]
+pub fn x25519_scalar_mult(scalar: &[u8], u_coord: &[u8]) -> Vec<u8> {
+    let mut s = to32(scalar);
+    // Salvium clamping: only clear bit 255
+    s[31] &= 0x7F;
+    x25519::montgomery_ladder(&s, &to32(u_coord)).to_vec()
 }

@@ -299,7 +299,8 @@ async function runIntegrationTest() {
       viewIncomingKey: hexToBytes(carrotKeys.viewIncomingKey),
       accountSpendPubkey: hexToBytes(carrotKeys.accountSpendPubkey),
       generateImageKey: hexToBytes(carrotKeys.generateImageKey),
-      generateAddressSecret: hexToBytes(carrotKeys.generateAddressSecret)  // Needed for subaddress key images
+      generateAddressSecret: hexToBytes(carrotKeys.generateAddressSecret),  // Needed for subaddress key images
+      viewBalanceSecret: hexToBytes(carrotKeys.viewBalanceSecret)  // Needed for internal (self-send) scanning + return map
     };
   }
 
@@ -427,6 +428,9 @@ async function runIntegrationTest() {
   const syncHeight = await storage.getSyncHeight();
 
   // Calculate balance with locked/unlocked split
+  // Salvium coinbase outputs have unlock_time = 60 (the bare constant CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW),
+  // NOT height + 60. The C++ wallet applies the 60-block confirmation window for coinbase regardless.
+  const CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW = 60;
   const DEFAULT_UNLOCK_BLOCKS = 10;
   let balance = 0n;
   let unlockedBalance = 0n;
@@ -438,10 +442,16 @@ async function runIntegrationTest() {
       balance += amount;
       unspentCount++;
 
-      // Check unlock status (mirrors WalletOutput.isUnlocked logic)
+      // Check unlock status
       const unlockTime = BigInt(output.unlockTime || 0);
+      const isCoinbase = output.txType === 'miner' || output.txType === 'protocol';
       let isUnlocked = false;
-      if (unlockTime === 0n) {
+
+      if (isCoinbase) {
+        // Coinbase outputs always require CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW confirmations
+        isUnlocked = output.blockHeight != null &&
+          (syncHeight - output.blockHeight) >= CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
+      } else if (unlockTime === 0n) {
         // Standard: unlocked after DEFAULT_UNLOCK_BLOCKS confirmations
         isUnlocked = output.blockHeight != null &&
           (syncHeight - output.blockHeight) >= DEFAULT_UNLOCK_BLOCKS;
@@ -477,6 +487,54 @@ async function runIntegrationTest() {
   console.log(`Total balance:      ${balance} atomic (${(Number(balance) / 1e8).toFixed(8)} SAL)`);
   console.log(`Unlocked balance:   ${unlockedBalance} atomic (${(Number(unlockedBalance) / 1e8).toFixed(8)} SAL)`);
   console.log(`Locked balance:     ${lockedBalance} atomic (${(Number(lockedBalance) / 1e8).toFixed(8)} SAL)`);
+
+  // === DIAGNOSTIC: null keyImage outputs ===
+  const nullKiOutput = await storage.getOutput(null);
+  const nullKiUndefined = await storage.getOutput(undefined);
+  console.log(`\n--- KEY IMAGE DIAGNOSTIC ---`);
+  console.log(`Output stored under null key:      ${nullKiOutput ? `YES h=${nullKiOutput.blockHeight} amt=${(Number(nullKiOutput.amount)/1e8).toFixed(8)}` : 'none'}`);
+  console.log(`Output stored under undefined key: ${nullKiUndefined ? `YES h=${nullKiUndefined.blockHeight} amt=${(Number(nullKiUndefined.amount)/1e8).toFixed(8)}` : 'none'}`);
+
+  let nullKiCount = 0;
+  let nullKiUnspentTotal = 0n;
+  for (const o of outputs) {
+    if (!o.keyImage) {
+      nullKiCount++;
+      if (!o.isSpent) {
+        nullKiUnspentTotal += BigInt(o.amount);
+        console.log(`  null-ki UNSPENT: h=${o.blockHeight} amt=${(Number(o.amount)/1e8).toFixed(8)} carrot=${o.isCarrot} type=${o.txType} tx=${o.txHash?.slice(0,16)}`);
+      }
+    }
+  }
+  console.log(`Total outputs with null keyImage: ${nullKiCount}`);
+  console.log(`Unspent balance from null-ki outputs: ${(Number(nullKiUnspentTotal)/1e8).toFixed(8)} SAL`);
+
+  // === DIAGNOSTIC: all unspent outputs ===
+  const unspentOutputs = outputs.filter(o => !o.isSpent);
+  console.log(`\n--- ALL UNSPENT OUTPUTS (${unspentOutputs.length}) ---`);
+  // Sort by height
+  unspentOutputs.sort((a, b) => (a.blockHeight || 0) - (b.blockHeight || 0));
+  for (const o of unspentOutputs) {
+    const ki = o.keyImage ? o.keyImage.slice(0,16)+'...' : 'NULL';
+    console.log(`  h=${o.blockHeight} amt=${(Number(o.amount)/1e8).toFixed(8)} ki=${ki} carrot=${o.isCarrot} type=${o.txType} sub=${o.subaddressIndex?.major},${o.subaddressIndex?.minor}`);
+  }
+
+  // === DIAGNOSTIC: check outgoing TX key images ===
+  console.log(`\n--- OUTGOING TX KEY IMAGE CHECK ---`);
+  const outgoingTxHashes = [
+    '1496ec38a7a73b2829de0a09caff9b15ba11325fe6e7af29cc65f9201902a482', // 12k send
+    'c550084f2be972803a4d3f885eee5f84f8e781e3d8b6bc2acd073926e8e4407f', // consolidation
+    'e5c9b8104747b07113726e720dfb02c1867986bf54fda925eb2bef1bc9bbe9b2', // consolidation
+    '1563a8c75ba3a002fb34574155aa8a51cc3643da01e879fac24a2b710017634c', // STAKE
+  ];
+  for (const txHash of outgoingTxHashes) {
+    const tx = transactions.find(t => t.txHash === txHash);
+    if (tx) {
+      console.log(`  TX ${txHash.slice(0,16)}: found in wallet, incoming=${tx.isIncoming} outgoing=${tx.isOutgoing} in=${(Number(tx.incomingAmount)/1e8).toFixed(4)} out=${(Number(tx.outgoingAmount)/1e8).toFixed(4)}`);
+    } else {
+      console.log(`  TX ${txHash.slice(0,16)}: NOT found in wallet transactions`);
+    }
+  }
 
   // List outputs
   if (outputs.length > 0) {
