@@ -15,9 +15,9 @@ import {
 } from '../transaction.js';
 import { getNetworkConfig, NETWORK_ID, getActiveAssetType, isCarrotActive, areAssetTypesEquivalent } from '../consensus.js';
 import {
-  generateKeyDerivation, deriveSecretKey, scalarAdd, scalarMultBase
+  generateKeyDerivation, deriveSecretKey, scalarAdd, scalarMultBase, scMul
 } from '../crypto/index.js';
-import { cnSubaddressSecretKey } from '../subaddress.js';
+import { cnSubaddressSecretKey, carrotSubaddressScalar, carrotIndexExtensionGenerator } from '../subaddress.js';
 import { deriveOnetimeExtensionG, deriveOnetimeExtensionT } from '../carrot-scanning.js';
 
 /**
@@ -70,8 +70,26 @@ function deriveOutputSecretKey(output, keys, carrotKeys = null) {
     const sub = output.subaddressIndex;
 
     if (sub && (sub.major !== 0 || sub.minor !== 0)) {
-      // Subaddress: need to multiply k_gi by subaddress scalar
-      throw new Error('CARROT subaddress spending not yet implemented');
+      // CARROT subaddress: multiply k_gi and k_ps by subaddress scalar
+      // K^j_s = k_subscal * K_s, so spending key components scale by k_subscal
+      if (!carrotKeys?.accountSpendPubkey || !carrotKeys?.generateAddressSecret) {
+        throw new Error('CARROT subaddress spending requires accountSpendPubkey and generateAddressSecret');
+      }
+      const accountSpendPub = typeof carrotKeys.accountSpendPubkey === 'string'
+        ? hexToBytes(carrotKeys.accountSpendPubkey) : carrotKeys.accountSpendPubkey;
+      const genAddrSecret = typeof carrotKeys.generateAddressSecret === 'string'
+        ? hexToBytes(carrotKeys.generateAddressSecret) : carrotKeys.generateAddressSecret;
+      const indexGenerator = carrotIndexExtensionGenerator(genAddrSecret, sub.major, sub.minor);
+      const subScalar = carrotSubaddressScalar(accountSpendPub, indexGenerator, sub.major, sub.minor);
+
+      const extensionG = deriveOnetimeExtensionG(sharedSecret, commitment);
+      const extensionT = deriveOnetimeExtensionT(sharedSecret, commitment);
+
+      const adjustedKgi = scMul(kGi, subScalar);
+      const adjustedKps = scMul(kPs, subScalar);
+      const secretKeyX = scalarAdd(adjustedKgi, extensionG);
+      const secretKeyY = scalarAdd(adjustedKps, extensionT);
+      return { secretKeyX, secretKeyY, isCarrot: true };
     }
 
     // Main address:

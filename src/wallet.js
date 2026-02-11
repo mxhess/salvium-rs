@@ -36,7 +36,7 @@ import {
   UTXO_STRATEGY
 } from './transaction.js';
 import { NETWORK, ADDRESS_FORMAT } from './constants.js';
-import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID } from './consensus.js';
+import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID, areAssetTypesEquivalent } from './consensus.js';
 import { seedToMnemonic, mnemonicToSeed, validateMnemonic } from './mnemonic.js';
 
 // Storage, sync, and transfer integration
@@ -224,6 +224,7 @@ export class Wallet {
     });
 
     wallet._seed = typeof seed === 'string' ? hexToBytes(seed) : seed;
+    wallet._dataKey = generateSeed(); // Data encryption key for restored wallets
     wallet._deriveAllKeys();
 
     return wallet;
@@ -940,6 +941,21 @@ export class Wallet {
   getBalance(options = {}) {
     const { accountIndex = null, assetType = 'SAL' } = options;
 
+    // Prefer _storage (populated by syncWithDaemon) over legacy _utxos
+    if (this._storage && this._storage._outputs.size > 0) {
+      let balance = 0n, unlockedBalance = 0n;
+      for (const output of this._storage._outputs.values()) {
+        if (output.isSpent) continue;
+        if (assetType && !areAssetTypesEquivalent(output.assetType, assetType)) continue;
+        if (accountIndex !== null && output.subaddressIndex?.major !== accountIndex) continue;
+        const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
+        balance += amount;
+        if (output.isUnlocked(this._syncHeight)) unlockedBalance += amount;
+      }
+      return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance };
+    }
+
+    // Legacy path (populated by sync())
     const utxos = this._utxos.get(assetType) || [];
     let balance = 0n;
     let unlockedBalance = 0n;
@@ -992,6 +1008,20 @@ export class Wallet {
       assetType = 'SAL'
     } = options;
 
+    // Prefer _storage (populated by syncWithDaemon) over legacy _utxos
+    if (this._storage && this._storage._outputs.size > 0) {
+      const results = [];
+      for (const output of this._storage._outputs.values()) {
+        if (output.isSpent) continue;
+        if (assetType && !areAssetTypesEquivalent(output.assetType, assetType)) continue;
+        if (accountIndex !== null && output.subaddressIndex?.major !== accountIndex) continue;
+        if (unlockedOnly && !output.isUnlocked(this._syncHeight)) continue;
+        results.push(output);
+      }
+      return results;
+    }
+
+    // Legacy path (populated by sync())
     let utxos = this._utxos.get(assetType) || [];
 
     // Filter by account
@@ -1011,6 +1041,30 @@ export class Wallet {
     }
 
     return [...utxos];
+  }
+
+  /**
+   * Get transaction history
+   * @param {Object} options - Filter options
+   * @param {boolean} options.isIncoming - Filter incoming
+   * @param {boolean} options.isOutgoing - Filter outgoing
+   * @param {number} options.minHeight - Minimum block height
+   * @param {number} options.maxHeight - Maximum block height
+   * @param {string} options.txHash - Specific transaction hash
+   * @param {number} options.accountIndex - Filter by account (post-filter)
+   * @returns {Promise<Array<Object>>} Transactions sorted newest-first
+   */
+  async getTransactions(options = {}) {
+    if (!this._storage) return [];
+    const { accountIndex, ...query } = options;
+    const txs = await this._storage.getTransactions(query);
+    if (accountIndex !== undefined) {
+      return txs.filter(tx =>
+        tx.outputIndices?.some(oi => oi.subaddressIndex?.major === accountIndex) ||
+        tx.subaddressIndex?.major === accountIndex
+      );
+    }
+    return txs;
   }
 
   /**
@@ -2016,6 +2070,32 @@ export class Wallet {
         },
         carrotKeys: this._carrotKeys || null,
         network: this.network,
+      });
+
+      // Bridge WalletSync events → WalletListener
+      this._walletSync.on('syncProgress', (data) => {
+        this._emit('onSyncProgress', data.currentHeight, data.startHeight,
+          data.targetHeight, data.percentComplete, '');
+      });
+      this._walletSync.on('newBlock', (data) => {
+        this._emit('onNewBlock', data.height, data.hash);
+      });
+      this._walletSync.on('outputReceived', (data) => {
+        for (const output of data.outputs) {
+          this._emit('onOutputReceived', output, 'confirmed');
+        }
+      });
+      this._walletSync.on('outputSpent', (data) => {
+        for (const output of data.outputs) {
+          this._emit('onOutputSpent', output, 'confirmed');
+        }
+      });
+      this._walletSync.on('syncComplete', (data) => {
+        this._syncHeight = data.height || this._storage?._syncHeight || this._syncHeight;
+        this._emit('onSyncComplete', this._syncHeight);
+      });
+      this._walletSync.on('syncError', (error) => {
+        this._emit('onSyncError', error);
       });
     }
     return this._walletSync;

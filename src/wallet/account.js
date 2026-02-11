@@ -100,7 +100,7 @@ export class Account {
    * @returns {Object} { balance, unlockedBalance }
    */
   getBalance(assetType = 'SAL') {
-    return this._wallet.getAccountBalance(this._index, assetType);
+    return this._wallet.getBalance({ accountIndex: this._index, assetType });
   }
 
   /**
@@ -109,7 +109,7 @@ export class Account {
    * @returns {Array<Object>}
    */
   getOutputs(options = {}) {
-    return this._wallet.getOutputs({
+    return this._wallet.getUTXOs({
       ...options,
       accountIndex: this._index
     });
@@ -118,9 +118,9 @@ export class Account {
   /**
    * Get transaction history for this account
    * @param {Object} options - Filter options
-   * @returns {Array<Object>}
+   * @returns {Promise<Array<Object>>}
    */
-  getTransactions(options = {}) {
+  async getTransactions(options = {}) {
     return this._wallet.getTransactions({
       ...options,
       accountIndex: this._index
