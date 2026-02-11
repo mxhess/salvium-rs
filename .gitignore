@@ -1,6 +1,6 @@
 bun.lock
 node_modules/
-build/*
+build/randomx.wasm
 !build/randomx.wasm
 TODO
 
