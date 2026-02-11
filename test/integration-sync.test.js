@@ -19,7 +19,10 @@
  *   START_HEIGHT     - Block height to start sync from (default: 0)
  *   MAX_BLOCKS       - Maximum blocks to sync (default: sync to chain tip)
  *   EXPECTED_BALANCE - Expected minimum balance to verify (optional)
- *   CRYPTO_BACKEND   - Crypto backend: 'wasm' (default) or 'js'
+ *   CRYPTO_BACKEND   - Crypto backend: 'wasm' (default) or 'js' or 'ffi'
+ *   STORAGE_BACKEND  - Storage backend: 'memory' (default) or 'ffi' (SQLCipher via Rust FFI)
+ *   STORAGE_PATH     - Database path for ffi storage (default: /tmp/salvium-sync-test.db)
+ *   STORAGE_KEY      - Hex-encoded 32-byte encryption key for ffi storage (default: zeros)
  */
 
 import { createDaemonRPC } from '../src/rpc/index.js';
@@ -29,6 +32,12 @@ import { hexToBytes, bytesToHex, createAddress, generateCarrotSubaddress } from 
 import { NETWORK, ADDRESS_FORMAT, ADDRESS_TYPE } from '../src/constants.js';
 import { MemoryStorage } from '../src/wallet-store.js';
 import { WalletSync, SYNC_STATUS } from '../src/wallet-sync.js';
+
+// Conditionally import FfiStorage (only when STORAGE_BACKEND=ffi)
+let FfiStorage = null;
+if (process.env.STORAGE_BACKEND === 'ffi') {
+  FfiStorage = (await import('../src/wallet-store-ffi.js')).FfiStorage;
+}
 import { cnSubaddress, generateCNSubaddressMap, generateCarrotSubaddressMap, SUBADDRESS_LOOKAHEAD_MAJOR, SUBADDRESS_LOOKAHEAD_MINOR } from '../src/subaddress.js';
 import { initCrypto, getCryptoBackend, getCurrentBackendType, setCryptoBackend } from '../src/crypto/index.js';
 
@@ -267,7 +276,19 @@ async function runIntegrationTest() {
   }
 
   // Create storage and sync engine
-  const storage = new MemoryStorage();
+  const storageBackend = process.env.STORAGE_BACKEND || 'memory';
+  let storage;
+  if (storageBackend === 'ffi' && FfiStorage) {
+    const dbPath = process.env.STORAGE_PATH || '/tmp/salvium-sync-test.db';
+    const keyHex = process.env.STORAGE_KEY || '00'.repeat(32);
+    const keyBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) keyBytes[i] = parseInt(keyHex.substr(i * 2, 2), 16);
+    storage = new FfiStorage({ path: dbPath, key: keyBytes });
+    console.log(`Storage backend: ffi (SQLCipher) → ${dbPath}`);
+  } else {
+    storage = new MemoryStorage();
+    console.log('Storage backend: memory');
+  }
   await storage.open();
   await storage.setSyncHeight(startHeight);
 
@@ -439,44 +460,54 @@ async function runIntegrationTest() {
   const syncHeight = await storage.getSyncHeight();
 
   // Calculate balance with locked/unlocked split
-  // Salvium coinbase outputs have unlock_time = 60 (the bare constant CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW),
-  // NOT height + 60. The C++ wallet applies the 60-block confirmation window for coinbase regardless.
-  const CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW = 60;
-  const DEFAULT_UNLOCK_BLOCKS = 10;
   let balance = 0n;
   let unlockedBalance = 0n;
   let unspentCount = 0;
   let unlockedCount = 0;
-  for (const output of outputs) {
-    if (!output.isSpent) {
-      const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
-      balance += amount;
-      unspentCount++;
 
-      // Check unlock status
-      const unlockTime = BigInt(output.unlockTime || 0);
-      const isCoinbase = output.txType === 'miner' || output.txType === 'protocol';
-      let isUnlocked = false;
-
-      if (isCoinbase) {
-        // Coinbase outputs always require CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW confirmations
-        isUnlocked = output.blockHeight != null &&
-          (syncHeight - output.blockHeight) >= CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
-      } else if (unlockTime === 0n) {
-        // Standard: unlocked after DEFAULT_UNLOCK_BLOCKS confirmations
-        isUnlocked = output.blockHeight != null &&
-          (syncHeight - output.blockHeight) >= DEFAULT_UNLOCK_BLOCKS;
-      } else if (unlockTime < 500000000n) {
-        // Unlock time is a block height
-        isUnlocked = syncHeight >= Number(unlockTime);
-      } else {
-        // Unlock time is a Unix timestamp
-        isUnlocked = Date.now() / 1000 >= Number(unlockTime);
+  if (storageBackend === 'ffi' && storage.getBalance) {
+    // Rust-computed balance — single FFI call, no output round-trip
+    const bal = storage.getBalance({ currentHeight: syncHeight, assetType: 'SAL' });
+    balance = bal.balance;
+    unlockedBalance = bal.unlockedBalance;
+    // Count unspent outputs for display
+    for (const output of outputs) {
+      if (!output.isSpent) {
+        unspentCount++;
+        if (output.isUnlocked?.(syncHeight) ?? true) unlockedCount++;
       }
+    }
+  } else {
+    // Manual balance computation for MemoryStorage
+    const CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW = 60;
+    const DEFAULT_UNLOCK_BLOCKS = 10;
+    for (const output of outputs) {
+      if (!output.isSpent) {
+        const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
+        balance += amount;
+        unspentCount++;
 
-      if (isUnlocked) {
-        unlockedBalance += amount;
-        unlockedCount++;
+        // Check unlock status
+        const unlockTime = BigInt(output.unlockTime || 0);
+        const isCoinbase = output.txType === 'miner' || output.txType === 'protocol';
+        let isUnlocked = false;
+
+        if (isCoinbase) {
+          isUnlocked = output.blockHeight != null &&
+            (syncHeight - output.blockHeight) >= CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
+        } else if (unlockTime === 0n) {
+          isUnlocked = output.blockHeight != null &&
+            (syncHeight - output.blockHeight) >= DEFAULT_UNLOCK_BLOCKS;
+        } else if (unlockTime < 500000000n) {
+          isUnlocked = syncHeight >= Number(unlockTime);
+        } else {
+          isUnlocked = Date.now() / 1000 >= Number(unlockTime);
+        }
+
+        if (isUnlocked) {
+          unlockedBalance += amount;
+          unlockedCount++;
+        }
       }
     }
   }

@@ -14,6 +14,9 @@ pub mod tclsag;
 pub mod bulletproofs_plus;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod storage;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod ffi;
 
 /// Keccak-256 hash (CryptoNote variant with 0x01 padding, NOT SHA3)

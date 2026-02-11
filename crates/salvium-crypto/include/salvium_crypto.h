@@ -297,6 +297,128 @@ int32_t salvium_aes256gcm_decrypt(
     uint8_t *out,
     size_t *out_len);
 
+/* ─── SQLCipher Storage ─────────────────────────────────────────────────── */
+
+/**
+ * Open/create an encrypted SQLite database.
+ * path: UTF-8 path string (path_len bytes, not null-terminated).
+ * key: 32-byte encryption key for SQLCipher PRAGMA key.
+ * Returns handle_id >= 1 on success, -1 on error.
+ */
+int32_t salvium_storage_open(
+    const uint8_t *path, size_t path_len,
+    const uint8_t *key, size_t key_len);
+
+/** Close a storage handle and release resources. Returns 0 on success. */
+int32_t salvium_storage_close(uint32_t handle);
+
+/** Clear all data in the database. Returns 0 on success. */
+int32_t salvium_storage_clear(uint32_t handle);
+
+/**
+ * Insert/update output. json is UTF-8 JSON blob of WalletOutput.toJSON() format.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_put_output(uint32_t handle,
+    const uint8_t *json, size_t json_len);
+
+/**
+ * Get single output by key image. Rust allocates result buffer.
+ * out_ptr receives pointer, out_len receives length.
+ * Caller must call salvium_storage_free_buf to free.
+ * Returns 0 on success, -1 if not found or error.
+ */
+int32_t salvium_storage_get_output(uint32_t handle,
+    const uint8_t *key_image, size_t ki_len,
+    uint8_t **out_ptr, size_t *out_len);
+
+/**
+ * Get filtered outputs. query_json is JSON: {isSpent, assetType, accountIndex, ...}
+ * Returns JSON array. Rust allocates result buffer.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_get_outputs(uint32_t handle,
+    const uint8_t *query_json, size_t query_len,
+    uint8_t **out_ptr, size_t *out_len);
+
+/**
+ * Mark an output as spent.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_mark_spent(uint32_t handle,
+    const uint8_t *key_image, size_t ki_len,
+    const uint8_t *spending_tx, size_t tx_len,
+    int64_t spent_height);
+
+/**
+ * Insert/update a transaction. json is UTF-8 JSON blob.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_put_tx(uint32_t handle,
+    const uint8_t *json, size_t json_len);
+
+/**
+ * Get single transaction by hash.
+ * Returns 0 on success, -1 if not found or error.
+ */
+int32_t salvium_storage_get_tx(uint32_t handle,
+    const uint8_t *tx_hash, size_t th_len,
+    uint8_t **out_ptr, size_t *out_len);
+
+/**
+ * Get filtered transactions. query_json is JSON with filter criteria.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_get_txs(uint32_t handle,
+    const uint8_t *query_json, size_t query_len,
+    uint8_t **out_ptr, size_t *out_len);
+
+/**
+ * Get sync height. Returns height >= 0 on success, -1 on error.
+ */
+int64_t salvium_storage_get_sync_height(uint32_t handle);
+
+/**
+ * Set sync height. Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_set_sync_height(uint32_t handle, int64_t height);
+
+/**
+ * Store a block hash for a given height.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_put_block_hash(uint32_t handle, int64_t height,
+    const uint8_t *hash, size_t hash_len);
+
+/**
+ * Get a block hash for a given height.
+ * Returns 0 on success, -1 if not found or error.
+ */
+int32_t salvium_storage_get_block_hash(uint32_t handle, int64_t height,
+    uint8_t **out_ptr, size_t *out_len);
+
+/**
+ * Atomic rollback: deletes outputs/txs/block_hashes above height,
+ * unspends outputs spent above height. All in one SQLite transaction.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_rollback(uint32_t handle, int64_t height);
+
+/**
+ * Compute balance in Rust. Avoids round-tripping all outputs to JS/Dart.
+ * Returns JSON: {"balance":"...","unlockedBalance":"...","lockedBalance":"..."}
+ * account_index: -1 for all accounts.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_storage_get_balance(uint32_t handle,
+    int64_t current_height,
+    const uint8_t *asset_type, size_t at_len,
+    int32_t account_index,
+    uint8_t **out_ptr, size_t *out_len);
+
+/** Free Rust-allocated result buffer. */
+void salvium_storage_free_buf(uint8_t *ptr, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

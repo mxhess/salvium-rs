@@ -854,6 +854,340 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
     })
 }
 
+// ─── Storage (SQLCipher) ────────────────────────────────────────────────────
+
+/// Open/create an encrypted SQLite database.
+/// path: UTF-8 path string, key: 32-byte encryption key.
+/// Returns handle_id >= 1 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_open(
+    path: *const u8,
+    path_len: usize,
+    key: *const u8,
+    key_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let path_str = std::str::from_utf8(slice::from_raw_parts(path, path_len))
+            .map_err(|_| ()).unwrap();
+        let key_slice = slice::from_raw_parts(key, key_len);
+        match crate::storage::storage_open(path_str, key_slice) {
+            Ok(handle) => handle as i32,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Close a storage handle and release resources.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_close(handle: u32) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::storage_close(handle) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Clear all data in the database (outputs, transactions, key_images, meta).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_clear(handle: u32) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.clear()) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Insert or update an output. json is a UTF-8 JSON blob of WalletOutput.toJSON() format.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_put_output(
+    handle: u32,
+    json: *const u8,
+    json_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = std::str::from_utf8(slice::from_raw_parts(json, json_len))
+            .map_err(|_| ()).unwrap();
+        let row: crate::storage::OutputRow = serde_json::from_str(json_str)
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.put_output(&row)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get a single output by key image. Rust allocates result buffer.
+/// out_ptr receives pointer, out_len receives length. Caller calls salvium_storage_free_buf.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_output(
+    handle: u32,
+    key_image: *const u8,
+    ki_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ki_str = std::str::from_utf8(slice::from_raw_parts(key_image, ki_len))
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.get_output(ki_str)) {
+            Ok(Some(row)) => {
+                let json = serde_json::to_vec(&row).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get filtered outputs. query_json is a JSON object with filter criteria.
+/// Returns JSON array. Rust allocates result buffer.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_outputs(
+    handle: u32,
+    query_json: *const u8,
+    query_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let query_str = std::str::from_utf8(slice::from_raw_parts(query_json, query_len))
+            .map_err(|_| ()).unwrap();
+        let query: crate::storage::OutputQuery = serde_json::from_str(query_str)
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.get_outputs(&query)) {
+            Ok(rows) => {
+                let json = serde_json::to_vec(&rows).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Mark an output as spent.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_mark_spent(
+    handle: u32,
+    key_image: *const u8,
+    ki_len: usize,
+    spending_tx: *const u8,
+    tx_len: usize,
+    spent_height: i64,
+) -> i32 {
+    catch_ffi(|| {
+        let ki_str = std::str::from_utf8(slice::from_raw_parts(key_image, ki_len))
+            .map_err(|_| ()).unwrap();
+        let tx_str = std::str::from_utf8(slice::from_raw_parts(spending_tx, tx_len))
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.mark_spent(ki_str, tx_str, spent_height)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Insert or update a transaction. json is a UTF-8 JSON blob.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_put_tx(
+    handle: u32,
+    json: *const u8,
+    json_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = std::str::from_utf8(slice::from_raw_parts(json, json_len))
+            .map_err(|_| ()).unwrap();
+        let row: crate::storage::TransactionRow = serde_json::from_str(json_str)
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.put_tx(&row)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get a single transaction by hash.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_tx(
+    handle: u32,
+    tx_hash: *const u8,
+    th_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let tx_str = std::str::from_utf8(slice::from_raw_parts(tx_hash, th_len))
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.get_tx(tx_str)) {
+            Ok(Some(row)) => {
+                let json = serde_json::to_vec(&row).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get filtered transactions. query_json is a JSON object with filter criteria.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_txs(
+    handle: u32,
+    query_json: *const u8,
+    query_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let query_str = std::str::from_utf8(slice::from_raw_parts(query_json, query_len))
+            .map_err(|_| ()).unwrap();
+        let query: crate::storage::TxQuery = serde_json::from_str(query_str)
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.get_txs(&query)) {
+            Ok(rows) => {
+                let json = serde_json::to_vec(&rows).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get sync height. Returns height >= 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_sync_height(handle: u32) -> i64 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::storage::with_db(handle, |db| db.get_sync_height())
+    })) {
+        Ok(Ok(h)) => h,
+        _ => -1,
+    }
+}
+
+/// Set sync height.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_set_sync_height(handle: u32, height: i64) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.set_sync_height(height)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Store a block hash for a given height.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_put_block_hash(
+    handle: u32,
+    height: i64,
+    hash: *const u8,
+    hash_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let hash_str = std::str::from_utf8(slice::from_raw_parts(hash, hash_len))
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.put_block_hash(height, hash_str)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get a block hash for a given height.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_block_hash(
+    handle: u32,
+    height: i64,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_block_hash(height)) {
+            Ok(Some(hash)) => {
+                let bytes = hash.into_bytes().into_boxed_slice();
+                let len = bytes.len();
+                let raw = Box::into_raw(bytes);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Atomic rollback: deletes outputs/txs/block_hashes above height,
+/// unspends outputs spent above height. All in one transaction.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_rollback(handle: u32, height: i64) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.rollback(height)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Compute balance in Rust. Returns JSON: {"balance":"...","unlockedBalance":"...","lockedBalance":"..."}
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_balance(
+    handle: u32,
+    current_height: i64,
+    asset_type: *const u8,
+    at_len: usize,
+    account_index: i32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let at_str = std::str::from_utf8(slice::from_raw_parts(asset_type, at_len))
+            .map_err(|_| ()).unwrap();
+        match crate::storage::with_db(handle, |db| db.get_balance(current_height, at_str, account_index)) {
+            Ok(result) => {
+                let json = serde_json::to_vec(&result).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Free Rust-allocated result buffer.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_free_buf(buf_ptr: *mut u8, len: usize) {
+    if !buf_ptr.is_null() && len > 0 {
+        let _ = Box::from_raw(slice::from_raw_parts_mut(buf_ptr, len));
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
