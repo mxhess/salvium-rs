@@ -585,6 +585,30 @@ export function tclsag_verify_wasm(message, sig_bytes, ring_flat, commitments_fl
 }
 
 /**
+ * X25519 scalar multiplication with Salvium's non-standard clamping.
+ *
+ * Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).
+ * Unlike RFC 7748, bits 0-2 are NOT cleared and bit 254 is NOT set.
+ *
+ * Uses a Montgomery ladder on Curve25519 (a24 = 121666, p = 2^255 - 19).
+ * scalar and u_coord must each be 32 bytes (little-endian).
+ * Returns the 32-byte u-coordinate of the result point.
+ * @param {Uint8Array} scalar
+ * @param {Uint8Array} u_coord
+ * @returns {Uint8Array}
+ */
+export function x25519_scalar_mult(scalar, u_coord) {
+    const ptr0 = passArray8ToWasm0(scalar, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(u_coord, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.x25519_scalar_mult(ptr0, len0, ptr1, len1);
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
  * Zero commitment: C = 1*G + amount*H (blinding factor = 1)
  * Matches C++ rct::zeroCommit() used for coinbase outputs and fee commitments.
  * @param {Uint8Array} amount

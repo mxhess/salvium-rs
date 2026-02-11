@@ -142,7 +142,10 @@ pub fn scalar_mult_base(s: &[u8]) -> Vec<u8> {
 #[wasm_bindgen]
 pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
     let scalar = Scalar::from_bytes_mod_order(to32(s));
-    let point = CompressedEdwardsY(to32(p)).decompress().expect("invalid point");
+    let point = match CompressedEdwardsY(to32(p)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     // Use variable-time Straus/wNAF — much faster than constant-time mul
     EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[point])
         .compress().to_bytes().to_vec()
@@ -150,21 +153,36 @@ pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
 
 #[wasm_bindgen]
 pub fn point_add_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
-    let pp = CompressedEdwardsY(to32(p)).decompress().expect("invalid point p");
-    let qq = CompressedEdwardsY(to32(q)).decompress().expect("invalid point q");
+    let pp = match CompressedEdwardsY(to32(p)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
+    let qq = match CompressedEdwardsY(to32(q)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     (pp + qq).compress().to_bytes().to_vec()
 }
 
 #[wasm_bindgen]
 pub fn point_sub_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
-    let pp = CompressedEdwardsY(to32(p)).decompress().expect("invalid point p");
-    let qq = CompressedEdwardsY(to32(q)).decompress().expect("invalid point q");
+    let pp = match CompressedEdwardsY(to32(p)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
+    let qq = match CompressedEdwardsY(to32(q)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     (pp - qq).compress().to_bytes().to_vec()
 }
 
 #[wasm_bindgen]
 pub fn point_negate(p: &[u8]) -> Vec<u8> {
-    let pp = CompressedEdwardsY(to32(p)).decompress().expect("invalid point");
+    let pp = match CompressedEdwardsY(to32(p)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     (-pp).compress().to_bytes().to_vec()
 }
 
@@ -172,7 +190,10 @@ pub fn point_negate(p: &[u8]) -> Vec<u8> {
 pub fn double_scalar_mult_base(a: &[u8], p: &[u8], b: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
-    let pp = CompressedEdwardsY(to32(p)).decompress().expect("invalid point");
+    let pp = match CompressedEdwardsY(to32(p)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     // Variable-time multi-scalar: a*P + b*G
     EdwardsPoint::vartime_multiscalar_mul(
         &[sa, sb],
@@ -242,7 +263,10 @@ pub fn generate_key_image(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
 /// Generate key derivation: D = 8 * (sec * pub)
 #[wasm_bindgen]
 pub fn generate_key_derivation(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
-    let point = CompressedEdwardsY(to32(pub_key)).decompress().expect("invalid pub key");
+    let point = match CompressedEdwardsY(to32(pub_key)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     let scalar = Scalar::from_bytes_mod_order(to32(sec_key));
     let shared = scalar * point;
     // Cofactor multiply by 8
@@ -258,7 +282,10 @@ pub fn generate_key_derivation(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
 #[wasm_bindgen]
 pub fn derive_public_key(derivation: &[u8], output_index: u32, base_pub: &[u8]) -> Vec<u8> {
     let scalar = derivation_to_scalar(derivation, output_index);
-    let base = CompressedEdwardsY(to32(base_pub)).decompress().expect("invalid base pub key");
+    let base = match CompressedEdwardsY(to32(base_pub)).decompress() {
+        Some(pt) => pt,
+        None => return Vec::new(),
+    };
     let derived = ED25519_BASEPOINT_TABLE * &scalar + base;
     derived.compress().to_bytes().to_vec()
 }

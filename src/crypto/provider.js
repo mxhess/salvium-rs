@@ -21,7 +21,7 @@ let backendType = 'js';
 
 /**
  * Set the active crypto backend
- * @param {'js'|'wasm'|'jsi'} type - Backend type
+ * @param {'js'|'wasm'|'ffi'|'jsi'} type - Backend type
  */
 export async function setCryptoBackend(type) {
   if (type === 'js') {
@@ -30,6 +30,10 @@ export async function setCryptoBackend(type) {
   } else if (type === 'jsi') {
     const { JsiCryptoBackend } = await import('./backend-jsi.js');
     currentBackend = new JsiCryptoBackend();
+    await currentBackend.init();
+  } else if (type === 'ffi') {
+    const { FfiCryptoBackend } = await import('./backend-ffi.js');
+    currentBackend = new FfiCryptoBackend();
     await currentBackend.init();
   } else if (type === 'wasm') {
     // Dynamic import() works in Node/Bun but not React Native/Hermes.
@@ -45,7 +49,7 @@ export async function setCryptoBackend(type) {
       );
     }
   } else {
-    throw new Error(`Unknown crypto backend: ${type}. Use 'js', 'wasm', or 'jsi'.`);
+    throw new Error(`Unknown crypto backend: ${type}. Use 'js', 'wasm', 'ffi', or 'jsi'.`);
   }
   backendType = type;
 }

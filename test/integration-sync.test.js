@@ -19,6 +19,7 @@
  *   START_HEIGHT     - Block height to start sync from (default: 0)
  *   MAX_BLOCKS       - Maximum blocks to sync (default: sync to chain tip)
  *   EXPECTED_BALANCE - Expected minimum balance to verify (optional)
+ *   CRYPTO_BACKEND   - Crypto backend: 'wasm' (default) or 'js'
  */
 
 import { createDaemonRPC } from '../src/rpc/index.js';
@@ -29,6 +30,7 @@ import { NETWORK, ADDRESS_FORMAT, ADDRESS_TYPE } from '../src/constants.js';
 import { MemoryStorage } from '../src/wallet-store.js';
 import { WalletSync, SYNC_STATUS } from '../src/wallet-sync.js';
 import { cnSubaddress, generateCNSubaddressMap, generateCarrotSubaddressMap, SUBADDRESS_LOOKAHEAD_MAJOR, SUBADDRESS_LOOKAHEAD_MINOR } from '../src/subaddress.js';
+import { initCrypto, getCryptoBackend, getCurrentBackendType, setCryptoBackend } from '../src/crypto/index.js';
 
 // ============================================================================
 // Configuration
@@ -116,6 +118,15 @@ async function runIntegrationTest() {
   console.log('╔════════════════════════════════════════════════════════════╗');
   console.log('║           Salvium Wallet Sync Integration Test             ║');
   console.log('╚════════════════════════════════════════════════════════════╝\n');
+
+  // Initialize crypto backend (WASM by default, CRYPTO_BACKEND=js|ffi to override)
+  const requestedBackend = process.env.CRYPTO_BACKEND || 'wasm';
+  if (requestedBackend === 'ffi') {
+    await setCryptoBackend('ffi');
+  } else if (requestedBackend === 'wasm') {
+    await initCrypto();  // Loads WASM, falls back to JS
+  }
+  console.log(`Crypto backend: ${getCurrentBackendType()}\n`);
 
   // Get keys
   const keys = getWalletKeys();

@@ -1,3 +1,1 @@
-# Ignore WASM build intermediates, keep distributable files
-package.json
-*.wasm.d.ts
+*

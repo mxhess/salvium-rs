@@ -27,6 +27,8 @@ JavaScript/TypeScript library for Salvium cryptocurrency — wallet management, 
 - **Cryptographic Primitives** - Blake2b, Keccak-256, Ed25519, X25519, Base58
 - **Multi-Network Support** - Mainnet, Testnet, Stagenet
 - **TypeScript Support** - Full type definitions included
+- **Oracle & Pricing** - Verify oracle signatures, fetch pricing records, calculate conversions
+- **Wallet Encryption** - ML-KEM-768 + Argon2id encrypted wallet storage
 - **Minimal Dependencies** - Only @noble/curves and @noble/hashes
 
 ## Crypto Backends
@@ -35,7 +37,7 @@ salvium-js includes three interchangeable crypto backends behind a unified provi
 
 | Backend | Environment | Performance | Size |
 |---------|-------------|-------------|------|
-| **WASM** (default) | Browser, Node, Bun | 8-26x faster than JS | 319KB |
+| **WASM** (default) | Browser, Node, Bun | 8-26x faster than JS | 336KB |
 | **JSI** | React Native (iOS/Android) | Native speed via FFI | Static lib |
 | **JS** | QuickJS, any JS runtime | Baseline (Noble curves) | Zero deps |
 
@@ -912,15 +914,56 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `createWallet(options?)` | Create new wallet with mnemonic |
 | `restoreWallet(mnemonic, options?)` | Restore wallet from mnemonic |
 | `createViewOnlyWallet(options)` | Create view-only wallet from keys |
-| `wallet.getAddress()` | Get main wallet address |
+| `wallet.getAddress(format?)` | Get main address (auto-detects CARROT vs Legacy) |
 | `wallet.getSubaddress(major, minor)` | Generate subaddress |
 | `wallet.getBalance()` | Get balance (total, unlocked, locked) |
-| `wallet.syncWithDaemon(daemonRpc)` | Sync wallet with daemon (CARROT-aware) |
-| `wallet.transfer(options)` | Send transaction via synced wallet |
+| `wallet.getStorageBalance()` | Get balance from stored outputs |
+| `wallet.getUTXOs(options?)` | Get unspent outputs (filters: unlockedOnly, accountIndex) |
+| `wallet.getAssetTypes()` | Get all asset types with balances |
+| `wallet.syncWithDaemon(daemon?)` | Sync wallet with daemon (CARROT-aware) |
+| `wallet.startSyncing(daemon, interval?)` | Start background sync loop |
+| `wallet.stopSyncing()` | Stop background sync |
+| `wallet.transfer(destinations, options?)` | Build, sign, and broadcast transfer |
+| `wallet.stake(amount, options?)` | Stake coins for yield |
+| `wallet.burn(amount, options?)` | Burn coins |
+| `wallet.convert(amount, src, dest, addr, options?)` | Convert between assets |
+| `wallet.sweepAll(address, options?)` | Sweep all funds to address |
 | `wallet.canSign()` | Check if wallet can sign transactions |
 | `wallet.canScan()` | Check if wallet can scan for outputs |
 | `wallet.toJSON(includeSecrets?)` | Serialize wallet to JSON |
+| `wallet.toEncryptedJSON(password)` | Encrypt wallet (ML-KEM-768 + Argon2id) |
 | `Wallet.fromJSON(json)` | Restore wallet from JSON |
+| `Wallet.fromEncryptedJSON(data, password)` | Restore from encrypted JSON |
+| `Wallet.fromMnemonic(mnemonic, options?)` | Restore from 25-word phrase |
+| `Wallet.fromSeed(seed, options?)` | Restore from 32-byte seed |
+| `Wallet.fromViewKey(viewSec, spendPub)` | Create view-only wallet |
+
+### Wallet Sync Functions
+
+| Function | Description |
+|----------|-------------|
+| `WalletSync` | Blockchain sync engine class |
+| `createWalletSync(options)` | Create sync engine with keys + daemon |
+| `sync.start(startHeight?)` | Start synchronization |
+| `sync.stop()` | Stop synchronization |
+| `sync.getProgress()` | Get sync status, height, percent |
+| `sync.rescan(fromHeight)` | Rescan from specific height |
+| `sync.scanMempool()` | Scan mempool for pending TXs |
+| `sync.on(event, handler)` | Listen for sync events |
+| `SYNC_STATUS` | Enum: IDLE, SYNCING, COMPLETE, ERROR |
+
+### Oracle & Pricing Functions
+
+| Function | Description |
+|----------|-------------|
+| `fetchPricingRecord(options)` | Fetch pricing from oracle server |
+| `verifyPricingRecordSignature(pr, pubkey)` | Verify oracle signature |
+| `getOraclePublicKey(network)` | Get oracle public key for network |
+| `getConversionRate(pr, fromAsset, toAsset)` | Get conversion rate between assets |
+| `calculateConversion(pr, src, dest, amount)` | Full conversion with slippage |
+| `getConvertedAmount(rate, amount)` | Calculate converted amount |
+| `calculateSlippage(amount)` | Calculate 3.125% slippage |
+| `validatePricingRecord(pr, options)` | Full pricing record validation |
 
 ### UTXO Selection Functions
 
@@ -965,6 +1008,9 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `keccak256(data)` | Keccak-256 hash, returns Uint8Array |
 | `keccak256Hex(data)` | Keccak-256 hash, returns hex string |
 | `blake2b(data, outlen, key?)` | Blake2b hash with optional key |
+| `sha256(data)` | SHA-256 hash |
+| `argon2id(password, salt, tCost, mCost, parallelism, outLen)` | Argon2id key derivation |
+| `x25519ScalarMult(scalar, uCoord)` | X25519 scalar multiplication (Salvium clamping) |
 
 ## Wallet Class
 
@@ -1002,6 +1048,154 @@ const sub = wallet.getSubaddress(0, 1);  // account 0, index 1
 // Serialize/deserialize
 const json = wallet.toJSON();
 const loaded = Wallet.fromJSON(json);
+```
+
+## Wallet Sync Engine
+
+The `WalletSync` engine scans the blockchain for owned outputs using both CryptoNote and CARROT protocols. It handles binary block parsing, key image tracking, spent detection, coinbase unlock windows, chain reorganizations, and staking return output prediction.
+
+```javascript
+import { createDaemonRPC } from 'salvium-js/rpc';
+import { Wallet, initCrypto } from 'salvium-js';
+
+// Initialize WASM crypto backend
+await initCrypto();
+
+// Restore wallet and sync
+const wallet = Wallet.fromMnemonic('abbey ability able about ...');
+const daemon = createDaemonRPC({ url: 'http://localhost:19081' });
+
+// One-shot sync (scans from last saved height to chain tip)
+await wallet.syncWithDaemon(daemon);
+
+// Check balance
+const { balance, unlockedBalance, lockedBalance } = await wallet.getStorageBalance();
+console.log(`Balance: ${Number(unlockedBalance) / 1e8} SAL`);
+console.log(`Locked:  ${Number(lockedBalance) / 1e8} SAL`);
+
+// Background sync (polls every 10 seconds)
+await wallet.startSyncing(daemon, 10000);
+wallet.stopSyncing();
+```
+
+### Direct WalletSync Usage
+
+For lower-level control, use `WalletSync` directly:
+
+```javascript
+import { WalletSync, createWalletSync, SYNC_STATUS } from 'salvium-js';
+import { WalletStorage } from 'salvium-js';
+
+const sync = createWalletSync({
+  storage,           // WalletStorage instance
+  daemon,            // DaemonRPC instance
+  keys: {
+    viewSecretKey,
+    spendSecretKey,  // null for view-only
+    spendPublicKey,
+    viewPublicKey
+  },
+  carrotKeys,        // From deriveCarrotKeys() — enables CARROT scanning
+  batchSize: 100     // Blocks per RPC request
+});
+
+// Listen for events
+sync.on('outputReceived', ({ amount, txHash }) => {
+  console.log(`Received ${Number(amount) / 1e8} SAL in ${txHash}`);
+});
+sync.on('outputSpent', ({ keyImage }) => {
+  console.log(`Output spent: ${keyImage}`);
+});
+sync.on('syncProgress', ({ currentHeight, targetHeight, percentComplete }) => {
+  console.log(`${percentComplete.toFixed(1)}% (${currentHeight}/${targetHeight})`);
+});
+
+await sync.start();
+```
+
+### Sync Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `syncStart` | `{ startHeight, targetHeight }` | Sync started |
+| `syncProgress` | `{ currentHeight, targetHeight, percentComplete }` | Progress update |
+| `syncComplete` | `{ height }` | Reached chain tip |
+| `outputReceived` | `{ amount, txHash, outputIndex }` | Owned output found |
+| `outputSpent` | `{ keyImage, txHash }` | Output marked spent |
+| `reorg` | `{ fromHeight, toHeight }` | Chain reorganization |
+| `syncError` | `{ error }` | Error during sync |
+
+## Staking, Burns, and Conversions
+
+Salvium supports staking for yield, burning tokens, and cross-asset conversions.
+
+```javascript
+// Stake 1000 SAL for yield
+const stakeTx = await wallet.stake(100000000000n, { daemon });
+console.log('Stake TX:', stakeTx.txHash);
+
+// Burn 10 SAL
+const burnTx = await wallet.burn(1000000000n, { daemon });
+
+// Convert between assets (requires oracle pricing)
+const convertTx = await wallet.convert(
+  1000000000n,    // amount
+  'SAL',          // source asset
+  'SAL1',         // destination asset
+  destAddress,    // destination address
+  { daemon }
+);
+
+// Check staking status
+const locked = wallet.getLockedCoins();
+const yield_ = wallet.getTotalYield();
+```
+
+## Oracle & Pricing
+
+Verify oracle signatures and calculate cross-asset conversion rates.
+
+```javascript
+import {
+  fetchPricingRecord,
+  verifyPricingRecordSignature,
+  getOraclePublicKey,
+  getConversionRate,
+  calculateConversion
+} from 'salvium-js';
+
+// Fetch current pricing from oracle
+const pr = await fetchPricingRecord({ network: 'mainnet' });
+
+// Verify oracle signature
+const pubkey = getOraclePublicKey('mainnet');
+const valid = await verifyPricingRecordSignature(pr, pubkey);
+
+// Get conversion rate
+const rate = getConversionRate(pr, 'SAL', 'SAL1');
+
+// Calculate full conversion with slippage
+const result = calculateConversion(pr, 'SAL', 'SAL1', 1000000000n);
+console.log('You receive:', result.destAmount);
+console.log('Slippage:', result.slippage);
+```
+
+## Wallet Encryption
+
+Encrypt wallet data with ML-KEM-768 (post-quantum) + Argon2id key derivation.
+
+```javascript
+// Encrypt wallet for storage
+const encrypted = wallet.toEncryptedJSON('my-password');
+
+// Restore from encrypted JSON
+const restored = Wallet.fromEncryptedJSON(encrypted, 'my-password');
+
+// Change password
+const reEncrypted = Wallet.changePassword(encrypted, 'old-pass', 'new-pass');
+
+// Check if JSON is encrypted
+Wallet.isEncrypted(data);  // true or false
 ```
 
 ## UTXO Selection
@@ -1123,7 +1317,7 @@ bun test/all.js --integration
 bun test/all.js --integration http://localhost:19081
 ```
 
-25 test suites, 899+ tests covering addresses, keys, mnemonics, scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, and cross-backend WASM/JS interop.
+25 test suites covering addresses, keys, mnemonics, CryptoNote + CARROT scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, oracle verification, and cross-backend WASM/JS interop.
 
 ## Project Structure
 
@@ -1135,32 +1329,33 @@ salvium-js/
     blockchain.js       # Chain state, reorg detection
     bulletproofs_plus.js # BP+ range proofs
     carrot.js           # CARROT key derivation
-    carrot-scanning.js  # CARROT output scanning (X25519 ECDH)
+    carrot-scanning.js  # CARROT output scanning (X25519 ECDH, internal/return)
     consensus.js        # Difficulty, rewards, fees, median
     keccak.js           # Keccak-256 hashing
     keyimage.js         # Key image generation
     mining.js           # RandomX mining
     mnemonic.js         # 25-word seed phrases
+    oracle.js           # Oracle pricing, signature verification, conversions
     scanning.js         # CryptoNote output scanning
     signature.js        # Message signature verification
     subaddress.js       # Subaddress generation
     transaction.js      # TX construction, CLSAG/TCLSAG, decoy selection
     validation.js       # TX/block validation rules
-    wallet.js           # Wallet class
-    wallet-sync.js      # Daemon sync engine (CARROT-aware)
+    wallet.js           # Wallet class (sync, transfer, stake, burn, convert)
+    wallet-sync.js      # Daemon sync engine (CARROT-aware, binary blocks)
     crypto/
       provider.js       # Backend-agnostic crypto API
       backend-js.js     # Pure JS backend (Noble curves)
       backend-wasm.js   # Rust/WASM backend (curve25519-dalek)
       backend-jsi.js    # React Native JSI backend (FFI)
-      wasm/             # Compiled WASM binary (319KB)
+      wasm/             # Compiled WASM binary (336KB)
     rpc/
       daemon.js         # Daemon RPC client
       wallet.js         # Wallet RPC client
     transaction/        # TX parsing, serialization, constants
-    wallet/             # Account, storage, encryption
+    wallet/             # Account, storage, encryption (ML-KEM-768 + Argon2id)
   crates/
-    salvium-crypto/     # Rust crate (CLSAG, TCLSAG, BP+, 28 primitives)
+    salvium-crypto/     # Rust crate (CLSAG, TCLSAG, BP+, X25519, 30+ primitives)
   test/                 # 25 test suites
 ```
 

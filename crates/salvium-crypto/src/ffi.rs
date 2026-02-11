@@ -11,6 +11,25 @@
 
 use std::slice;
 use std::ptr;
+use std::panic;
+use curve25519_dalek::edwards::CompressedEdwardsY;
+
+/// Helper: run a closure that may panic, returning -1 on panic instead of aborting.
+/// This is critical for extern "C" functions where unwinding is UB.
+/// We use AssertUnwindSafe because the closures capture raw pointers (which are
+/// !UnwindSafe) but we know we won't observe torn state through them on panic.
+unsafe fn catch_ffi<F: FnOnce() -> i32>(f: F) -> i32 {
+    match panic::catch_unwind(panic::AssertUnwindSafe(f)) {
+        Ok(rc) => rc,
+        Err(_) => -1,
+    }
+}
+
+/// Validate that 32 bytes represent a valid compressed Edwards Y point.
+/// Returns false if the point cannot be decompressed (invalid curve point).
+fn is_valid_point(bytes: &[u8; 32]) -> bool {
+    CompressedEdwardsY(*bytes).decompress().is_some()
+}
 
 // ─── Hashing ────────────────────────────────────────────────────────────────
 
@@ -192,6 +211,7 @@ pub unsafe extern "C" fn salvium_scalar_mult_point(
 ) -> i32 {
     let s = slice::from_raw_parts(s, 32);
     let p = slice::from_raw_parts(p, 32);
+    if !is_valid_point(&crate::to32(p)) { return -1; }
     let result = crate::scalar_mult_point(s, p);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -205,6 +225,7 @@ pub unsafe extern "C" fn salvium_point_add(
 ) -> i32 {
     let p = slice::from_raw_parts(p, 32);
     let q = slice::from_raw_parts(q, 32);
+    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) { return -1; }
     let result = crate::point_add_compressed(p, q);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -218,6 +239,7 @@ pub unsafe extern "C" fn salvium_point_sub(
 ) -> i32 {
     let p = slice::from_raw_parts(p, 32);
     let q = slice::from_raw_parts(q, 32);
+    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) { return -1; }
     let result = crate::point_sub_compressed(p, q);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -229,6 +251,7 @@ pub unsafe extern "C" fn salvium_point_negate(
     out: *mut u8,
 ) -> i32 {
     let p = slice::from_raw_parts(p, 32);
+    if !is_valid_point(&crate::to32(p)) { return -1; }
     let result = crate::point_negate(p);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -244,6 +267,7 @@ pub unsafe extern "C" fn salvium_double_scalar_mult_base(
     let a = slice::from_raw_parts(a, 32);
     let p = slice::from_raw_parts(p, 32);
     let b = slice::from_raw_parts(b, 32);
+    if !is_valid_point(&crate::to32(p)) { return -1; }
     let result = crate::double_scalar_mult_base(a, p, b);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -271,6 +295,7 @@ pub unsafe extern "C" fn salvium_generate_key_derivation(
 ) -> i32 {
     let pk = slice::from_raw_parts(pub_key, 32);
     let sk = slice::from_raw_parts(sec_key, 32);
+    if !is_valid_point(&crate::to32(pk)) { return -1; }
     let result = crate::generate_key_derivation(pk, sk);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -284,6 +309,8 @@ pub unsafe extern "C" fn salvium_generate_key_image(
 ) -> i32 {
     let pk = slice::from_raw_parts(pub_key, 32);
     let sk = slice::from_raw_parts(sec_key, 32);
+    // hash_to_point always produces valid points, so no validation needed on pk here
+    // (the lib function calls hash_to_point internally, not decompress)
     let result = crate::generate_key_image(pk, sk);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -298,6 +325,7 @@ pub unsafe extern "C" fn salvium_derive_public_key(
 ) -> i32 {
     let deriv = slice::from_raw_parts(derivation, 32);
     let base = slice::from_raw_parts(base_pub, 32);
+    if !is_valid_point(&crate::to32(base)) { return -1; }
     let result = crate::derive_public_key(deriv, output_index, base);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -312,6 +340,7 @@ pub unsafe extern "C" fn salvium_derive_secret_key(
 ) -> i32 {
     let deriv = slice::from_raw_parts(derivation, 32);
     let base = slice::from_raw_parts(base_sec, 32);
+    // derive_secret_key does scalar math only (no point decompression), safe to call directly
     let result = crate::derive_secret_key(deriv, output_index, base);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -327,6 +356,7 @@ pub unsafe extern "C" fn salvium_pedersen_commit(
 ) -> i32 {
     let amount = slice::from_raw_parts(amount, 32);
     let mask = slice::from_raw_parts(mask, 32);
+    // pedersen_commit decompresses constant H_POINT_BYTES — always valid
     let result = crate::pedersen_commit(amount, mask);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -338,6 +368,7 @@ pub unsafe extern "C" fn salvium_zero_commit(
     out: *mut u8,
 ) -> i32 {
     let amount = slice::from_raw_parts(amount, 32);
+    // zero_commit decompresses constant H_POINT_BYTES — always valid
     let result = crate::zero_commit(amount);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -457,29 +488,35 @@ pub unsafe extern "C" fn salvium_clsag_sign(
     out: *mut u8,
 ) -> i32 {
     let n = ring_count as usize;
-    let message = crate::to32(slice::from_raw_parts(message, 32));
-    let ring_flat = slice::from_raw_parts(ring, n * 32);
-    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
-    let comms_flat = slice::from_raw_parts(commitments, n * 32);
-    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let msg = crate::to32(slice::from_raw_parts(message, 32));
+    let ring_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(ring, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
+    let comms_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(commitments, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
     let sk = crate::to32(slice::from_raw_parts(secret_key, 32));
     let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+    let si = secret_index as usize;
+    let out_ptr = out;
 
-    let sig = crate::clsag::clsag_sign(&message, &ring_arr, &sk, &comms_arr, &cm, &po, secret_index as usize);
-
-    // Write output: s[0..n], c1, I, D
-    let mut offset = 0;
-    for s in &sig.s {
-        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
+    catch_ffi(move || {
+        let sig = crate::clsag::clsag_sign(&msg, &ring_arr, &sk, &comms_arr, &cm, &po, si);
+        let mut offset = 0;
+        for s in &sig.s {
+            ptr::copy_nonoverlapping(s.as_ptr(), out_ptr.add(offset), 32);
+            offset += 32;
+        }
+        ptr::copy_nonoverlapping(sig.c1.as_ptr(), out_ptr.add(offset), 32);
         offset += 32;
-    }
-    ptr::copy_nonoverlapping(sig.c1.as_ptr(), out.add(offset), 32);
-    offset += 32;
-    ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out.add(offset), 32);
-    offset += 32;
-    ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out.add(offset), 32);
-    0
+        ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out_ptr.add(offset), 32);
+        offset += 32;
+        ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out_ptr.add(offset), 32);
+        0
+    })
 }
 
 /// CLSAG verify.
@@ -499,27 +536,32 @@ pub unsafe extern "C" fn salvium_clsag_verify(
     let expected = n * 32 + 96;
     if sig_len < expected { return 0; }
 
-    let message = crate::to32(slice::from_raw_parts(message, 32));
-    let sig_bytes = slice::from_raw_parts(sig, sig_len);
-    let ring_flat = slice::from_raw_parts(ring, n * 32);
-    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
-    let comms_flat = slice::from_raw_parts(commitments, n * 32);
-    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let msg = crate::to32(slice::from_raw_parts(message, 32));
+    let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
+    let ring_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(ring, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
+    let comms_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(commitments, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
-    // Parse sig: s[0..n], c1, I, D (no length prefix in FFI format)
-    let mut s = Vec::with_capacity(n);
-    let mut offset = 0;
-    for _ in 0..n {
-        s.push(crate::to32(&sig_bytes[offset..offset + 32]));
-        offset += 32;
-    }
-    let c1 = crate::to32(&sig_bytes[offset..offset + 32]); offset += 32;
-    let key_image = crate::to32(&sig_bytes[offset..offset + 32]); offset += 32;
-    let commitment_image = crate::to32(&sig_bytes[offset..offset + 32]);
+    catch_ffi(move || {
+        let mut s = Vec::with_capacity(n);
+        let mut offset = 0;
+        for _ in 0..n {
+            s.push(crate::to32(&sig_data[offset..offset + 32]));
+            offset += 32;
+        }
+        let c1 = crate::to32(&sig_data[offset..offset + 32]); offset += 32;
+        let key_image = crate::to32(&sig_data[offset..offset + 32]); offset += 32;
+        let commitment_image = crate::to32(&sig_data[offset..offset + 32]);
 
-    let sig_struct = crate::clsag::ClsagSignature { s, c1, key_image, commitment_image };
-    if crate::clsag::clsag_verify(&message, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+        let sig_struct = crate::clsag::ClsagSignature { s, c1, key_image, commitment_image };
+        if crate::clsag::clsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+    })
 }
 
 // ─── TCLSAG Ring Signatures ────────────────────────────────────────────────
@@ -541,31 +583,38 @@ pub unsafe extern "C" fn salvium_tclsag_sign(
     out: *mut u8,
 ) -> i32 {
     let n = ring_count as usize;
-    let message = crate::to32(slice::from_raw_parts(message, 32));
-    let ring_flat = slice::from_raw_parts(ring, n * 32);
-    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
-    let comms_flat = slice::from_raw_parts(commitments, n * 32);
-    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let msg = crate::to32(slice::from_raw_parts(message, 32));
+    let ring_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(ring, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
+    let comms_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(commitments, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
     let skx = crate::to32(slice::from_raw_parts(secret_key_x, 32));
     let sky = crate::to32(slice::from_raw_parts(secret_key_y, 32));
     let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
+    let si = secret_index as usize;
+    let out_ptr = out;
 
-    let sig = crate::tclsag::tclsag_sign(&message, &ring_arr, &skx, &sky, &comms_arr, &cm, &po, secret_index as usize);
-
-    let mut offset = 0;
-    for s in &sig.sx {
-        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
-        offset += 32;
-    }
-    for s in &sig.sy {
-        ptr::copy_nonoverlapping(s.as_ptr(), out.add(offset), 32);
-        offset += 32;
-    }
-    ptr::copy_nonoverlapping(sig.c1.as_ptr(), out.add(offset), 32); offset += 32;
-    ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out.add(offset), 32); offset += 32;
-    ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out.add(offset), 32);
-    0
+    catch_ffi(move || {
+        let sig = crate::tclsag::tclsag_sign(&msg, &ring_arr, &skx, &sky, &comms_arr, &cm, &po, si);
+        let mut offset = 0;
+        for s in &sig.sx {
+            ptr::copy_nonoverlapping(s.as_ptr(), out_ptr.add(offset), 32);
+            offset += 32;
+        }
+        for s in &sig.sy {
+            ptr::copy_nonoverlapping(s.as_ptr(), out_ptr.add(offset), 32);
+            offset += 32;
+        }
+        ptr::copy_nonoverlapping(sig.c1.as_ptr(), out_ptr.add(offset), 32); offset += 32;
+        ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out_ptr.add(offset), 32); offset += 32;
+        ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out_ptr.add(offset), 32);
+        0
+    })
 }
 
 /// TCLSAG verify.
@@ -585,25 +634,31 @@ pub unsafe extern "C" fn salvium_tclsag_verify(
     let expected = 2 * n * 32 + 96;
     if sig_len < expected { return 0; }
 
-    let message = crate::to32(slice::from_raw_parts(message, 32));
-    let sig_bytes = slice::from_raw_parts(sig, sig_len);
-    let ring_flat = slice::from_raw_parts(ring, n * 32);
-    let ring_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&ring_flat[i*32..(i+1)*32])).collect();
-    let comms_flat = slice::from_raw_parts(commitments, n * 32);
-    let comms_arr: Vec<[u8; 32]> = (0..n).map(|i| crate::to32(&comms_flat[i*32..(i+1)*32])).collect();
+    let msg = crate::to32(slice::from_raw_parts(message, 32));
+    let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
+    let ring_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(ring, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
+    let comms_arr: Vec<[u8; 32]> = {
+        let flat = slice::from_raw_parts(commitments, n * 32);
+        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+    };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
-    let mut offset = 0;
-    let mut sx = Vec::with_capacity(n);
-    for _ in 0..n { sx.push(crate::to32(&sig_bytes[offset..offset+32])); offset += 32; }
-    let mut sy = Vec::with_capacity(n);
-    for _ in 0..n { sy.push(crate::to32(&sig_bytes[offset..offset+32])); offset += 32; }
-    let c1 = crate::to32(&sig_bytes[offset..offset+32]); offset += 32;
-    let key_image = crate::to32(&sig_bytes[offset..offset+32]); offset += 32;
-    let commitment_image = crate::to32(&sig_bytes[offset..offset+32]);
+    catch_ffi(move || {
+        let mut offset = 0;
+        let mut sx = Vec::with_capacity(n);
+        for _ in 0..n { sx.push(crate::to32(&sig_data[offset..offset+32])); offset += 32; }
+        let mut sy = Vec::with_capacity(n);
+        for _ in 0..n { sy.push(crate::to32(&sig_data[offset..offset+32])); offset += 32; }
+        let c1 = crate::to32(&sig_data[offset..offset+32]); offset += 32;
+        let key_image = crate::to32(&sig_data[offset..offset+32]); offset += 32;
+        let commitment_image = crate::to32(&sig_data[offset..offset+32]);
 
-    let sig_struct = crate::tclsag::TclsagSignature { sx, sy, c1, key_image, commitment_image };
-    if crate::tclsag::tclsag_verify(&message, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+        let sig_struct = crate::tclsag::TclsagSignature { sx, sy, c1, key_image, commitment_image };
+        if crate::tclsag::tclsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+    })
 }
 
 // ─── Bulletproofs+ Range Proofs ─────────────────────────────────────────────
@@ -626,40 +681,43 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_prove(
     use curve25519_dalek::scalar::Scalar;
 
     let n = count as usize;
-    let amounts_slice = slice::from_raw_parts(amounts, n * 8);
-    let masks_slice = slice::from_raw_parts(masks, n * 32);
+    let amounts_data = slice::from_raw_parts(amounts, n * 8).to_vec();
+    let masks_data = slice::from_raw_parts(masks, n * 32).to_vec();
+    let out_ptr = out;
+    let out_len_ptr = out_len;
 
-    let amounts_vec: Vec<u64> = (0..n).map(|i| {
-        u64::from_le_bytes([
-            amounts_slice[i*8], amounts_slice[i*8+1], amounts_slice[i*8+2], amounts_slice[i*8+3],
-            amounts_slice[i*8+4], amounts_slice[i*8+5], amounts_slice[i*8+6], amounts_slice[i*8+7],
-        ])
-    }).collect();
-    let masks_vec: Vec<Scalar> = (0..n).map(|i| {
-        Scalar::from_bytes_mod_order(crate::to32(&masks_slice[i*32..(i+1)*32]))
-    }).collect();
+    catch_ffi(move || {
+        let amounts_vec: Vec<u64> = (0..n).map(|i| {
+            u64::from_le_bytes([
+                amounts_data[i*8], amounts_data[i*8+1], amounts_data[i*8+2], amounts_data[i*8+3],
+                amounts_data[i*8+4], amounts_data[i*8+5], amounts_data[i*8+6], amounts_data[i*8+7],
+            ])
+        }).collect();
+        let masks_vec: Vec<Scalar> = (0..n).map(|i| {
+            Scalar::from_bytes_mod_order(crate::to32(&masks_data[i*32..(i+1)*32]))
+        }).collect();
 
-    let proof = crate::bulletproofs_plus::bulletproof_plus_prove(&amounts_vec, &masks_vec);
-    let proof_bytes = crate::bulletproofs_plus::serialize_proof(&proof);
+        let proof = crate::bulletproofs_plus::bulletproof_plus_prove(&amounts_vec, &masks_vec);
+        let proof_bytes = crate::bulletproofs_plus::serialize_proof(&proof);
 
-    // Output: [v_count u32 LE][V_0..V_n 32 bytes each][proof_bytes]
-    let total = 4 + proof.v.len() * 32 + proof_bytes.len();
-    if total > out_max { return -1; }
+        let total = 4 + proof.v.len() * 32 + proof_bytes.len();
+        if total > out_max { return -1; }
 
-    let mut off = 0;
-    let v_count = proof.v.len() as u32;
-    ptr::copy_nonoverlapping(v_count.to_le_bytes().as_ptr(), out.add(off), 4);
-    off += 4;
-    for v in &proof.v {
-        let bytes = v.compress().to_bytes();
-        ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(off), 32);
-        off += 32;
-    }
-    ptr::copy_nonoverlapping(proof_bytes.as_ptr(), out.add(off), proof_bytes.len());
-    off += proof_bytes.len();
+        let mut off = 0;
+        let v_count = proof.v.len() as u32;
+        ptr::copy_nonoverlapping(v_count.to_le_bytes().as_ptr(), out_ptr.add(off), 4);
+        off += 4;
+        for v in &proof.v {
+            let bytes = v.compress().to_bytes();
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr.add(off), 32);
+            off += 32;
+        }
+        ptr::copy_nonoverlapping(proof_bytes.as_ptr(), out_ptr.add(off), proof_bytes.len());
+        off += proof_bytes.len();
 
-    *out_len = off;
-    0
+        *out_len_ptr = off;
+        0
+    })
 }
 
 /// Bulletproof+ verify.
@@ -675,22 +733,24 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
     use curve25519_dalek::edwards::CompressedEdwardsY;
 
     let n = commitment_count as usize;
-    let proof_data = slice::from_raw_parts(proof_bytes, proof_len);
-    let comms_flat = slice::from_raw_parts(commitments, n * 32);
+    let proof_data = slice::from_raw_parts(proof_bytes, proof_len).to_vec();
+    let comms_data = slice::from_raw_parts(commitments, n * 32).to_vec();
 
-    let v: Vec<_> = (0..n).map(|i| {
-        match CompressedEdwardsY(crate::to32(&comms_flat[i*32..(i+1)*32])).decompress() {
+    catch_ffi(move || {
+        let v: Vec<_> = (0..n).map(|i| {
+            match CompressedEdwardsY(crate::to32(&comms_data[i*32..(i+1)*32])).decompress() {
+                Some(p) => p,
+                None => curve25519_dalek::edwards::EdwardsPoint::default(),
+            }
+        }).collect();
+
+        let proof = match crate::bulletproofs_plus::parse_proof(&proof_data) {
             Some(p) => p,
-            None => return curve25519_dalek::edwards::EdwardsPoint::default(),
-        }
-    }).collect();
+            None => return 0,
+        };
 
-    let proof = match crate::bulletproofs_plus::parse_proof(proof_data) {
-        Some(p) => p,
-        None => return 0,
-    };
-
-    if crate::bulletproofs_plus::bulletproof_plus_verify(&v, &proof) { 1 } else { 0 }
+        if crate::bulletproofs_plus::bulletproof_plus_verify(&v, &proof) { 1 } else { 0 }
+    })
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

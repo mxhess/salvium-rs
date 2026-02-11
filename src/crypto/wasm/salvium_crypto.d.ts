@@ -116,6 +116,18 @@ export function tclsag_sign_wasm(message: Uint8Array, ring_flat: Uint8Array, sec
 export function tclsag_verify_wasm(message: Uint8Array, sig_bytes: Uint8Array, ring_flat: Uint8Array, commitments_flat: Uint8Array, pseudo_output: Uint8Array): boolean;
 
 /**
+ * X25519 scalar multiplication with Salvium's non-standard clamping.
+ *
+ * Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).
+ * Unlike RFC 7748, bits 0-2 are NOT cleared and bit 254 is NOT set.
+ *
+ * Uses a Montgomery ladder on Curve25519 (a24 = 121666, p = 2^255 - 19).
+ * scalar and u_coord must each be 32 bytes (little-endian).
+ * Returns the 32-byte u-coordinate of the result point.
+ */
+export function x25519_scalar_mult(scalar: Uint8Array, u_coord: Uint8Array): Uint8Array;
+
+/**
  * Zero commitment: C = 1*G + amount*H (blinding factor = 1)
  * Matches C++ rct::zeroCommit() used for coinbase outputs and fee commitments.
  */
@@ -159,6 +171,7 @@ export interface InitOutput {
     readonly sha256: (a: number, b: number) => [number, number];
     readonly tclsag_sign_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number];
     readonly tclsag_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+    readonly x25519_scalar_mult: (a: number, b: number, c: number, d: number) => [number, number];
     readonly zero_commit: (a: number, b: number) => [number, number];
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;

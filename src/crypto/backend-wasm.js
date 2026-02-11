@@ -11,6 +11,11 @@ import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 let wasmExports = null;
 
+/** Convert empty Uint8Array (Rust returned Vec::new() for invalid point) to null */
+function nullIfEmpty(result) {
+  return (result && result.length > 0) ? result : null;
+}
+
 /**
  * Detect if running in a browser environment
  */
@@ -95,13 +100,13 @@ export class WasmCryptoBackend {
   scCheck(s) { return this.wasm.sc_check(s); }
   scIsZero(s) { return this.wasm.sc_is_zero(s); }
 
-  // Point ops
+  // Point ops — return null on invalid points (empty vec from Rust)
   scalarMultBase(s) { return this.wasm.scalar_mult_base(s); }
-  scalarMultPoint(s, p) { return this.wasm.scalar_mult_point(s, p); }
-  pointAddCompressed(p, q) { return this.wasm.point_add_compressed(p, q); }
-  pointSubCompressed(p, q) { return this.wasm.point_sub_compressed(p, q); }
-  pointNegate(p) { return this.wasm.point_negate(p); }
-  doubleScalarMultBase(a, p, b) { return this.wasm.double_scalar_mult_base(a, p, b); }
+  scalarMultPoint(s, p) { return nullIfEmpty(this.wasm.scalar_mult_point(s, p)); }
+  pointAddCompressed(p, q) { return nullIfEmpty(this.wasm.point_add_compressed(p, q)); }
+  pointSubCompressed(p, q) { return nullIfEmpty(this.wasm.point_sub_compressed(p, q)); }
+  pointNegate(p) { return nullIfEmpty(this.wasm.point_negate(p)); }
+  doubleScalarMultBase(a, p, b) { return nullIfEmpty(this.wasm.double_scalar_mult_base(a, p, b)); }
 
   // Hash-to-point & key derivation
   hashToPoint(data) { return this.wasm.hash_to_point(data); }
@@ -123,9 +128,9 @@ export class WasmCryptoBackend {
     if (typeof secKey === 'string') {
       secKey = new Uint8Array(secKey.match(/.{1,2}/g).map(b => parseInt(b, 16)));
     }
-    return this.wasm.generate_key_derivation(pubKey, secKey);
+    return nullIfEmpty(this.wasm.generate_key_derivation(pubKey, secKey));
   }
-  derivePublicKey(derivation, outputIndex, basePub) { return this.wasm.derive_public_key(derivation, outputIndex, basePub); }
+  derivePublicKey(derivation, outputIndex, basePub) { return nullIfEmpty(this.wasm.derive_public_key(derivation, outputIndex, basePub)); }
   deriveSecretKey(derivation, outputIndex, baseSec) { return this.wasm.derive_secret_key(derivation, outputIndex, baseSec); }
 
   // Pedersen commitments
