@@ -153,6 +153,17 @@ export class WalletOutput {
    * @returns {boolean}
    */
   isUnlocked(currentHeight, unlockBlocks = 10) {
+    // Coinbase outputs (miner/protocol) set unlock_time to the bare constant
+    // CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW (60), NOT height+60.
+    // They always require 60 confirmations regardless of the unlock_time value.
+    const isCoinbase = this.txType === 'miner' || this.txType === 'protocol'
+      || this.txType === 1 || this.txType === 2;
+    if (isCoinbase) {
+      const MINED_MONEY_UNLOCK_WINDOW = 60;
+      return this.blockHeight !== null &&
+        (currentHeight - this.blockHeight) >= MINED_MONEY_UNLOCK_WINDOW;
+    }
+
     if (this.unlockTime === 0n) {
       // Standard unlock by confirmations
       return this.blockHeight !== null &&
