@@ -266,6 +266,37 @@ int32_t salvium_bulletproof_plus_verify(
     const uint8_t *commitments /* commitment_count * 32 */,
     uint32_t commitment_count);
 
+/* ─── AES-256-GCM Encryption ───────────────────────────────────────────── */
+
+/**
+ * AES-256-GCM encrypt.
+ * Rust generates a random 12-byte nonce internally.
+ * Output: nonce(12) || ciphertext || tag(16).  Size = plaintext_len + 28.
+ * out must be at least plaintext_len + 28 bytes.
+ * out_len receives actual output length.
+ * Returns 0 on success, -1 on error.
+ */
+int32_t salvium_aes256gcm_encrypt(
+    const uint8_t *key /* 32 */,
+    const uint8_t *plaintext,
+    size_t plaintext_len,
+    uint8_t *out,
+    size_t *out_len);
+
+/**
+ * AES-256-GCM decrypt.
+ * Input: nonce(12) || ciphertext || tag(16).
+ * out must be at least ciphertext_len - 28 bytes.
+ * out_len receives actual output length (plaintext size).
+ * Returns 0 on success, -1 on error (authentication failure or bad input).
+ */
+int32_t salvium_aes256gcm_decrypt(
+    const uint8_t *key /* 32 */,
+    const uint8_t *ciphertext,
+    size_t ciphertext_len,
+    uint8_t *out,
+    size_t *out_len);
+
 #ifdef __cplusplus
 }
 #endif

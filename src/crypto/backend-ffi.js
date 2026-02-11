@@ -153,6 +153,10 @@ const FFI_SYMBOLS = {
   // BP+
   salvium_bulletproof_plus_prove:  { args: [ptr, ptr, u32, ptr, usize, ptr], returns: i32 },
   salvium_bulletproof_plus_verify: { args: [ptr, usize, ptr, u32], returns: i32 },
+
+  // AES-256-GCM
+  salvium_aes256gcm_encrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
+  salvium_aes256gcm_decrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
 };
 
 // ─── Backend class ──────────────────────────────────────────────────────────
@@ -575,5 +579,36 @@ export class FfiCryptoBackend {
       bProof, bProof.length, commFlat, commitmentBytes.length
     );
     return rc === 1;
+  }
+
+  // ─── AES-256-GCM Encryption ─────────────────────────────────────────────
+
+  aes256gcmEncrypt(key, plaintext) {
+    const bKey = ensureBuffer(key);
+    const bPlain = ensureBuffer(plaintext);
+    const outSize = bPlain.length + 28; // nonce(12) + ciphertext + tag(16)
+    const out = Buffer.alloc(outSize);
+    const outLenBuf = Buffer.alloc(8); // size_t = 8 bytes on 64-bit
+    const rc = this.lib.symbols.salvium_aes256gcm_encrypt(
+      bKey, bPlain, bPlain.length, out, outLenBuf
+    );
+    if (rc !== 0) throw new Error('aes256gcm_encrypt failed');
+    const actualLen = Number(outLenBuf.readBigUInt64LE(0));
+    return new Uint8Array(out.slice(0, actualLen));
+  }
+
+  aes256gcmDecrypt(key, ciphertext) {
+    const bKey = ensureBuffer(key);
+    const bCipher = ensureBuffer(ciphertext);
+    if (bCipher.length < 28) throw new Error('ciphertext too short');
+    const outSize = bCipher.length - 28;
+    const out = Buffer.alloc(outSize);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = this.lib.symbols.salvium_aes256gcm_decrypt(
+      bKey, bCipher, bCipher.length, out, outLenBuf
+    );
+    if (rc !== 0) throw new Error('aes256gcm_decrypt failed (authentication or key error)');
+    const actualLen = Number(outLenBuf.readBigUInt64LE(0));
+    return new Uint8Array(out.slice(0, actualLen));
   }
 }

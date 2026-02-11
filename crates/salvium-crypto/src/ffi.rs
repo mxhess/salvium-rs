@@ -450,6 +450,107 @@ pub unsafe extern "C" fn salvium_argon2id(
     }
 }
 
+// ─── AES-256-GCM Encryption ─────────────────────────────────────────────────
+
+/// AES-256-GCM encrypt.
+/// Rust generates a random 12-byte nonce internally.
+/// Output layout: nonce(12) || ciphertext || tag(16).
+/// out must be at least plaintext_len + 28 bytes.
+/// out_len receives actual output length.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
+    key: *const u8,
+    plaintext: *const u8,
+    plaintext_len: usize,
+    out: *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
+        use aes_gcm::aead::OsRng;
+        use aes_gcm::aead::rand_core::RngCore;
+
+        let key_slice = slice::from_raw_parts(key, 32);
+        let plaintext_slice = slice::from_raw_parts(plaintext, plaintext_len);
+
+        let cipher = match Aes256Gcm::new_from_slice(key_slice) {
+            Ok(c) => c,
+            Err(_) => return -1,
+        };
+
+        // Generate random 12-byte nonce
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // Encrypt in-place: copy plaintext to output buffer after nonce
+        let out_slice = slice::from_raw_parts_mut(out, plaintext_len + 28);
+        // Write nonce first
+        ptr::copy_nonoverlapping(nonce_bytes.as_ptr(), out_slice.as_mut_ptr(), 12);
+        // Copy plaintext after nonce
+        ptr::copy_nonoverlapping(plaintext_slice.as_ptr(), out_slice[12..].as_mut_ptr(), plaintext_len);
+
+        // Encrypt in-place (appends 16-byte tag)
+        let mut buffer = out_slice[12..12 + plaintext_len].to_vec();
+        match cipher.encrypt_in_place(nonce, b"", &mut buffer) {
+            Ok(_) => {},
+            Err(_) => return -1,
+        }
+
+        // buffer is now ciphertext + tag
+        ptr::copy_nonoverlapping(buffer.as_ptr(), out_slice[12..].as_mut_ptr(), buffer.len());
+        *out_len = 12 + buffer.len(); // nonce + ciphertext + tag
+        0
+    })
+}
+
+/// AES-256-GCM decrypt.
+/// Input layout: nonce(12) || ciphertext || tag(16).
+/// out must be at least ciphertext_len - 28 bytes.
+/// out_len receives actual output length.
+/// Returns 0 on success, -1 on error (authentication failure or bad input).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
+    key: *const u8,
+    ciphertext: *const u8,
+    ciphertext_len: usize,
+    out: *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
+
+        if ciphertext_len < 28 {
+            return -1; // Too short: need at least nonce(12) + tag(16)
+        }
+
+        let key_slice = slice::from_raw_parts(key, 32);
+        let input = slice::from_raw_parts(ciphertext, ciphertext_len);
+
+        let cipher = match Aes256Gcm::new_from_slice(key_slice) {
+            Ok(c) => c,
+            Err(_) => return -1,
+        };
+
+        // Read nonce from first 12 bytes
+        let nonce = Nonce::from_slice(&input[..12]);
+
+        // Decrypt in-place: ciphertext + tag is input[12..]
+        let mut buffer = input[12..].to_vec();
+        match cipher.decrypt_in_place(nonce, b"", &mut buffer) {
+            Ok(_) => {},
+            Err(_) => return -1,
+        }
+
+        // buffer is now plaintext
+        let out_slice = slice::from_raw_parts_mut(out, buffer.len());
+        ptr::copy_nonoverlapping(buffer.as_ptr(), out_slice.as_mut_ptr(), buffer.len());
+        *out_len = buffer.len();
+        0
+    })
+}
+
 // ─── X25519 Montgomery-curve Scalar Multiplication ──────────────────────────
 
 /// X25519 scalar multiplication with Salvium's non-standard clamping.
@@ -1267,5 +1368,135 @@ mod tests {
         };
         // Should return 0 (invalid sig), not crash
         assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn test_aes256gcm_roundtrip() {
+        let key = [0x42u8; 32];
+        let plaintext = b"Hello, Salvium wallet cache encryption!";
+        let mut encrypted = [0u8; 256];
+        let mut enc_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_encrypt(
+                key.as_ptr(),
+                plaintext.as_ptr(),
+                plaintext.len(),
+                encrypted.as_mut_ptr(),
+                &mut enc_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(enc_len, plaintext.len() + 28); // nonce(12) + data + tag(16)
+
+        let mut decrypted = [0u8; 256];
+        let mut dec_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_decrypt(
+                key.as_ptr(),
+                encrypted.as_ptr(),
+                enc_len,
+                decrypted.as_mut_ptr(),
+                &mut dec_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(dec_len, plaintext.len());
+        assert_eq!(&decrypted[..dec_len], &plaintext[..]);
+    }
+
+    #[test]
+    fn test_aes256gcm_wrong_key() {
+        let key = [0x42u8; 32];
+        let wrong_key = [0x43u8; 32];
+        let plaintext = b"secret data";
+        let mut encrypted = [0u8; 256];
+        let mut enc_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_encrypt(
+                key.as_ptr(), plaintext.as_ptr(), plaintext.len(),
+                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+
+        let mut decrypted = [0u8; 256];
+        let mut dec_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_decrypt(
+                wrong_key.as_ptr(), encrypted.as_ptr(), enc_len,
+                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, -1); // Authentication failure
+    }
+
+    #[test]
+    fn test_aes256gcm_tampered_ciphertext() {
+        let key = [0x42u8; 32];
+        let plaintext = b"important data";
+        let mut encrypted = [0u8; 256];
+        let mut enc_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_encrypt(
+                key.as_ptr(), plaintext.as_ptr(), plaintext.len(),
+                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+
+        // Flip a byte in the ciphertext portion
+        encrypted[15] ^= 0xff;
+
+        let mut decrypted = [0u8; 256];
+        let mut dec_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_decrypt(
+                key.as_ptr(), encrypted.as_ptr(), enc_len,
+                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, -1); // Authentication failure
+    }
+
+    #[test]
+    fn test_aes256gcm_too_short() {
+        let key = [0x42u8; 32];
+        let short = [0u8; 20]; // Less than 28 bytes
+        let mut decrypted = [0u8; 256];
+        let mut dec_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_decrypt(
+                key.as_ptr(), short.as_ptr(), short.len(),
+                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, -1);
+    }
+
+    #[test]
+    fn test_aes256gcm_empty_plaintext() {
+        let key = [0xABu8; 32];
+        let plaintext = b"";
+        let mut encrypted = [0u8; 64];
+        let mut enc_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_encrypt(
+                key.as_ptr(), plaintext.as_ptr(), 0,
+                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(enc_len, 28); // nonce(12) + tag(16), no ciphertext body
+
+        let mut decrypted = [0u8; 64];
+        let mut dec_len: usize = 0;
+        let rc = unsafe {
+            salvium_aes256gcm_decrypt(
+                key.as_ptr(), encrypted.as_ptr(), enc_len,
+                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(dec_len, 0);
     }
 }

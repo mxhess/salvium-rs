@@ -21,6 +21,9 @@ getrandom = { version = "0.2", features = ["js"] }
 sha2 = "0.10"
 argon2 = "0.5"
 
+# AES-256-GCM for wallet cache encryption
+aes-gcm = "0.10"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 p256 = { version = "0.13", features = ["ecdsa"] }
 dsa = "0.6"
