@@ -1,7 +1,6 @@
 bun.lock
 node_modules/
-build/randomx.wasm
-!build/randomx.wasm
+build/
 TODO
 
 # Rust/WASM build artifacts
