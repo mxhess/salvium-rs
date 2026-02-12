@@ -105,6 +105,10 @@ export class PersistentWallet extends Wallet {
       this._balanceDirty = true;
       this._emit('onSyncComplete', data.height);
     });
+    this._sync.on('storageCleared', () => {
+      this._balanceDirty = true;
+      this._balanceCache = new Map();
+    });
     this._sync.on('syncError', (error) => this._emit('onSyncError', error));
     this._sync.on('newBlock', (block) => this._emit('onNewBlock', block.height, block.hash));
     this._sync.on('outputReceived', async (data) => {

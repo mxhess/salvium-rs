@@ -2050,6 +2050,7 @@ export class WalletSync {
     // Clear outputs and transactions from storage
     await this.storage.clear();
     await this.storage.setSyncHeight(fromHeight);
+    this._emit('storageCleared', { height: fromHeight });
 
     // Start fresh sync
     return this.start(fromHeight);
