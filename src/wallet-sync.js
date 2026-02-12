@@ -815,8 +815,9 @@ export class WalletSync {
 
     try {
       const txPubKey = extractTxPubKey(tx);
-      const paymentId = extractPaymentId(tx);
-      const txType = isMinerTx ? 'miner' : (isProtocolTx ? 'protocol' : this._getTxType(tx));
+      const paymentIdObj = extractPaymentId(tx);
+      const paymentId = paymentIdObj && paymentIdObj.id ? bytesToHex(paymentIdObj.id) : null;
+      const txType = isMinerTx ? TX_TYPE.MINER : (isProtocolTx ? TX_TYPE.PROTOCOL : this._getTxType(tx));
 
       const ownedOutputs = await this._scanOutputs(tx, txHash, txPubKey, header, txType);
       const spentOutputs = isProtocolTx ? await this._checkSpentOutputs(tx, txHash, header) :
@@ -898,11 +899,12 @@ export class WalletSync {
       // Convert JSON structure to match our parsed transaction format
       const tx = this._convertJsonToTx(txJson);
       const txPubKey = extractTxPubKey(tx);
-      const paymentId = extractPaymentId(tx);
+      const paymentIdObj = extractPaymentId(tx);
+      const paymentId = paymentIdObj && paymentIdObj.id ? bytesToHex(paymentIdObj.id) : null;
 
 
       // Determine transaction type
-      const txType = isMinerTx ? 'miner' : (isProtocolTx ? 'protocol' : this._getTxType(tx));
+      const txType = isMinerTx ? TX_TYPE.MINER : (isProtocolTx ? TX_TYPE.PROTOCOL : this._getTxType(tx));
 
       // Scan outputs for owned ones
       const ownedOutputs = await this._scanOutputs(tx, txHash, txPubKey, header, txType);
@@ -1213,13 +1215,14 @@ export class WalletSync {
       // Parse transaction
       const tx = parseTransaction(hexToBytes(txBlob));
       const txPubKey = extractTxPubKey(tx);
-      const paymentId = extractPaymentId(tx);
+      const paymentIdObj = extractPaymentId(tx);
+      const paymentId = paymentIdObj && paymentIdObj.id ? bytesToHex(paymentIdObj.id) : null;
 
 
       // Determine transaction type (Salvium-specific)
       // For miner_tx and protocol_tx, use the type from the prefix
       // Otherwise use our helper method
-      const txType = isMinerTx ? 'miner' : (isProtocolTx ? 'protocol' : this._getTxType(tx));
+      const txType = isMinerTx ? TX_TYPE.MINER : (isProtocolTx ? TX_TYPE.PROTOCOL : this._getTxType(tx));
 
       // Scan outputs for owned ones
       const ownedOutputs = await this._scanOutputs(tx, txHash, txPubKey, header, txType);

@@ -29,19 +29,21 @@ JavaScript/TypeScript library for Salvium cryptocurrency — wallet management, 
 - **TypeScript Support** - Full type definitions included
 - **Oracle & Pricing** - Verify oracle signatures, fetch pricing records, calculate conversions
 - **Wallet Encryption** - ML-KEM-768 + Argon2id encrypted wallet storage
-- **Minimal Dependencies** - Only @noble/curves and @noble/hashes
+- **SQLCipher Storage** - Encrypted wallet storage via Rust FFI (SQLite + SQLCipher, WAL mode)
+- **Minimal Dependencies** - Only @noble/curves and @noble/hashes (Rust crate bundles SQLCipher)
 
 ## Crypto Backends
 
-salvium-js includes three interchangeable crypto backends behind a unified provider API:
+salvium-js includes four interchangeable crypto backends behind a unified provider API:
 
 | Backend | Environment | Performance | Size |
 |---------|-------------|-------------|------|
 | **WASM** (default) | Browser, Node, Bun | 8-26x faster than JS | 336KB |
+| **FFI** | Bun (native dlopen) | Native speed via Rust .so | ~1.6MB |
 | **JSI** | React Native (iOS/Android) | Native speed via FFI | Static lib |
 | **JS** | QuickJS, any JS runtime | Baseline (Noble curves) | Zero deps |
 
-The WASM backend is loaded automatically via `initCrypto()`. All 28+ low-level primitives plus the expensive high-level protocols (CLSAG, TCLSAG, Bulletproofs+) run in Rust-compiled WASM. The JS backend is a transparent fallback for environments without WASM support.
+The WASM backend is loaded automatically via `initCrypto()`. All 28+ low-level primitives plus the expensive high-level protocols (CLSAG, TCLSAG, Bulletproofs+) run in Rust-compiled WASM. The FFI backend uses Bun's native `dlopen` to call the Rust shared library directly — no WASM overhead. The JS backend is a transparent fallback for environments without WASM support.
 
 ```javascript
 import { initCrypto, getCryptoBackend } from 'salvium-js';
@@ -61,6 +63,45 @@ console.log(getCryptoBackend().name);  // 'wasm' or 'js'
 | BP+ prove (2 outputs) | ~1100ms | ~45ms | ~24x |
 | BP+ verify (2 outputs) | ~300ms | ~20ms | ~15x |
 | Key derivation | ~2ms | ~0.2ms | ~10x |
+
+## Storage Backends
+
+Wallet data (outputs, transactions, sync state) can be stored in multiple backends:
+
+| Backend | Environment | Encryption | Use Case |
+|---------|-------------|------------|----------|
+| **FfiStorage** | Bun (native) | SQLCipher (AES-256-CBC) | Mobile/desktop wallets — persistent, encrypted, fast |
+| **MemoryStorage** | Any JS runtime | None | Testing, ephemeral wallets |
+| **IndexedDBStorage** | Browser | Application-level | Browser wallets |
+
+### FfiStorage (SQLCipher via Rust FFI)
+
+The `FfiStorage` backend moves wallet storage into Rust behind the FFI boundary. SQLite with SQLCipher encryption, WAL journal mode, opaque handle pattern. Balance computation happens in Rust — no need to round-trip all outputs to JS.
+
+```javascript
+import { FfiStorage } from 'salvium-js/wallet-store-ffi';
+
+const storage = new FfiStorage({
+  path: './wallet.db',
+  key: encryptionKey  // 32-byte Uint8Array
+});
+await storage.open();
+
+// All WalletStorage operations work transparently
+await storage.putOutput(output);
+await storage.setSyncHeight(12345);
+
+// Balance computed in Rust (single FFI call, no output round-trip)
+const { balance, unlockedBalance, lockedBalance } = storage.getBalance({
+  currentHeight: 50000,
+  assetType: 'SAL'
+});
+
+// Atomic rollback (replaces 4 separate JS methods)
+await storage.rollback(49000);
+
+await storage.close();
+```
 
 ## Address Types Supported
 
@@ -938,6 +979,31 @@ const b2keyed = blake2b(data, 32, key); // Keyed hash (MAC)
 | `Wallet.fromSeed(seed, options?)` | Restore from 32-byte seed |
 | `Wallet.fromViewKey(viewSec, spendPub)` | Create view-only wallet |
 
+### Wallet Storage Functions
+
+| Function | Description |
+|----------|-------------|
+| `WalletStorage` | Abstract base class for storage backends |
+| `MemoryStorage` | In-memory storage (JS Maps, for testing) |
+| `IndexedDBStorage` | Browser IndexedDB storage |
+| `FfiStorage` | SQLCipher storage via Rust FFI (Bun native) |
+| `storage.open()` | Open/create the storage database |
+| `storage.close()` | Close the storage handle |
+| `storage.clear()` | Delete all stored data |
+| `storage.putOutput(output)` | Store a wallet output |
+| `storage.getOutput(keyImage)` | Get output by key image |
+| `storage.getOutputs(query?)` | Get filtered outputs |
+| `storage.markOutputSpent(ki, txHash, height?)` | Mark output as spent |
+| `storage.putTransaction(tx)` | Store a transaction |
+| `storage.getTransaction(txHash)` | Get transaction by hash |
+| `storage.getTransactions(query?)` | Get filtered transactions |
+| `storage.getSyncHeight()` | Get current sync height |
+| `storage.setSyncHeight(height)` | Set sync height |
+| `storage.putBlockHash(height, hash)` | Store block hash |
+| `storage.getBlockHash(height)` | Get block hash by height |
+| `storage.rollback(height)` | Atomic rollback above height (FfiStorage) |
+| `storage.getBalance(options)` | Rust-computed balance (FfiStorage only) |
+
 ### Wallet Sync Functions
 
 | Function | Description |
@@ -1080,11 +1146,11 @@ wallet.stopSyncing();
 
 ### Direct WalletSync Usage
 
-For lower-level control, use `WalletSync` directly:
+For lower-level control, use `WalletSync` directly with any storage backend:
 
 ```javascript
 import { WalletSync, createWalletSync, SYNC_STATUS } from 'salvium-js';
-import { WalletStorage } from 'salvium-js';
+import { FfiStorage } from 'salvium-js/wallet-store-ffi';  // or MemoryStorage
 
 const sync = createWalletSync({
   storage,           // WalletStorage instance
@@ -1315,9 +1381,15 @@ bun test/all.js --integration
 
 # Run against specific daemon
 bun test/all.js --integration http://localhost:19081
+
+# Run FFI storage tests (requires built Rust crate)
+CRYPTO_BACKEND=ffi bun test/wallet-store-ffi.test.js
+
+# Run integration sync with FFI storage backend
+STORAGE_BACKEND=ffi STORAGE_PATH=./test-wallet.db bun test/integration-sync.test.js
 ```
 
-25 test suites covering addresses, keys, mnemonics, CryptoNote + CARROT scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, oracle verification, and cross-backend WASM/JS interop.
+25+ test suites covering addresses, keys, mnemonics, CryptoNote + CARROT scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, oracle verification, cross-backend WASM/JS interop, and SQLCipher FFI storage.
 
 ## Project Structure
 
@@ -1342,11 +1414,14 @@ salvium-js/
     transaction.js      # TX construction, CLSAG/TCLSAG, decoy selection
     validation.js       # TX/block validation rules
     wallet.js           # Wallet class (sync, transfer, stake, burn, convert)
+    wallet-store.js     # WalletStorage interface, MemoryStorage, IndexedDBStorage
+    wallet-store-ffi.js # FfiStorage — SQLCipher via Rust FFI (Bun dlopen)
     wallet-sync.js      # Daemon sync engine (CARROT-aware, binary blocks)
     crypto/
       provider.js       # Backend-agnostic crypto API
       backend-js.js     # Pure JS backend (Noble curves)
       backend-wasm.js   # Rust/WASM backend (curve25519-dalek)
+      backend-ffi.js    # Native FFI backend (Bun dlopen)
       backend-jsi.js    # React Native JSI backend (FFI)
       wasm/             # Compiled WASM binary (336KB)
     rpc/
@@ -1355,8 +1430,11 @@ salvium-js/
     transaction/        # TX parsing, serialization, constants
     wallet/             # Account, storage, encryption (ML-KEM-768 + Argon2id)
   crates/
-    salvium-crypto/     # Rust crate (CLSAG, TCLSAG, BP+, X25519, 30+ primitives)
-  test/                 # 25 test suites
+    salvium-crypto/     # Rust crate (CLSAG, TCLSAG, BP+, X25519, SQLCipher storage)
+      src/
+        storage.rs      # SQLCipher storage engine (WalletDb, balance, rollback)
+        ffi.rs          # C FFI exports (crypto + storage)
+  test/                 # 25+ test suites
 ```
 
 ## Contributing

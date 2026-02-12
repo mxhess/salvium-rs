@@ -17,6 +17,7 @@
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
 import { Wallet } from '../src/wallet.js';
+import { getHfVersionForHeight, NETWORK_ID } from '../src/consensus.js';
 import { existsSync } from 'node:fs';
 import { getHeight, waitForHeight, fmt, loadWalletFromFile } from './test-helpers.js';
 
@@ -28,6 +29,8 @@ const NETWORK = process.env.NETWORK || 'testnet';
 const DRY_RUN = process.env.DRY_RUN !== '0';
 const SYNC_CACHE = process.env.SYNC_CACHE === '0' ? null
   : (process.env.SYNC_CACHE || WALLET_FILE.replace(/\.json$/, '-sync.json'));
+
+let assetType = 'SAL'; // set in main() based on chain height
 
 async function syncAndReport(wallet, label, cacheFile = null) {
   // Load sync cache
@@ -56,24 +59,24 @@ async function syncAndReport(wallet, label, cacheFile = null) {
     }
   }
 
-  const { balance, unlockedBalance } = await wallet.getStorageBalance();
-  console.log(`  Balance: ${fmt(balance)} (${fmt(unlockedBalance)} spendable)`);
+  const { balance, unlockedBalance } = await wallet.getStorageBalance({ assetType });
+  console.log(`  Balance: ${fmt(balance, assetType)} (${fmt(unlockedBalance, assetType)} spendable)`);
   return { balance, unlockedBalance };
 }
 
 async function testTransfer(wallet, toAddress, amount, label) {
   console.log(`\n--- ${label} ---`);
-  console.log(`  Amount: ${Number(amount) / 1e8} SAL`);
+  console.log(`  Amount: ${Number(amount) / 1e8} ${assetType}`);
   console.log(`  To: ${toAddress.slice(0, 30)}...`);
 
   try {
     const result = await wallet.transfer(
       [{ address: toAddress, amount }],
-      { priority: 'default', dryRun: DRY_RUN }
+      { priority: 'default', dryRun: DRY_RUN, assetType }
     );
 
     console.log(`  TX Hash: ${result.txHash}`);
-    console.log(`  Fee: ${Number(result.fee) / 1e8} SAL`);
+    console.log(`  Fee: ${Number(result.fee) / 1e8} ${assetType}`);
     console.log(`  Inputs: ${result.inputCount}, Outputs: ${result.outputCount}`);
     console.log(`  Serialized: ${result.serializedHex.length / 2} bytes`);
     console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);
@@ -96,7 +99,9 @@ async function main() {
   const info = await daemon.getInfo();
   if (!info.success) throw new Error('Cannot reach daemon');
   const height = info.result?.height || info.data?.height;
-  console.log(`Daemon height: ${height}\n`);
+  const hfVersion = getHfVersionForHeight(height, NETWORK_ID.TESTNET);
+  assetType = hfVersion >= 6 ? 'SAL1' : 'SAL';
+  console.log(`Daemon height: ${height}, HF: ${hfVersion}, Asset: ${assetType}\n`);
 
   // Load wallet A from file
   console.log(`Loading wallet A from ${WALLET_FILE}`);
@@ -185,10 +190,10 @@ async function main() {
   console.log(`\n--- Stake: 500 SAL ---`);
   console.log(`  Lock period: 20 blocks (testnet)`);
   try {
-    const stakeResult = await walletA.stake(stakeAmt, { priority: 'default', dryRun: DRY_RUN });
+    const stakeResult = await walletA.stake(stakeAmt, { priority: 'default', dryRun: DRY_RUN, assetType });
     console.log(`  TX Hash: ${stakeResult.txHash}`);
-    console.log(`  Fee: ${Number(stakeResult.fee) / 1e8} SAL`);
-    console.log(`  Staked: ${Number(stakeResult.stakeAmount) / 1e8} SAL`);
+    console.log(`  Fee: ${Number(stakeResult.fee) / 1e8} ${assetType}`);
+    console.log(`  Staked: ${Number(stakeResult.stakeAmount) / 1e8} ${assetType}`);
     console.log(`  Lock: ${stakeResult.lockPeriod} blocks`);
     console.log(`  Inputs: ${stakeResult.inputCount}, Outputs: ${stakeResult.outputCount}`);
     console.log(`  Serialized: ${stakeResult.serializedHex.length / 2} bytes`);
@@ -203,10 +208,10 @@ async function main() {
   const burnAmt = 1_00_000_000n;
   console.log(`\n--- Burn: 1 SAL ---`);
   try {
-    const burnResult = await walletA.burn(burnAmt, { priority: 'default', dryRun: DRY_RUN });
+    const burnResult = await walletA.burn(burnAmt, { priority: 'default', dryRun: DRY_RUN, assetType });
     console.log(`  TX Hash: ${burnResult.txHash}`);
-    console.log(`  Fee: ${Number(burnResult.fee) / 1e8} SAL`);
-    console.log(`  Burned: ${Number(burnResult.burnAmount) / 1e8} SAL`);
+    console.log(`  Fee: ${Number(burnResult.fee) / 1e8} ${assetType}`);
+    console.log(`  Burned: ${Number(burnResult.burnAmount) / 1e8} ${assetType}`);
     console.log(`  Inputs: ${burnResult.inputCount}, Outputs: ${burnResult.outputCount}`);
     console.log(`  Serialized: ${burnResult.serializedHex.length / 2} bytes`);
     console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);
@@ -219,10 +224,10 @@ async function main() {
   console.log('\n=== Sweep Test (A → A) ===');
   console.log('  (Recombines fractional UTXOs from previous transfers)');
   try {
-    const sweepResult = await walletA.sweep(walletA.getAddress(), { priority: 'default', dryRun: DRY_RUN });
+    const sweepResult = await walletA.sweep(walletA.getAddress(), { priority: 'default', dryRun: DRY_RUN, assetType });
     console.log(`  TX Hash: ${sweepResult.txHash}`);
-    console.log(`  Fee: ${Number(sweepResult.fee) / 1e8} SAL`);
-    console.log(`  Amount: ${Number(sweepResult.amount) / 1e8} SAL`);
+    console.log(`  Fee: ${Number(sweepResult.fee) / 1e8} ${assetType}`);
+    console.log(`  Amount: ${Number(sweepResult.amount) / 1e8} ${assetType}`);
     console.log(`  Inputs: ${sweepResult.inputCount} (fractional UTXOs combined)`);
     console.log(`  Serialized: ${sweepResult.serializedHex.length / 2} bytes`);
     console.log(`  ${DRY_RUN ? '(dry run — not broadcast)' : 'BROADCAST OK'}`);

@@ -867,8 +867,10 @@ pub unsafe extern "C" fn salvium_storage_open(
     key_len: usize,
 ) -> i32 {
     catch_ffi(|| {
-        let path_str = std::str::from_utf8(slice::from_raw_parts(path, path_len))
-            .map_err(|_| ()).unwrap();
+        let path_str = match std::str::from_utf8(slice::from_raw_parts(path, path_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
         let key_slice = slice::from_raw_parts(key, key_len);
         match crate::storage::storage_open(path_str, key_slice) {
             Ok(handle) => handle as i32,
@@ -907,13 +909,17 @@ pub unsafe extern "C" fn salvium_storage_put_output(
     json_len: usize,
 ) -> i32 {
     catch_ffi(|| {
-        let json_str = std::str::from_utf8(slice::from_raw_parts(json, json_len))
-            .map_err(|_| ()).unwrap();
-        let row: crate::storage::OutputRow = serde_json::from_str(json_str)
-            .map_err(|_| ()).unwrap();
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("salvium_storage_put_output: invalid UTF-8: {e}"); return -1; }
+        };
+        let row: crate::storage::OutputRow = match serde_json::from_str(json_str) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("salvium_storage_put_output: JSON parse error: {e}"); return -1; }
+        };
         match crate::storage::with_db(handle, |db| db.put_output(&row)) {
             Ok(()) => 0,
-            Err(_) => -1,
+            Err(e) => { eprintln!("salvium_storage_put_output: DB error: {e}"); -1 }
         }
     })
 }
@@ -929,11 +935,16 @@ pub unsafe extern "C" fn salvium_storage_get_output(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        let ki_str = std::str::from_utf8(slice::from_raw_parts(key_image, ki_len))
-            .map_err(|_| ()).unwrap();
+        let ki_str = match std::str::from_utf8(slice::from_raw_parts(key_image, ki_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
         match crate::storage::with_db(handle, |db| db.get_output(ki_str)) {
             Ok(Some(row)) => {
-                let json = serde_json::to_vec(&row).unwrap();
+                let json = match serde_json::to_vec(&row) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
                 let len = json.len();
                 let buf = json.into_boxed_slice();
                 let raw = Box::into_raw(buf);
@@ -958,13 +969,20 @@ pub unsafe extern "C" fn salvium_storage_get_outputs(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        let query_str = std::str::from_utf8(slice::from_raw_parts(query_json, query_len))
-            .map_err(|_| ()).unwrap();
-        let query: crate::storage::OutputQuery = serde_json::from_str(query_str)
-            .map_err(|_| ()).unwrap();
+        let query_str = match std::str::from_utf8(slice::from_raw_parts(query_json, query_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let query: crate::storage::OutputQuery = match serde_json::from_str(query_str) {
+            Ok(q) => q,
+            Err(e) => { eprintln!("salvium_storage_get_outputs: JSON parse error: {e}"); return -1; }
+        };
         match crate::storage::with_db(handle, |db| db.get_outputs(&query)) {
             Ok(rows) => {
-                let json = serde_json::to_vec(&rows).unwrap();
+                let json = match serde_json::to_vec(&rows) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
                 let len = json.len();
                 let buf = json.into_boxed_slice();
                 let raw = Box::into_raw(buf);
@@ -988,10 +1006,14 @@ pub unsafe extern "C" fn salvium_storage_mark_spent(
     spent_height: i64,
 ) -> i32 {
     catch_ffi(|| {
-        let ki_str = std::str::from_utf8(slice::from_raw_parts(key_image, ki_len))
-            .map_err(|_| ()).unwrap();
-        let tx_str = std::str::from_utf8(slice::from_raw_parts(spending_tx, tx_len))
-            .map_err(|_| ()).unwrap();
+        let ki_str = match std::str::from_utf8(slice::from_raw_parts(key_image, ki_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let tx_str = match std::str::from_utf8(slice::from_raw_parts(spending_tx, tx_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
         match crate::storage::with_db(handle, |db| db.mark_spent(ki_str, tx_str, spent_height)) {
             Ok(()) => 0,
             Err(_) => -1,
@@ -1007,13 +1029,17 @@ pub unsafe extern "C" fn salvium_storage_put_tx(
     json_len: usize,
 ) -> i32 {
     catch_ffi(|| {
-        let json_str = std::str::from_utf8(slice::from_raw_parts(json, json_len))
-            .map_err(|_| ()).unwrap();
-        let row: crate::storage::TransactionRow = serde_json::from_str(json_str)
-            .map_err(|_| ()).unwrap();
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("salvium_storage_put_tx: invalid UTF-8: {e}"); return -1; }
+        };
+        let row: crate::storage::TransactionRow = match serde_json::from_str(json_str) {
+            Ok(r) => r,
+            Err(e) => { eprintln!("salvium_storage_put_tx: JSON parse error: {e}\n  JSON: {}", &json_str[..json_str.len().min(500)]); return -1; }
+        };
         match crate::storage::with_db(handle, |db| db.put_tx(&row)) {
             Ok(()) => 0,
-            Err(_) => -1,
+            Err(e) => { eprintln!("salvium_storage_put_tx: DB error: {e}"); -1 }
         }
     })
 }
@@ -1028,11 +1054,16 @@ pub unsafe extern "C" fn salvium_storage_get_tx(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        let tx_str = std::str::from_utf8(slice::from_raw_parts(tx_hash, th_len))
-            .map_err(|_| ()).unwrap();
+        let tx_str = match std::str::from_utf8(slice::from_raw_parts(tx_hash, th_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
         match crate::storage::with_db(handle, |db| db.get_tx(tx_str)) {
             Ok(Some(row)) => {
-                let json = serde_json::to_vec(&row).unwrap();
+                let json = match serde_json::to_vec(&row) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
                 let len = json.len();
                 let buf = json.into_boxed_slice();
                 let raw = Box::into_raw(buf);
@@ -1056,13 +1087,20 @@ pub unsafe extern "C" fn salvium_storage_get_txs(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        let query_str = std::str::from_utf8(slice::from_raw_parts(query_json, query_len))
-            .map_err(|_| ()).unwrap();
-        let query: crate::storage::TxQuery = serde_json::from_str(query_str)
-            .map_err(|_| ()).unwrap();
+        let query_str = match std::str::from_utf8(slice::from_raw_parts(query_json, query_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let query: crate::storage::TxQuery = match serde_json::from_str(query_str) {
+            Ok(q) => q,
+            Err(e) => { eprintln!("salvium_storage_get_txs: JSON parse error: {e}"); return -1; }
+        };
         match crate::storage::with_db(handle, |db| db.get_txs(&query)) {
             Ok(rows) => {
-                let json = serde_json::to_vec(&rows).unwrap();
+                let json = match serde_json::to_vec(&rows) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
                 let len = json.len();
                 let buf = json.into_boxed_slice();
                 let raw = Box::into_raw(buf);
@@ -1106,8 +1144,10 @@ pub unsafe extern "C" fn salvium_storage_put_block_hash(
     hash_len: usize,
 ) -> i32 {
     catch_ffi(|| {
-        let hash_str = std::str::from_utf8(slice::from_raw_parts(hash, hash_len))
-            .map_err(|_| ()).unwrap();
+        let hash_str = match std::str::from_utf8(slice::from_raw_parts(hash, hash_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
         match crate::storage::with_db(handle, |db| db.put_block_hash(height, hash_str)) {
             Ok(()) => 0,
             Err(_) => -1,
@@ -1151,6 +1191,29 @@ pub unsafe extern "C" fn salvium_storage_rollback(handle: u32, height: i64) -> i
     })
 }
 
+/// Get distinct asset types present in the wallet. Returns JSON array: ["SAL","SAL1"]
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_asset_types(
+    handle: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_asset_types()) {
+            Ok(types) => {
+                let json = serde_json::to_vec(&types).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
 /// Compute balance in Rust. Returns JSON: {"balance":"...","unlockedBalance":"...","lockedBalance":"..."}
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_get_balance(
@@ -1166,6 +1229,31 @@ pub unsafe extern "C" fn salvium_storage_get_balance(
         let at_str = std::str::from_utf8(slice::from_raw_parts(asset_type, at_len))
             .map_err(|_| ()).unwrap();
         match crate::storage::with_db(handle, |db| db.get_balance(current_height, at_str, account_index)) {
+            Ok(result) => {
+                let json = serde_json::to_vec(&result).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Get balances for all asset types. Returns JSON: {"SAL1":{"balance":"...","unlockedBalance":"...","lockedBalance":"..."}, ...}
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_all_balances(
+    handle: u32,
+    current_height: i64,
+    account_index: i32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_all_balances(current_height, account_index)) {
             Ok(result) => {
                 let json = serde_json::to_vec(&result).unwrap();
                 let len = json.len();

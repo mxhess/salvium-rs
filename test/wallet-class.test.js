@@ -319,16 +319,23 @@ console.log('\n--- Balance Tracking ---');
 
 test('getBalance() returns correct structure', () => {
   const wallet = Wallet.create();
-  const balance = wallet.getBalance();
+  const balance = wallet.getBalance({ assetType: 'SAL1' });
 
   assertEqual(typeof balance.balance, 'bigint');
   assertEqual(typeof balance.unlockedBalance, 'bigint');
   assertEqual(typeof balance.lockedBalance, 'bigint');
 });
 
+test('getBalance() throws without assetType', () => {
+  const wallet = Wallet.create();
+  let threw = false;
+  try { wallet.getBalance(); } catch (e) { threw = true; }
+  assertTrue(threw);
+});
+
 test('new wallet has zero balance', () => {
   const wallet = Wallet.create();
-  const balance = wallet.getBalance();
+  const balance = wallet.getBalance({ assetType: 'SAL1' });
 
   assertEqual(balance.balance, 0n);
   assertEqual(balance.unlockedBalance, 0n);
@@ -337,7 +344,7 @@ test('new wallet has zero balance', () => {
 
 test('getUTXOs() returns empty array for new wallet', () => {
   const wallet = Wallet.create();
-  const utxos = wallet.getUTXOs();
+  const utxos = wallet.getUTXOs({ assetType: 'SAL1' });
 
   assertTrue(Array.isArray(utxos));
   assertEqual(utxos.length, 0);

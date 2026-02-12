@@ -237,7 +237,7 @@ await testAsync('getBalance returns 0 for empty wallet', async () => {
   });
 
   await wallet.open();
-  const balance = await wallet.getBalance();
+  const balance = await wallet.getBalance('SAL1');
   assertEqual(balance, 0n);
 
   await wallet.close();
@@ -252,18 +252,21 @@ await testAsync('getBalance sums unspent outputs', async () => {
   await storage.putOutput(new WalletOutput({
     keyImage: 'ki1',
     amount: 1000000000n,
+    assetType: 'SAL1',
     isSpent: false,
     blockHeight: 100
   }));
   await storage.putOutput(new WalletOutput({
     keyImage: 'ki2',
     amount: 2000000000n,
+    assetType: 'SAL1',
     isSpent: false,
     blockHeight: 101
   }));
   await storage.putOutput(new WalletOutput({
     keyImage: 'ki3',
     amount: 500000000n,
+    assetType: 'SAL1',
     isSpent: true, // Spent, should not count
     blockHeight: 102
   }));
@@ -275,7 +278,7 @@ await testAsync('getBalance sums unspent outputs', async () => {
   });
 
   await wallet.open();
-  const balance = await wallet.getBalance();
+  const balance = await wallet.getBalance('SAL1');
 
   // 1000000000 + 2000000000 = 3000000000
   assertEqual(balance, 3000000000n);
@@ -329,6 +332,7 @@ await testAsync('getUnlockedBalance excludes locked outputs', async () => {
   await storage.putOutput(new WalletOutput({
     keyImage: 'ki1',
     amount: 1000n,
+    assetType: 'SAL1',
     isSpent: false,
     blockHeight: 100,
     unlockTime: 0n
@@ -338,6 +342,7 @@ await testAsync('getUnlockedBalance excludes locked outputs', async () => {
   await storage.putOutput(new WalletOutput({
     keyImage: 'ki2',
     amount: 2000n,
+    assetType: 'SAL1',
     isSpent: false,
     blockHeight: 195, // Only 5 blocks old at height 200
     unlockTime: 0n
@@ -351,8 +356,8 @@ await testAsync('getUnlockedBalance excludes locked outputs', async () => {
 
   await wallet.open();
 
-  const balance = await wallet.getBalance();
-  const unlocked = await wallet.getUnlockedBalance();
+  const balance = await wallet.getBalance('SAL1');
+  const unlocked = await wallet.getUnlockedBalance('SAL1');
 
   assertEqual(balance, 3000n);
   assertEqual(unlocked, 1000n); // Only the old output
@@ -710,7 +715,7 @@ await testAsync('operations throw when not open', async () => {
 
   let threw = false;
   try {
-    await wallet.getBalance();
+    await wallet.getBalance('SAL1');
   } catch (e) {
     threw = true;
     assert(e.message.includes('not open'));

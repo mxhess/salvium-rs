@@ -184,7 +184,8 @@ async function syncWallet(wallet, daemon, label) {
   return syncHeight;
 }
 
-async function printBalance(wallet, label, assetType = 'SAL') {
+async function printBalance(wallet, label, assetType) {
+  if (!assetType) throw new Error('printBalance: assetType is required');
   const bal = await wallet.getStorageBalance({ assetType });
   console.log(`  ${label} [${assetType}]: balance=${fmtSAL(bal.balance)} unlocked=${fmtSAL(bal.unlockedBalance)} locked=${fmtSAL(bal.lockedBalance)}`);
   return bal;
@@ -192,11 +193,12 @@ async function printBalance(wallet, label, assetType = 'SAL') {
 
 // ─── TX helpers ─────────────────────────────────────────────────────────────
 
-async function doTransfer(fromWallet, toWallet, amount, label, { legacy = false } = {}) {
+async function doTransfer(fromWallet, toWallet, amount, label, { legacy = false, assetType } = {}) {
+  if (!assetType) throw new Error('doTransfer: assetType is required');
   const dest = legacy ? toWallet.getLegacyAddress() : toWallet.getAddress();
-  console.log(`  TX: ${label} → ${fmtSAL(amount)} SAL to ${dest.slice(0, 20)}...`);
+  console.log(`  TX: ${label} → ${fmtSAL(amount)} ${assetType} to ${dest.slice(0, 20)}...`);
   try {
-    const result = await fromWallet.transfer([{ address: dest, amount }]);
+    const result = await fromWallet.transfer([{ address: dest, amount }], { assetType });
     console.log(`    hash=${result.txHash} fee=${fmtSAL(result.fee)}`);
     log.tx({ type: 'transfer', label, txHash: result.txHash, fee: result.fee.toString(), amount: amount.toString() });
     return result;
@@ -207,10 +209,11 @@ async function doTransfer(fromWallet, toWallet, amount, label, { legacy = false 
   }
 }
 
-async function doStake(wallet, amount, label) {
-  console.log(`  TX: ${label} stake ${fmtSAL(amount)} SAL`);
+async function doStake(wallet, amount, label, assetType) {
+  if (!assetType) throw new Error('doStake: assetType is required');
+  console.log(`  TX: ${label} stake ${fmtSAL(amount)} ${assetType}`);
   try {
-    const result = await wallet.stake(amount);
+    const result = await wallet.stake(amount, { assetType });
     console.log(`    hash=${result.txHash} fee=${fmtSAL(result.fee)}`);
     log.tx({ type: 'stake', label, txHash: result.txHash, fee: result.fee.toString(), amount: amount.toString() });
     return result;
@@ -221,10 +224,11 @@ async function doStake(wallet, amount, label) {
   }
 }
 
-async function doBurn(wallet, amount, label) {
-  console.log(`  TX: ${label} burn ${fmtSAL(amount)} SAL`);
+async function doBurn(wallet, amount, label, assetType) {
+  if (!assetType) throw new Error('doBurn: assetType is required');
+  console.log(`  TX: ${label} burn ${fmtSAL(amount)} ${assetType}`);
   try {
-    const result = await wallet.burn(amount);
+    const result = await wallet.burn(amount, { assetType });
     console.log(`    hash=${result.txHash} fee=${fmtSAL(result.fee)}`);
     log.tx({ type: 'burn', label, txHash: result.txHash, fee: result.fee.toString(), amount: amount.toString() });
     return result;
@@ -235,10 +239,11 @@ async function doBurn(wallet, amount, label) {
   }
 }
 
-async function doSweep(wallet, address, label) {
+async function doSweep(wallet, address, label, assetType) {
+  if (!assetType) throw new Error('doSweep: assetType is required');
   console.log(`  TX: ${label} sweep → ${address.slice(0, 20)}...`);
   try {
-    const result = await wallet.sweep(address);
+    const result = await wallet.sweep(address, { assetType });
     console.log(`    hash=${result.txHash} fee=${fmtSAL(result.fee)} amount=${fmtSAL(result.amount)}`);
     log.tx({ type: 'sweep', label, txHash: result.txHash, fee: result.fee.toString(), amount: result.amount.toString() });
     return result;
@@ -308,13 +313,14 @@ async function phase2_cnTxTests(daemon, daemonUrl, walletA, walletB) {
   const t0 = performance.now();
 
   // Sync both wallets to pick up mined coinbases
+  const AT = 'SAL'; // CN era asset type
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletA, 'A');
-  await printBalance(walletB, 'B');
+  await printBalance(walletA, 'A', AT);
+  await printBalance(walletB, 'B', AT);
 
   // Transfers A→B (legacy CN addresses — pre-CARROT era)
-  const LG = { legacy: true };
+  const LG = { legacy: true, assetType: AT };
   await doTransfer(walletA, walletB, sal(1), 'CN A→B 1 SAL', LG);
   await doTransfer(walletA, walletB, sal(2), 'CN A→B 2 SAL', LG);
   await doTransfer(walletA, walletB, sal(5), 'CN A→B 5 SAL', LG);
@@ -326,7 +332,7 @@ async function phase2_cnTxTests(daemon, daemonUrl, walletA, walletB) {
   // Sync, then B→A
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletB, 'B');
+  await printBalance(walletB, 'B', AT);
 
   await doTransfer(walletB, walletA, sal(0.5), 'CN B→A 0.5 SAL', LG);
 
@@ -335,8 +341,8 @@ async function phase2_cnTxTests(daemon, daemonUrl, walletA, walletB) {
 
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  const balA = await printBalance(walletA, 'A');
-  const balB = await printBalance(walletB, 'B');
+  const balA = await printBalance(walletA, 'A', AT);
+  const balB = await printBalance(walletB, 'B', AT);
 
   saveSyncCache(walletA, 'a');
   saveSyncCache(walletB, 'b');
@@ -360,15 +366,16 @@ async function phase3_mineToHF6(daemon, daemonUrl, walletA) {
 async function phase4_sal1TxTests(daemon, daemonUrl, walletA, walletB) {
   console.log('\n═══ Phase 4: SAL1 Era TX Tests ═══');
   const t0 = performance.now();
+  const AT = 'SAL1'; // SAL1 era asset type
 
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletA, 'A');
+  await printBalance(walletA, 'A', AT);
 
   // Transfers A→B in SAL1 era (still pre-CARROT, use legacy addresses)
-  const LG = { legacy: true };
-  await doTransfer(walletA, walletB, sal(1), 'SAL1 A→B 1 SAL', LG);
-  await doTransfer(walletA, walletB, sal(2), 'SAL1 A→B 2 SAL', LG);
+  const LG = { legacy: true, assetType: AT };
+  await doTransfer(walletA, walletB, sal(1), 'SAL1 A→B 1 SAL1', LG);
+  await doTransfer(walletA, walletB, sal(2), 'SAL1 A→B 2 SAL1', LG);
 
   // Mine maturity
   const address = walletA.getLegacyAddress();
@@ -376,14 +383,14 @@ async function phase4_sal1TxTests(daemon, daemonUrl, walletA, walletB) {
   await syncWallet(walletA, daemon, 'A');
 
   // Stake
-  await doStake(walletA, sal(10), 'SAL1 stake 10 SAL');
+  await doStake(walletA, sal(10), 'SAL1 stake 10 SAL1', AT);
 
   // Mine maturity
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  const balA = await printBalance(walletA, 'A');
-  const balB = await printBalance(walletB, 'B');
+  const balA = await printBalance(walletA, 'A', AT);
+  const balB = await printBalance(walletB, 'B', AT);
 
   saveSyncCache(walletA, 'a');
   saveSyncCache(walletB, 'b');
@@ -428,36 +435,37 @@ async function phase5_mineToCarrot(daemon, daemonUrl, walletA) {
 async function phase6_carrotTxTests(daemon, daemonUrl, walletA, walletB) {
   console.log('\n═══ Phase 6: CARROT Era TX Tests ═══');
   const t0 = performance.now();
+  const AT = 'SAL1'; // CARROT era still uses SAL1 asset type
 
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletA, 'A');
-  await printBalance(walletB, 'B');
+  await printBalance(walletA, 'A', AT);
+  await printBalance(walletB, 'B', AT);
 
   // CARROT transfers A→B
-  await doTransfer(walletA, walletB, sal(1), 'CARROT A→B 1 SAL');
-  await doTransfer(walletA, walletB, sal(2), 'CARROT A→B 2 SAL');
-  await doTransfer(walletA, walletB, sal(5), 'CARROT A→B 5 SAL');
+  await doTransfer(walletA, walletB, sal(1), 'CARROT A→B 1 SAL1', { assetType: AT });
+  await doTransfer(walletA, walletB, sal(2), 'CARROT A→B 2 SAL1', { assetType: AT });
+  await doTransfer(walletA, walletB, sal(5), 'CARROT A→B 5 SAL1', { assetType: AT });
 
   // Mine maturity so B can spend (CARROT address required post-HF10)
   const address = walletA.getCarrotAddress();
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletB, 'B');
+  await printBalance(walletB, 'B', AT);
 
   // CARROT transfer B→A
-  await doTransfer(walletB, walletA, sal(0.5), 'CARROT B→A 0.5 SAL');
+  await doTransfer(walletB, walletA, sal(0.5), 'CARROT B→A 0.5 SAL1', { assetType: AT });
 
   // Mine maturity
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
 
   // CARROT stake
-  await doStake(walletA, sal(10), 'CARROT stake 10 SAL');
+  await doStake(walletA, sal(10), 'CARROT stake 10 SAL1', AT);
 
   // CARROT burn
-  await doBurn(walletA, sal(0.1), 'CARROT burn 0.1 SAL');
+  await doBurn(walletA, sal(0.1), 'CARROT burn 0.1 SAL1', AT);
 
   // Mine maturity
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
@@ -465,14 +473,14 @@ async function phase6_carrotTxTests(daemon, daemonUrl, walletA, walletB) {
 
   // CARROT sweep B→B
   const bAddr = walletB.getAddress();
-  await doSweep(walletB, bAddr, 'CARROT sweep B→B');
+  await doSweep(walletB, bAddr, 'CARROT sweep B→B', AT);
 
   // Mine maturity for sweep
   await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  const balA = await printBalance(walletA, 'A');
-  const balB = await printBalance(walletB, 'B');
+  const balA = await printBalance(walletA, 'A', AT);
+  const balB = await printBalance(walletB, 'B', AT);
 
   saveSyncCache(walletA, 'a');
   saveSyncCache(walletB, 'b');
@@ -546,8 +554,12 @@ async function phase8_gapSync(daemon) {
   const elapsed = (performance.now() - t0) / 1000;
   console.log(`  Wallet C synced to height ${syncHeight} in ${fmtDuration(elapsed)}`);
 
-  const bal = await walletC.getStorageBalance();
-  console.log(`  Wallet C balance: ${fmtSAL(bal.balance)} SAL (expected 0)`);
+  // Determine asset type at current height
+  const h = await getDaemonHeight(daemon);
+  const hfVer = getHfVersionForHeight(h, NETWORK_ID.TESTNET);
+  const AT = hfVer >= 6 ? 'SAL1' : 'SAL';
+  const bal = await walletC.getStorageBalance({ assetType: AT });
+  console.log(`  Wallet C balance: ${fmtSAL(bal.balance)} ${AT} (expected 0)`);
 
   log.phase('gap-sync', { syncHeight, elapsed, balance: bal.balance.toString() });
 }

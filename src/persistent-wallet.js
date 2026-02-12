@@ -251,11 +251,12 @@ export class PersistentWallet extends Wallet {
   // ===========================================================================
 
   /**
-   * Get wallet balance
-   * @param {string} assetType - Asset type (default: 'SAL')
+   * Get wallet balance for a specific asset type
+   * @param {string} assetType - Asset type (required, e.g. 'SAL', 'SAL1', 'VSD')
    * @returns {Promise<bigint>}
    */
-  async getBalance(assetType = 'SAL') {
+  async getBalance(assetType) {
+    if (!assetType) throw new Error('assetType required');
     this._ensureOpen();
     await this._updateBalanceIfNeeded();
     const cached = this._balanceCache.get(assetType);
@@ -263,11 +264,12 @@ export class PersistentWallet extends Wallet {
   }
 
   /**
-   * Get unlocked (spendable) balance
-   * @param {string} assetType - Asset type (default: 'SAL')
+   * Get unlocked (spendable) balance for a specific asset type
+   * @param {string} assetType - Asset type (required, e.g. 'SAL', 'SAL1', 'VSD')
    * @returns {Promise<bigint>}
    */
-  async getUnlockedBalance(assetType = 'SAL') {
+  async getUnlockedBalance(assetType) {
+    if (!assetType) throw new Error('assetType required');
     this._ensureOpen();
     await this._updateBalanceIfNeeded();
     const cached = this._balanceCache.get(assetType);
@@ -295,7 +297,7 @@ export class PersistentWallet extends Wallet {
     const balances = new Map();
 
     for (const output of outputs) {
-      const assetType = output.assetType || 'SAL';
+      const assetType = output.assetType || 'UNKNOWN';
       if (!balances.has(assetType)) {
         balances.set(assetType, { balance: 0n, unlockedBalance: 0n });
       }

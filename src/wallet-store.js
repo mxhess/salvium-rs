@@ -78,6 +78,9 @@ export class WalletStorage {
   async getBlockHash(height) { throw new Error('Not implemented'); }
   async deleteBlockHashesAbove(height) { throw new Error('Not implemented'); }
 
+  // Asset types
+  async getAssetTypes() { throw new Error('Not implemented'); }
+
   // Reorg rollback operations
   async deleteOutputsAbove(height) { throw new Error('Not implemented'); }
   async deleteTransactionsAbove(height) { throw new Error('Not implemented'); }
@@ -331,6 +334,8 @@ export class WalletTransaction {
       unlockTime: this.unlockTime.toString(),
       txType: this.txType,
       assetType: this.assetType,
+      isMinerTx: this.isMinerTx,
+      isProtocolTx: this.isProtocolTx,
       note: this.note,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
@@ -435,6 +440,14 @@ export class MemoryStorage extends WalletStorage {
       output.updatedAt = Date.now();
       this._spentKeyImages.add(keyImage);
     }
+  }
+
+  async getAssetTypes() {
+    const types = new Set();
+    for (const output of this._outputs.values()) {
+      if (output.assetType) types.add(output.assetType);
+    }
+    return Array.from(types).sort();
   }
 
   // Transaction operations

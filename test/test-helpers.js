@@ -39,10 +39,11 @@ export async function waitForHeight(daemon, target, label = '') {
 /**
  * Format atomic units as "X.XXXXXXXX SAL".
  * @param {bigint|number} atomic
+ * @param {string} [label='SAL'] - Asset label (e.g. 'SAL', 'SAL1')
  * @returns {string}
  */
-export function fmt(atomic) {
-  return `${(Number(atomic) / 1e8).toFixed(8)} SAL`;
+export function fmt(atomic, label = 'SAL') {
+  return `${(Number(atomic) / 1e8).toFixed(8)} ${label}`;
 }
 
 /**

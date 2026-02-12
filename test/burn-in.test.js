@@ -26,6 +26,7 @@
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
 import { Wallet } from '../src/wallet.js';
+import { getHfVersionForHeight, NETWORK_ID } from '../src/consensus.js';
 import { existsSync } from 'node:fs';
 import { getHeight, waitForHeight, fmt, short, loadWalletFromFile } from './test-helpers.js';
 
@@ -65,6 +66,15 @@ const stats = {
 
 const daemon = new DaemonRPC({ url: DAEMON_URL });
 
+/** Current era asset type — recomputed before each phase */
+let assetType = 'SAL';
+async function refreshAssetType() {
+  const h = await getHeight(daemon);
+  const hfVer = getHfVersionForHeight(h, NETWORK_ID.TESTNET);
+  assetType = hfVer >= 6 ? 'SAL1' : 'SAL';
+  return assetType;
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -95,8 +105,8 @@ async function syncAndReport(wallet, label, cacheFile = null) {
     await Bun.write(cacheFile, wallet.dumpSyncCacheJSON());
   }
 
-  const { balance, unlockedBalance } = await wallet.getStorageBalance();
-  console.log(`  ${label}: balance=${fmt(balance)}, spendable=${fmt(unlockedBalance)}`);
+  const { balance, unlockedBalance } = await wallet.getStorageBalance({ assetType });
+  console.log(`  ${label}: balance=${fmt(balance, assetType)}, spendable=${fmt(unlockedBalance, assetType)}`);
   return { balance, unlockedBalance };
 }
 
@@ -119,14 +129,14 @@ async function doTransfer(wallet, fromLabel, toAddress, amount) {
   try {
     const result = await wallet.transfer(
       [{ address: toAddress, amount }],
-      { priority: 'default' }
+      { priority: 'default', assetType }
     );
     stats.transfers.succeeded++;
     logTx('transfer', fromLabel, toAddress.slice(0, 10), amount, result.fee, result.txHash, h);
     return result;
   } catch (e) {
     stats.transfers.failed++;
-    console.log(`    FAILED [${fromLabel}->${short(toAddress)}, ${fmt(amount)}]: ${e.message}`);
+    console.log(`    FAILED [${fromLabel}->${short(toAddress)}, ${fmt(amount, assetType)}]: ${e.message}`);
     return null;
   }
 }
@@ -135,14 +145,14 @@ async function doStake(wallet, label, amount) {
   stats.stakes.attempted++;
   const h = await getHeight(daemon);
   try {
-    const result = await wallet.stake(amount, { priority: 'default' });
+    const result = await wallet.stake(amount, { priority: 'default', assetType });
     stats.stakes.succeeded++;
     logTx('stake', label, 'protocol', amount, result.fee, result.txHash, h);
     totalStaked += amount;
     return result;
   } catch (e) {
     stats.stakes.failed++;
-    console.log(`    FAILED [stake ${fmt(amount)}]: ${e.message}`);
+    console.log(`    FAILED [stake ${fmt(amount, assetType)}]: ${e.message}`);
     return null;
   }
 }
@@ -151,14 +161,14 @@ async function doBurn(wallet, label, amount) {
   stats.burns.attempted++;
   const h = await getHeight(daemon);
   try {
-    const result = await wallet.burn(amount, { priority: 'default' });
+    const result = await wallet.burn(amount, { priority: 'default', assetType });
     stats.burns.succeeded++;
     logTx('burn', label, 'burned', amount, result.fee, result.txHash, h);
     totalBurned += amount;
     return result;
   } catch (e) {
     stats.burns.failed++;
-    console.log(`    FAILED [burn ${fmt(amount)}]: ${e.message}`);
+    console.log(`    FAILED [burn ${fmt(amount, assetType)}]: ${e.message}`);
     return null;
   }
 }
@@ -167,7 +177,7 @@ async function doSweep(wallet, label, toAddress) {
   stats.sweeps.attempted++;
   const h = await getHeight(daemon);
   try {
-    const result = await wallet.sweep(toAddress, { priority: 'default' });
+    const result = await wallet.sweep(toAddress, { priority: 'default', assetType });
     stats.sweeps.succeeded++;
     logTx('sweep', label, toAddress.slice(0, 10), result.amount, result.fee, result.txHash, h);
     return result;
@@ -217,7 +227,7 @@ async function megaSweep(wallet, label, toAddress, maxRounds = 50) {
 
     totalSwept += result.amount;
     totalSweepFees += result.fee;
-    console.log(`    Round ${round}: consolidated ${result.inputCount} inputs, fee=${fmt(result.fee)}, amount=${fmt(result.amount)}`);
+    console.log(`    Round ${round}: consolidated ${result.inputCount} inputs, fee=${fmt(result.fee, assetType)}, amount=${fmt(result.amount, assetType)}`);
 
     // Save cache after each round
     await Bun.write(
@@ -231,7 +241,7 @@ async function megaSweep(wallet, label, toAddress, maxRounds = 50) {
     await wallet.syncWithDaemon();
   }
 
-  console.log(`  Mega-sweep complete: ${round} rounds, swept=${fmt(totalSwept)}, fees=${fmt(totalSweepFees)}`);
+  console.log(`  Mega-sweep complete: ${round} rounds, swept=${fmt(totalSwept, assetType)}, fees=${fmt(totalSweepFees, assetType)}`);
   return { rounds: round, totalSwept, totalSweepFees };
 }
 
@@ -296,7 +306,7 @@ async function microFlood(wallet, fromLabel, toAddress, totalCount, minAmt, maxA
       try {
         const result = await wallet.transfer(
           [{ address: toAddress, amount }],
-          { priority: 'default' }
+          { priority: 'default', assetType }
         );
         sent++;
         consecutiveFails = 0;
@@ -308,7 +318,7 @@ async function microFlood(wallet, fromLabel, toAddress, totalCount, minAmt, maxA
         logTx('transfer', fromLabel, toAddress.slice(0, 10), amount, result.fee, result.txHash, h);
 
         if ((sent + failed) % 25 === 0 || i === waveEnd - 1) {
-          console.log(`    ${sent + failed}/${totalCount} (${sent} ok, ${failed} fail) | sent=${fmt(totalSent)} | fees=${fmt(totalFloodFees)}`);
+          console.log(`    ${sent + failed}/${totalCount} (${sent} ok, ${failed} fail) | sent=${fmt(totalSent, assetType)} | fees=${fmt(totalFloodFees, assetType)}`);
         }
       } catch (e) {
         failed++;
@@ -328,7 +338,7 @@ async function microFlood(wallet, fromLabel, toAddress, totalCount, minAmt, maxA
     if (consecutiveFails >= 10) break;
   }
 
-  console.log(`  Flood done: ${sent}/${totalCount} succeeded, total=${fmt(totalSent)}, fees=${fmt(totalFloodFees)}`);
+  console.log(`  Flood done: ${sent}/${totalCount} succeeded, total=${fmt(totalSent, assetType)}, fees=${fmt(totalFloodFees, assetType)}`);
   return { sent, failed, totalSent, totalFloodFees };
 }
 
@@ -378,6 +388,7 @@ async function loadOrCreateWalletB() {
 
 async function phaseCN(walletA, walletB) {
   banner('PHASE 1: CN ERA (pre-CARROT, height < 1100)');
+  await refreshAssetType();
 
   const addrA = walletA.getLegacyAddress();
   const addrB = walletB.getLegacyAddress();
@@ -432,7 +443,7 @@ async function phaseCN(walletA, walletB) {
 
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 5_00_000_000) + 1_00_000_000);
-    console.log(`  Stake ${i + 1}/3: ${fmt(amt)}`);
+    console.log(`  Stake ${i + 1}/3: ${fmt(amt, assetType)}`);
     await doStake(walletA, 'A', amt);
     if (i < 2) {
       const sh = await getHeight(daemon);
@@ -444,7 +455,7 @@ async function phaseCN(walletA, walletB) {
   section('CN Burns');
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 1_00_000_000) + 10_000_000);
-    console.log(`  Burn ${i + 1}/3: ${fmt(amt)}`);
+    console.log(`  Burn ${i + 1}/3: ${fmt(amt, assetType)}`);
     await doBurn(walletA, 'A', amt);
   }
 
@@ -501,9 +512,9 @@ async function phaseCN(walletA, walletB) {
 
   console.log(`  A outputs: ${await outputCount(walletA)}`);
   console.log(`  B outputs: ${await outputCount(walletB)}`);
-  console.log(`  Total fees: ${fmt(totalFees)}`);
-  console.log(`  Total burned: ${fmt(totalBurned)}`);
-  console.log(`  Total staked: ${fmt(totalStaked)}`);
+  console.log(`  Total fees: ${fmt(totalFees, assetType)}`);
+  console.log(`  Total burned: ${fmt(totalBurned, assetType)}`);
+  console.log(`  Total staked: ${fmt(totalStaked, assetType)}`);
   console.log(`  TX count: ${txLog.length}`);
 
   await saveTxLog();
@@ -515,6 +526,7 @@ async function phaseCN(walletA, walletB) {
 
 async function phaseCARROT(walletA, walletB) {
   banner('PHASE 2: CARROT ERA (height >= 1100)');
+  await refreshAssetType();
 
   const addrA = walletA.getCarrotAddress() || walletA.getLegacyAddress();
   const addrB = walletB.getCarrotAddress() || walletB.getLegacyAddress();
@@ -560,7 +572,7 @@ async function phaseCARROT(walletA, walletB) {
 
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 5_00_000_000) + 1_00_000_000);
-    console.log(`  Stake ${i + 1}/3: ${fmt(amt)}`);
+    console.log(`  Stake ${i + 1}/3: ${fmt(amt, assetType)}`);
     await doStake(walletA, 'A', amt);
     if (i < 2) {
       const sh = await getHeight(daemon);
@@ -572,7 +584,7 @@ async function phaseCARROT(walletA, walletB) {
   section('CARROT Burns');
   for (let i = 0; i < 3; i++) {
     const amt = BigInt(Math.floor(Math.random() * 1_00_000_000) + 10_000_000);
-    console.log(`  Burn ${i + 1}/3: ${fmt(amt)}`);
+    console.log(`  Burn ${i + 1}/3: ${fmt(amt, assetType)}`);
     await doBurn(walletA, 'A', amt);
   }
 
@@ -632,15 +644,15 @@ async function phaseCARROT(walletA, walletB) {
     ];
     let ok = 0;
     for (const amt of amounts) {
-      const { unlockedBalance } = await walletB.getStorageBalance();
+      const { unlockedBalance } = await walletB.getStorageBalance({ assetType });
       if (unlockedBalance < amt + 50_000_000n) {
-        console.log(`    Skipping ${fmt(amt)}: insufficient balance`);
+        console.log(`    Skipping ${fmt(amt, assetType)}: insufficient balance`);
         continue;
       }
       const result = await doTransfer(walletB, 'B', addrA, amt);
       if (result) {
         ok++;
-        console.log(`    ${fmt(amt)} OK (${result.inputCount} inputs)`);
+        console.log(`    ${fmt(amt, assetType)} OK (${result.inputCount} inputs)`);
       }
     }
     console.log(`  Stress transfers: ${ok}/${amounts.length}`);
@@ -678,9 +690,9 @@ async function phaseCARROT(walletA, walletB) {
 
   console.log(`  A outputs: ${await outputCount(walletA)}`);
   console.log(`  B outputs: ${await outputCount(walletB)}`);
-  console.log(`  Total fees: ${fmt(totalFees)}`);
-  console.log(`  Total burned: ${fmt(totalBurned)}`);
-  console.log(`  Total staked: ${fmt(totalStaked)}`);
+  console.log(`  Total fees: ${fmt(totalFees, assetType)}`);
+  console.log(`  Total burned: ${fmt(totalBurned, assetType)}`);
+  console.log(`  Total staked: ${fmt(totalStaked, assetType)}`);
   console.log(`  TX count: ${txLog.length}`);
 
   await saveTxLog();
@@ -692,6 +704,7 @@ async function phaseCARROT(walletA, walletB) {
 
 async function reconcile(walletA, walletB) {
   banner('FINAL RECONCILIATION');
+  await refreshAssetType();
 
   const h = await getHeight(daemon);
   await waitForHeight(daemon, h + 5, 'final settle');
@@ -729,13 +742,13 @@ async function reconcile(walletA, walletB) {
 
   console.log('\n  Balance Sheet');
   console.log('  ' + '-'.repeat(50));
-  console.log(`  Wallet A balance:   ${fmt(syncA.balance)} (${await outputCount(walletA)} outputs)`);
-  console.log(`  Wallet B balance:   ${fmt(syncB.balance)} (${await outputCount(walletB)} outputs)`);
-  console.log(`  Total A -> B:       ${fmt(totalA2B)}`);
-  console.log(`  Total B -> A:       ${fmt(totalB2A)}`);
-  console.log(`  Total fees:         ${fmt(totalFees)}`);
-  console.log(`  Total burned:       ${fmt(totalBurned)}`);
-  console.log(`  Total staked:       ${fmt(totalStaked)}`);
+  console.log(`  Wallet A balance:   ${fmt(syncA.balance, assetType)} (${await outputCount(walletA)} outputs)`);
+  console.log(`  Wallet B balance:   ${fmt(syncB.balance, assetType)} (${await outputCount(walletB)} outputs)`);
+  console.log(`  Total A -> B:       ${fmt(totalA2B, assetType)}`);
+  console.log(`  Total B -> A:       ${fmt(totalB2A, assetType)}`);
+  console.log(`  Total fees:         ${fmt(totalFees, assetType)}`);
+  console.log(`  Total burned:       ${fmt(totalBurned, assetType)}`);
+  console.log(`  Total staked:       ${fmt(totalStaked, assetType)}`);
 
   // Success rate
   const totalAttempted = stats.transfers.attempted + stats.stakes.attempted + stats.burns.attempted + stats.sweeps.attempted;

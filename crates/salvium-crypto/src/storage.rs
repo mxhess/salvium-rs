@@ -132,7 +132,7 @@ pub struct OutputRow {
     pub spent_tx_hash: Option<String>,
     #[serde(default = "default_zero_str")]
     pub unlock_time: String,
-    #[serde(default = "default_tx_type")]
+    #[serde(default = "default_tx_type", deserialize_with = "deserialize_tx_type")]
     pub tx_type: i64,
     pub tx_pub_key: Option<String>,
     #[serde(default)]
@@ -180,7 +180,7 @@ pub struct TransactionRow {
     pub payment_id: Option<String>,
     #[serde(default = "default_zero_str")]
     pub unlock_time: String,
-    #[serde(default = "default_tx_type")]
+    #[serde(default = "default_tx_type", deserialize_with = "deserialize_tx_type")]
     pub tx_type: i64,
     #[serde(default = "default_sal")]
     pub asset_type: String,
@@ -231,6 +231,39 @@ pub struct BalanceResult {
 fn default_zero_str() -> String { "0".to_string() }
 fn default_sal() -> String { "SAL".to_string() }
 fn default_tx_type() -> i64 { 3 }
+
+/// Deserialize tx_type from either an integer or a string name.
+/// Accepts: 0-8 (integers), "miner", "protocol", "transfer", "convert", "burn", "stake", "return", "audit"
+fn deserialize_tx_type<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where D: serde::Deserializer<'de>
+{
+    use serde::de;
+
+    struct TxTypeVisitor;
+    impl<'de> de::Visitor<'de> for TxTypeVisitor {
+        type Value = i64;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an integer or tx type name string")
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> { Ok(v) }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> { Ok(v as i64) }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<i64, E> { Ok(v as i64) }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
+            match v {
+                "miner" => Ok(1),
+                "protocol" => Ok(2),
+                "transfer" => Ok(3),
+                "convert" => Ok(4),
+                "burn" => Ok(5),
+                "stake" => Ok(6),
+                "return" => Ok(7),
+                "audit" => Ok(8),
+                _ => v.parse::<i64>().map_err(de::Error::custom),
+            }
+        }
+    }
+    deserializer.deserialize_any(TxTypeVisitor)
+}
 
 fn now_millis() -> i64 {
     SystemTime::now()
@@ -583,6 +616,21 @@ impl WalletDb {
         )
     }
 
+    // ── Asset Types ────────────────────────────────────────────────────
+
+    /// Returns the distinct asset types present in the outputs table.
+    pub fn get_asset_types(&self) -> Result<Vec<String>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT asset_type FROM outputs ORDER BY asset_type"
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
     // ── Balance Computation ─────────────────────────────────────────────
 
     pub fn get_balance(&self, current_height: i64, asset_type: &str, account_index: i32) -> Result<BalanceResult, rusqlite::Error> {
@@ -633,6 +681,60 @@ impl WalletDb {
             unlocked_balance: unlocked.to_string(),
             locked_balance: locked.to_string(),
         })
+    }
+
+    /// Get balances for ALL asset types in the wallet. Returns a map of
+    /// asset_type -> BalanceResult, computed in a single pass.
+    pub fn get_all_balances(&self, current_height: i64, account_index: i32) -> Result<HashMap<String, BalanceResult>, rusqlite::Error> {
+        let mut sql = String::from(
+            "SELECT asset_type, amount, block_height, unlock_time, tx_type
+             FROM outputs WHERE is_spent = 0 AND is_frozen = 0"
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if account_index >= 0 {
+            sql.push_str(&format!(" AND subaddr_major = ?{}", param_values.len() + 1));
+            param_values.push(Box::new(account_index as i64));
+        }
+
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u128;
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_ref.as_slice(), |r| {
+            Ok((
+                r.get::<_, String>(0)?,       // asset_type
+                r.get::<_, String>(1)?,       // amount
+                r.get::<_, Option<i64>>(2)?,  // block_height
+                r.get::<_, String>(3)?,       // unlock_time
+                r.get::<_, i64>(4)?,          // tx_type
+            ))
+        })?;
+
+        let mut balances: HashMap<String, (u128, u128)> = HashMap::new();
+
+        for row in rows {
+            let (asset_type, amount_str, block_height, unlock_time_str, tx_type) = row?;
+            let amount: u128 = amount_str.parse().unwrap_or(0);
+            let entry = balances.entry(asset_type).or_insert((0, 0));
+            entry.0 += amount;
+            if is_unlocked(current_height, block_height, &unlock_time_str, tx_type, now_secs) {
+                entry.1 += amount;
+            }
+        }
+
+        let mut result = HashMap::new();
+        for (asset_type, (total, unlocked)) in balances {
+            result.insert(asset_type, BalanceResult {
+                balance: total.to_string(),
+                unlocked_balance: unlocked.to_string(),
+                locked_balance: (total - unlocked).to_string(),
+            });
+        }
+        Ok(result)
     }
 }
 

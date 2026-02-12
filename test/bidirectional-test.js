@@ -42,7 +42,9 @@ console.log(`Asset: ${assetType}, Format: ${useCarrot ? 'CARROT' : 'CN'}\n`);
 
 // Load wallets
 const pathA = process.env.HOME + '/testnet-wallet/wallet-a.json';
-const pathB = process.env.HOME + '/testnet-wallet/wallet-b-new.json';
+const pathBNew = process.env.HOME + '/testnet-wallet/wallet-b-new.json';
+const pathBFallback = process.env.HOME + '/testnet-wallet/wallet-b.json';
+const pathB = existsSync(pathBNew) ? pathBNew : pathBFallback;
 
 const wjA = JSON.parse(readFileSync(pathA));
 const wjB = JSON.parse(readFileSync(pathB));

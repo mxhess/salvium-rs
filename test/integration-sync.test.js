@@ -467,7 +467,7 @@ async function runIntegrationTest() {
 
   if (storageBackend === 'ffi' && storage.getBalance) {
     // Rust-computed balance — single FFI call, no output round-trip
-    const bal = storage.getBalance({ currentHeight: syncHeight, assetType: 'SAL' });
+    const bal = storage.getBalance({ currentHeight: syncHeight, assetType: 'SAL1' });
     balance = bal.balance;
     unlockedBalance = bal.unlockedBalance;
     // Count unspent outputs for display
@@ -526,9 +526,9 @@ async function runIntegrationTest() {
   console.log(`Unspent outputs:    ${unspentCount} (${unlockedCount} unlocked, ${unspentCount - unlockedCount} locked)`);
   console.log(`Transactions:       ${transactions.length}`);
   console.log('');
-  console.log(`Total balance:      ${balance} atomic (${(Number(balance) / 1e8).toFixed(8)} SAL)`);
-  console.log(`Unlocked balance:   ${unlockedBalance} atomic (${(Number(unlockedBalance) / 1e8).toFixed(8)} SAL)`);
-  console.log(`Locked balance:     ${lockedBalance} atomic (${(Number(lockedBalance) / 1e8).toFixed(8)} SAL)`);
+  console.log(`Total balance:      ${balance} atomic (${(Number(balance) / 1e8).toFixed(8)} SAL1)`);
+  console.log(`Unlocked balance:   ${unlockedBalance} atomic (${(Number(unlockedBalance) / 1e8).toFixed(8)} SAL1)`);
+  console.log(`Locked balance:     ${lockedBalance} atomic (${(Number(lockedBalance) / 1e8).toFixed(8)} SAL1)`);
 
   // === DIAGNOSTIC: null keyImage outputs ===
   const nullKiOutput = await storage.getOutput(null);

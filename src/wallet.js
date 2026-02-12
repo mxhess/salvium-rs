@@ -36,7 +36,7 @@ import {
   UTXO_STRATEGY
 } from './transaction.js';
 import { NETWORK, ADDRESS_FORMAT } from './constants.js';
-import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID, areAssetTypesEquivalent } from './consensus.js';
+import { getNetworkConfig, HF_VERSION, getHfVersionForHeight, isCarrotActive, NETWORK_ID } from './consensus.js';
 import { seedToMnemonic, mnemonicToSeed, validateMnemonic } from './mnemonic.js';
 
 // Storage, sync, and transfer integration
@@ -861,7 +861,8 @@ export class Wallet {
    * @param {Object} txInfo - Transaction info (hash, height, etc.)
    */
   addOutput(output, txInfo = {}) {
-    const assetType = txInfo.assetType || output.assetType || 'SAL';
+    const assetType = txInfo.assetType || output.assetType;
+    if (!assetType) throw new Error('assetType required on output or txInfo');
 
     // Derive the one-time secret key for this output (needed for spending)
     let secretKey = null;
@@ -935,18 +936,19 @@ export class Wallet {
    * Get the wallet balance
    * @param {Object} options - Options
    * @param {number} options.accountIndex - Filter by account (optional)
-   * @param {string} options.assetType - Asset type (default: 'SAL')
+   * @param {string} options.assetType - Asset type (required, e.g. 'SAL', 'SAL1', 'VSD')
    * @returns {Object} { balance, unlockedBalance, lockedBalance }
    */
   getBalance(options = {}) {
-    const { accountIndex = null, assetType = 'SAL' } = options;
+    const { accountIndex = null, assetType } = options;
+    if (!assetType) throw new Error('assetType required');
 
     // Prefer _storage (populated by syncWithDaemon) over legacy _utxos
     if (this._storage && this._storage._outputs.size > 0) {
       let balance = 0n, unlockedBalance = 0n;
       for (const output of this._storage._outputs.values()) {
         if (output.isSpent) continue;
-        if (assetType && !areAssetTypesEquivalent(output.assetType, assetType)) continue;
+        if (output.assetType !== assetType) continue;
         if (accountIndex !== null && output.subaddressIndex?.major !== accountIndex) continue;
         const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
         balance += amount;
@@ -998,22 +1000,23 @@ export class Wallet {
    * @param {Object} options - Filter options
    * @param {boolean} options.unlockedOnly - Only return unlocked outputs
    * @param {number} options.accountIndex - Filter by account
-   * @param {string} options.assetType - Asset type (default: 'SAL')
+   * @param {string} options.assetType - Asset type (required, e.g. 'SAL', 'SAL1', 'VSD')
    * @returns {Array<Object>} UTXOs
    */
   getUTXOs(options = {}) {
     const {
       unlockedOnly = false,
       accountIndex = null,
-      assetType = 'SAL'
+      assetType
     } = options;
+    if (!assetType) throw new Error('assetType required');
 
     // Prefer _storage (populated by syncWithDaemon) over legacy _utxos
     if (this._storage && this._storage._outputs.size > 0) {
       const results = [];
       for (const output of this._storage._outputs.values()) {
         if (output.isSpent) continue;
-        if (assetType && !areAssetTypesEquivalent(output.assetType, assetType)) continue;
+        if (output.assetType !== assetType) continue;
         if (accountIndex !== null && output.subaddressIndex?.major !== accountIndex) continue;
         if (unlockedOnly && !output.isUnlocked(this._syncHeight)) continue;
         results.push(output);
@@ -1095,9 +1098,10 @@ export class Wallet {
       ringSize = 16,
       utxoStrategy = UTXO_STRATEGY.LARGEST_FIRST,
       rpcClient = null,
-      assetType = 'SAL',
+      assetType,
       accountIndex = 0
     } = options;
+    if (!assetType) throw new Error('assetType required');
 
     // Parse destination addresses
     const parsedDestinations = destinations.map(dest => {
@@ -1187,7 +1191,7 @@ export class Wallet {
    *
    * @param {bigint|number|string} amount - Amount to stake (in atomic units)
    * @param {Object} options - Options
-   * @param {string} options.assetType - Asset type to stake ('SAL' or 'SAL1', default: 'SAL')
+   * @param {string} options.assetType - Asset type to stake (required, e.g. 'SAL' or 'SAL1')
    * @param {number} options.accountIndex - Account index (default: 0)
    * @param {number} options.ringSize - Ring size for privacy (default: 16)
    * @param {string} options.priority - Fee priority ('low', 'default', 'high')
@@ -1200,13 +1204,14 @@ export class Wallet {
     }
 
     const {
-      assetType = 'SAL',
+      assetType,
       accountIndex = 0,
       ringSize = 16,
       priority = 'default',
       rpcClient = null
     } = options;
 
+    if (!assetType) throw new Error('assetType required');
     // Validate asset type
     if (assetType !== 'SAL' && assetType !== 'SAL1') {
       throw new Error('STAKE transactions must use SAL or SAL1 asset type');
@@ -1315,7 +1320,7 @@ export class Wallet {
    *
    * @param {BigInt|number|string} amount - Amount to burn
    * @param {Object} options - Transaction options:
-   * @param {string} options.assetType - Asset type to burn ('SAL' or 'SAL1', default 'SAL')
+   * @param {string} options.assetType - Asset type to burn (required, e.g. 'SAL' or 'SAL1')
    * @param {number} options.accountIndex - Account index to burn from (default 0)
    * @param {number} options.ringSize - Ring size for CLSAG (default 16)
    * @param {string} options.priority - Fee priority ('low', 'default', 'high')
@@ -1328,13 +1333,14 @@ export class Wallet {
     }
 
     const {
-      assetType = 'SAL',
+      assetType,
       accountIndex = 0,
       ringSize = 16,
       priority = 'default',
       rpcClient = null
     } = options;
 
+    if (!assetType) throw new Error('assetType required');
     // Validate asset type
     if (assetType !== 'SAL' && assetType !== 'SAL1') {
       throw new Error('BURN transactions must use SAL or SAL1 asset type');
@@ -1758,7 +1764,8 @@ export class Wallet {
    * @returns {Promise<Object>} Sweep transaction
    */
   async sweepAll(address, options = {}) {
-    const { accountIndex = 0, assetType = 'SAL', priority = 'default' } = options;
+    const { accountIndex = 0, assetType, priority = 'default' } = options;
+    if (!assetType) throw new Error('assetType required');
 
     const utxos = this.getUTXOs({ unlockedOnly: true, accountIndex, assetType });
     if (utxos.length === 0) {
@@ -1794,11 +1801,12 @@ export class Wallet {
 
     const {
       accountIndex = 0,
-      assetType = 'SAL',
+      assetType,
       ringSize = 16,
       priority = 'low',
       rpcClient = null
     } = options;
+    if (!assetType) throw new Error('assetType required');
 
     // Get all unlocked UTXOs for account
     const utxos = this.getUTXOs({ unlockedOnly: true, accountIndex, assetType });
@@ -2143,12 +2151,14 @@ export class Wallet {
   /**
    * Get balance from storage-backed outputs.
    * @param {Object} [options]
-   * @param {string} [options.assetType='SAL']
+   * @param {string} options.assetType - Asset type (required)
    * @returns {Promise<{ balance: bigint, unlockedBalance: bigint, lockedBalance: bigint }>}
    */
   async getStorageBalance(options = {}) {
     if (!this._storage) return this.getBalance(options);
-    const allOutputs = await this._storage.getOutputs({ isSpent: false });
+    const { assetType } = options;
+    if (!assetType) throw new Error('assetType required');
+    const allOutputs = await this._storage.getOutputs({ isSpent: false, assetType });
     let balance = 0n, unlockedBalance = 0n;
     for (const o of allOutputs) {
       balance += o.amount;

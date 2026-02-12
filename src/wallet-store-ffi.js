@@ -10,7 +10,7 @@
  * @module wallet-store-ffi
  */
 
-import { dlopen, FFIType, read, toBuffer, ptr as ptrFn } from 'bun:ffi';
+import { dlopen, FFIType, read, toBuffer, ptr as ptrFn, CString } from 'bun:ffi';
 import { WalletStorage, WalletOutput, WalletTransaction } from './wallet-store.js';
 
 const { ptr, i32, u32, i64, u64, usize } = FFIType;
@@ -55,7 +55,9 @@ const STORAGE_SYMBOLS = {
 
   salvium_storage_rollback:       { args: [u32, i64], returns: i32 },
 
+  salvium_storage_get_asset_types: { args: [u32, ptr, ptr], returns: i32 },
   salvium_storage_get_balance:    { args: [u32, i64, ptr, usize, i32, ptr, ptr], returns: i32 },
+  salvium_storage_get_all_balances: { args: [u32, i64, i32, ptr, ptr], returns: i32 },
 
   salvium_storage_free_buf:       { args: [ptr, usize], returns: FFIType.void },
 };
@@ -76,6 +78,10 @@ function getLib() {
 /**
  * Read a Rust-allocated buffer (out_ptr, out_len pattern) and free it.
  * Returns the content as a string.
+ *
+ * Uses CString instead of toBuffer to avoid creating external Buffer views
+ * that become dangling pointers after free_buf — Bun's GC can crash when
+ * scanning freed external memory during compaction.
  */
 function readAndFree(outPtrBuf, outLenBuf) {
   // Read pointer and length from the output buffers
@@ -83,13 +89,14 @@ function readAndFree(outPtrBuf, outLenBuf) {
   const len = Number(outLenBuf.readBigUInt64LE(0));
   if (ptrVal === 0 || len === 0) return null;
 
-  // Read the bytes from the Rust-allocated buffer (toBuffer returns a Buffer directly)
-  const rustBuf = toBuffer(ptrVal, 0, len);
-  const str = rustBuf.toString('utf-8');
+  // CString reads from the pointer into a JS string — no external Buffer created
+  const str = new CString(ptrVal, 0, len);
 
   // Free the Rust-allocated buffer
   getLib().symbols.salvium_storage_free_buf(ptrVal, len);
-  return str;
+
+  // .toString() ensures we have a plain JS string (CString may lazy-evaluate)
+  return str.toString();
 }
 
 // ─── FfiStorage class ───────────────────────────────────────────────────────
@@ -136,6 +143,7 @@ export class FfiStorage extends WalletStorage {
   }
 
   async getOutput(keyImage) {
+    if (!keyImage) return null;
     const kiBuf = Buffer.from(keyImage, 'utf-8');
     const outPtrBuf = Buffer.alloc(8); // pointer (64-bit)
     const outLenBuf = Buffer.alloc(8); // size_t (64-bit)
@@ -305,6 +313,24 @@ export class FfiStorage extends WalletStorage {
     if (rc !== 0) throw new Error('rollback failed');
   }
 
+  // ── Asset Types ─────────────────────────────────────────────────────
+
+  /**
+   * Get distinct asset types present in the wallet outputs.
+   * @returns {string[]} e.g. ['SAL', 'SAL1']
+   */
+  async getAssetTypes() {
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = getLib().symbols.salvium_storage_get_asset_types(
+      this._handle, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) throw new Error('getAssetTypes failed');
+    const jsonStr = readAndFree(outPtrBuf, outLenBuf);
+    if (!jsonStr) return [];
+    return JSON.parse(jsonStr);
+  }
+
   // ── Balance (Rust-computed, no output round-trip) ─────────────────────
 
   /**
@@ -313,13 +339,14 @@ export class FfiStorage extends WalletStorage {
    *
    * @param {Object} options
    * @param {number} options.currentHeight - Current blockchain height
-   * @param {string} [options.assetType='SAL'] - Asset type to filter
+   * @param {string} options.assetType - Asset type ('SAL', 'SAL1', or 'VSD')
    * @param {number} [options.accountIndex=-1] - Account index (-1 for all)
    * @returns {{ balance: bigint, unlockedBalance: bigint, lockedBalance: bigint }}
    */
   getBalance(options = {}) {
-    const { currentHeight, assetType = 'SAL', accountIndex = -1 } = options;
+    const { currentHeight, assetType, accountIndex = -1 } = options;
     if (currentHeight === undefined) throw new Error('currentHeight required');
+    if (!assetType) throw new Error('assetType required (e.g. "SAL", "SAL1", or "VSD")');
 
     const atBuf = Buffer.from(assetType, 'utf-8');
     const outPtrBuf = Buffer.alloc(8);
@@ -339,6 +366,40 @@ export class FfiStorage extends WalletStorage {
       unlockedBalance: BigInt(result.unlockedBalance || '0'),
       lockedBalance: BigInt(result.lockedBalance || '0'),
     };
+  }
+
+  /**
+   * Get balances for ALL asset types in the wallet. Single FFI call.
+   *
+   * @param {Object} options
+   * @param {number} options.currentHeight - Current blockchain height
+   * @param {number} [options.accountIndex=-1] - Account index (-1 for all)
+   * @returns {Object<string, { balance: bigint, unlockedBalance: bigint, lockedBalance: bigint }>}
+   */
+  getAllBalances(options = {}) {
+    const { currentHeight, accountIndex = -1 } = options;
+    if (currentHeight === undefined) throw new Error('currentHeight required');
+
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = getLib().symbols.salvium_storage_get_all_balances(
+      this._handle, currentHeight, accountIndex, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) throw new Error('getAllBalances failed');
+
+    const jsonStr = readAndFree(outPtrBuf, outLenBuf);
+    if (!jsonStr) return {};
+
+    const raw = JSON.parse(jsonStr);
+    const result = {};
+    for (const [assetType, bal] of Object.entries(raw)) {
+      result[assetType] = {
+        balance: BigInt(bal.balance || '0'),
+        unlockedBalance: BigInt(bal.unlockedBalance || '0'),
+        lockedBalance: BigInt(bal.lockedBalance || '0'),
+      };
+    }
+    return result;
   }
 }
 
