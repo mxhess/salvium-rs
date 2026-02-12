@@ -448,6 +448,114 @@ test('WALLET_TYPE constants exist', () => {
   assertEqual(WALLET_TYPE.WATCH, 'watch');
 });
 
+// Legacy address rejection at CARROT heights
+console.log('\n--- Legacy Address Rejection ---');
+
+import { transfer } from '../src/wallet/transfer.js';
+
+// Mock daemon that returns a configurable height
+function mockDaemon(height) {
+  return {
+    getInfo: async () => ({
+      success: true,
+      result: { height, block_weight_median: 300000 }
+    })
+  };
+}
+
+test('transfer rejects legacy address after HF10 (testnet)', async () => {
+  const wallet = Wallet.create('testnet');
+  const legacyAddr = wallet.getLegacyAddress();
+  const mockD = mockDaemon(1200); // post-CARROT (HF10 = height 1100 on testnet)
+
+  let threw = false;
+  try {
+    await transfer({
+      wallet, daemon: mockD,
+      destinations: [{ address: legacyAddr, amount: 100000000n }],
+      options: { network: 'testnet', assetType: 'SAL1' }
+    });
+  } catch (e) {
+    threw = true;
+    assert(e.message.includes('Legacy address cannot be used'), `Wrong error: ${e.message}`);
+  }
+  assert(threw, 'Should have thrown for legacy address at CARROT height');
+});
+
+test('transfer accepts legacy address before HF10 (testnet)', async () => {
+  const wallet = Wallet.create('testnet');
+  const legacyAddr = wallet.getLegacyAddress();
+  const mockD = mockDaemon(500); // pre-CARROT
+
+  let legacyRejected = false;
+  try {
+    await transfer({
+      wallet, daemon: mockD,
+      destinations: [{ address: legacyAddr, amount: 100000000n }],
+      options: { network: 'testnet', assetType: 'SAL' }
+    });
+  } catch (e) {
+    // Should fail for other reasons (no UTXOs), but NOT legacy address rejection
+    if (e.message.includes('Legacy address cannot be used')) legacyRejected = true;
+  }
+  assert(!legacyRejected, 'Should NOT reject legacy address before HF10');
+});
+
+test('transfer accepts CARROT address after HF10 (testnet)', async () => {
+  const wallet = Wallet.create('testnet');
+  const carrotAddr = wallet.getCarrotAddress();
+  const mockD = mockDaemon(1200); // post-CARROT
+
+  let legacyRejected = false;
+  try {
+    await transfer({
+      wallet, daemon: mockD,
+      destinations: [{ address: carrotAddr, amount: 100000000n }],
+      options: { network: 'testnet', assetType: 'SAL1' }
+    });
+  } catch (e) {
+    if (e.message.includes('Legacy address cannot be used')) legacyRejected = true;
+  }
+  assert(!legacyRejected, 'Should NOT reject CARROT address at CARROT height');
+});
+
+test('transfer rejects legacy address after HF10 (mainnet)', async () => {
+  const wallet = Wallet.create('mainnet');
+  const legacyAddr = wallet.getLegacyAddress();
+  const mockD = mockDaemon(340000); // post-CARROT (HF10 = 334750 on mainnet)
+
+  let threw = false;
+  try {
+    await transfer({
+      wallet, daemon: mockD,
+      destinations: [{ address: legacyAddr, amount: 100000000n }],
+      options: { network: 'mainnet', assetType: 'SAL1' }
+    });
+  } catch (e) {
+    threw = true;
+    assert(e.message.includes('Legacy address cannot be used'), `Wrong error: ${e.message}`);
+  }
+  assert(threw, 'Should have thrown for legacy address at CARROT height (mainnet)');
+});
+
+test('transfer accepts legacy address before HF10 (mainnet)', async () => {
+  const wallet = Wallet.create('mainnet');
+  const legacyAddr = wallet.getLegacyAddress();
+  const mockD = mockDaemon(330000); // pre-CARROT on mainnet
+
+  let legacyRejected = false;
+  try {
+    await transfer({
+      wallet, daemon: mockD,
+      destinations: [{ address: legacyAddr, amount: 100000000n }],
+      options: { network: 'mainnet', assetType: 'SAL1' }
+    });
+  } catch (e) {
+    if (e.message.includes('Legacy address cannot be used')) legacyRejected = true;
+  }
+  assert(!legacyRejected, 'Should NOT reject legacy address before HF10 (mainnet)');
+});
+
 // Summary
 console.log(`\n--- Summary ---`);
 console.log(`Passed: ${passed}`);

@@ -390,8 +390,13 @@ async function phaseCN(walletA, walletB) {
   banner('PHASE 1: CN ERA (pre-CARROT, height < 1100)');
   await refreshAssetType();
 
-  const addrA = walletA.getLegacyAddress();
-  const addrB = walletB.getLegacyAddress();
+  // Post-HF10: CARROT outputs require CARROT addresses. Using legacy addresses
+  // at CARROT heights causes a pubkey mismatch (legacy CN view key != CARROT view key),
+  // making outputs undetectable by the receiver's CARROT scanner.
+  const h = await getHeight(daemon);
+  const postCarrot = h >= CARROT_FORK_HEIGHT;
+  const addrA = postCarrot ? walletA.getCarrotAddress() : walletA.getLegacyAddress();
+  const addrB = postCarrot ? walletB.getCarrotAddress() : walletB.getLegacyAddress();
   console.log(`  A address: ${short(addrA)}`);
   console.log(`  B address: ${short(addrB)}`);
 

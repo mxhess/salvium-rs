@@ -112,6 +112,7 @@ export function parseAddress(address) {
     result.paymentId = data.slice(KEY_SIZE * 2, KEY_SIZE * 2 + PAYMENT_ID_SIZE);
   }
 
+  result.isCarrot = result.format === 'carrot';
   result.valid = true;
   return result;
 }

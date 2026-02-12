@@ -272,6 +272,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
       viewPublicKey: parsed.viewPublicKey,
       spendPublicKey: parsed.spendPublicKey,
       isSubaddress: parsed.type === 'subaddress',
+      isCarrot: parsed.isCarrot,
       amount: typeof d.amount === 'bigint' ? d.amount : BigInt(d.amount)
     };
   });
@@ -289,6 +290,20 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
     height: currentHeight,
     blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
   };
+
+  // 3b. Reject legacy addresses at CARROT heights (fail fast before UTXO work).
+  // After HF10, only CARROT addresses are valid. Legacy CryptoNote pubkeys differ
+  // from CARROT pubkeys, so the receiver's scanner would never detect the output.
+  if (isCarrotActive(currentHeight, options.network)) {
+    for (const d of parsedDests) {
+      if (d.isCarrot === false) {
+        throw new Error(
+          'Legacy address cannot be used at CARROT heights (post-HF10). ' +
+          'Use a CARROT address (SC1...) instead.'
+        );
+      }
+    }
+  }
 
   // 4. Get spendable outputs — use HF-based asset type if not specified
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);
@@ -498,6 +513,14 @@ export async function sweep({ wallet, daemon, address, options = {} }) {
     height: currentHeight,
     blockWeightMedian: infoData?.block_weight_median || infoData?.block_weight_limit / 2 || 300000,
   };
+
+  // Reject legacy addresses at CARROT heights
+  if (isCarrotActive(currentHeight, options.network) && parsed.isCarrot === false) {
+    throw new Error(
+      'Legacy address cannot be used at CARROT heights (post-HF10). ' +
+      'Use a CARROT address (SC1...) instead.'
+    );
+  }
 
   // Use HF-based asset type detection (like C++ wallet2)
   const assetType = assetTypeOpt || getActiveAssetType(currentHeight, options.network);

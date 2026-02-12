@@ -1102,7 +1102,8 @@ export class WalletSync {
     const rct = {
       type: txJson.rct_signatures?.type || 0,
       txnFee: this._safeBigInt(txJson.rct_signatures?.txnFee),
-      // p_r is the ephemeral pubkey used for CARROT output scanning
+      // p_r is the mask difference commitment in Salvium RCT (NOT the CARROT ephemeral pubkey D_e).
+      // D_e is stored as txPubKey in tx_extra (tag 0x01).
       p_r: txJson.rct_signatures?.p_r ? hexToBytes(txJson.rct_signatures.p_r) : null,
       outPk: (txJson.rct_signatures?.outPk || []).map(pk => {
         if (typeof pk === 'string') return hexToBytes(pk);
