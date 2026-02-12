@@ -13,7 +13,7 @@
  * @module crypto/backend-ffi
  */
 
-import { dlopen, FFIType } from 'bun:ffi';
+import { dlopen, FFIType, CString } from 'bun:ffi';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 const { ptr, i32, u32, usize } = FFIType;
@@ -157,6 +157,13 @@ const FFI_SYMBOLS = {
   // AES-256-GCM
   salvium_aes256gcm_encrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
   salvium_aes256gcm_decrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
+
+  // CARROT scanning
+  salvium_carrot_scan_output:   { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
+  salvium_carrot_scan_internal: { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
+
+  // Buffer management
+  salvium_storage_free_buf: { args: [ptr, usize], returns: FFIType.void },
 };
 
 // ─── Backend class ──────────────────────────────────────────────────────────
@@ -610,5 +617,106 @@ export class FfiCryptoBackend {
     if (rc !== 0) throw new Error('aes256gcm_decrypt failed (authentication or key error)');
     const actualLen = Number(outLenBuf.readBigUInt64LE(0));
     return new Uint8Array(out.slice(0, actualLen));
+  }
+
+  // ─── CARROT Output Scanning ──────────────────────────────────────────────
+
+  /**
+   * Scan a CARROT output using the native Rust pipeline (single FFI call).
+   * Returns scan result object or null if not owned.
+   */
+  scanCarrotOutput(ko, viewTag, dE, encAmount, commitment, kVi, accountSpendPubkey, inputContext, subaddressMap, clearTextAmount) {
+    return this._carrotScan(
+      'salvium_carrot_scan_output',
+      ko, viewTag, dE, encAmount, commitment,
+      kVi, accountSpendPubkey, inputContext,
+      subaddressMap, clearTextAmount
+    );
+  }
+
+  /**
+   * Scan a CARROT output using the self-send (internal) path.
+   * viewBalanceSecret is used directly as s_sr_unctx (no X25519 ECDH).
+   */
+  scanCarrotInternalOutput(ko, viewTag, dE, encAmount, commitment, viewBalanceSecret, accountSpendPubkey, inputContext, subaddressMap, clearTextAmount) {
+    return this._carrotScan(
+      'salvium_carrot_scan_internal',
+      ko, viewTag, dE, encAmount, commitment,
+      viewBalanceSecret, accountSpendPubkey, inputContext,
+      subaddressMap, clearTextAmount
+    );
+  }
+
+  /** @private Shared implementation for both scan paths. */
+  _carrotScan(symbolName, ko, viewTag, dE, encAmount, commitment, secretKey, accountSpendPubkey, inputContext, subaddressMap, clearTextAmount) {
+    const bKo = ensureBuffer(ko);
+    const bVt = ensureBuffer(viewTag);
+    const bDe = ensureBuffer(dE);
+    const bEnc = ensureBuffer(encAmount || new Uint8Array(8));
+    const bCommit = commitment ? ensureBuffer(commitment) : null;
+    const bSk = ensureBuffer(secretKey);
+    const bKs = ensureBuffer(accountSpendPubkey);
+    const bIc = ensureBuffer(inputContext);
+
+    // Encode clear text amount: u64::MAX (0xFFFFFFFFFFFFFFFF) means "not provided"
+    const ctAmount = (clearTextAmount !== undefined && clearTextAmount !== null)
+      ? BigInt(clearTextAmount)
+      : 0xFFFFFFFFFFFFFFFFn;
+
+    // Marshal subaddress map: each entry = 32-byte key + 4-byte major LE + 4-byte minor LE
+    let subBuf, nSub;
+    if (subaddressMap && subaddressMap.size > 0) {
+      nSub = subaddressMap.size;
+      subBuf = Buffer.alloc(nSub * 40);
+      let offset = 0;
+      for (const [hexKey, { major, minor }] of subaddressMap) {
+        const keyBytes = hexToBytes(hexKey);
+        subBuf.set(keyBytes, offset); offset += 32;
+        subBuf.writeUInt32LE(major, offset); offset += 4;
+        subBuf.writeUInt32LE(minor, offset); offset += 4;
+      }
+    } else {
+      nSub = 0;
+      subBuf = Buffer.alloc(0);
+    }
+
+    // Rust-allocated output pointers
+    const outPtrBuf = Buffer.alloc(8); // *mut u8
+    const outLenBuf = Buffer.alloc(8); // usize
+
+    const rc = this.lib.symbols[symbolName](
+      bKo, bVt, bDe, bEnc,
+      bCommit,         // nullable
+      bSk, bKs, bIc, bIc.length,
+      ctAmount,
+      subBuf, nSub,
+      outPtrBuf, outLenBuf
+    );
+
+    if (rc === 0) return null;  // Not owned
+    if (rc < 0) throw new Error(`${symbolName} failed`);
+
+    // Read JSON from Rust-allocated buffer using CString (safe before free)
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    const jsonStr = new CString(resultPtr, 0, resultLen).toString();
+
+    // Free Rust-allocated buffer
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+
+    const result = JSON.parse(jsonStr);
+
+    return {
+      owned: true,
+      onetimeAddress: bytesToHex(ko),
+      addressSpendPubkey: result.address_spend_pubkey,
+      sharedSecret: result.shared_secret,
+      amount: BigInt(result.amount),
+      mask: hexToBytes(result.mask),
+      enoteType: result.enote_type,
+      subaddressIndex: { major: result.subaddress_major, minor: result.subaddress_minor },
+      isMainAddress: result.is_main_address,
+      isCarrot: true,
+    };
   }
 }

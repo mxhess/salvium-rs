@@ -41,6 +41,8 @@ export {
   sha256, verifySignature,
   // Key derivation
   argon2id,
+  // X25519
+  x25519ScalarMult,
   // CARROT key derivation
   computeCarrotSpendPubkey, computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey,

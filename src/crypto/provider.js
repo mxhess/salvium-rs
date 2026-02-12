@@ -287,5 +287,10 @@ export function computeCarrotMainAddressViewPubkey(k_vi) {
   return scalarMultBase(k_vi);
 }
 
+// X25519
+export function x25519ScalarMult(scalar, uCoord) {
+  return getCryptoBackend().x25519ScalarMult(scalar, uCoord);
+}
+
 // Scalar add (simple wrapper around scAdd)
 export function scalarAdd(a, b) { return scAdd(a, b); }

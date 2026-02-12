@@ -854,6 +854,173 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
     })
 }
 
+// ─── CARROT Output Scanning ─────────────────────────────────────────────────
+
+/// CARROT output scan — standard (X25519 ECDH) path.
+///
+/// Fixed-size inputs:
+///   ko: 32, view_tag: 3, d_e: 32, enc_amount: 8, commitment: 32 (or null),
+///   k_vi: 32, account_spend_pubkey: 32, input_context_len (usize),
+///   clear_text_amount: u64 (u64::MAX means "not provided")
+/// Variable inputs:
+///   input_context: input_context_len bytes
+///   subaddr_data: n_sub * 40 bytes (32-byte key + u32 major LE + u32 minor LE)
+/// Output:
+///   JSON result via Rust-allocated buffer (freed with salvium_storage_free_buf).
+///
+/// Returns: 1 = owned, 0 = not owned, -1 = error
+#[no_mangle]
+pub unsafe extern "C" fn salvium_carrot_scan_output(
+    ko: *const u8,
+    view_tag: *const u8,
+    d_e: *const u8,
+    enc_amount: *const u8,
+    commitment: *const u8,     // nullable
+    k_vi: *const u8,
+    account_spend_pubkey: *const u8,
+    input_context: *const u8,
+    input_context_len: usize,
+    clear_text_amount: u64,    // u64::MAX = not provided
+    subaddr_data: *const u8,   // n * 40 bytes
+    n_sub: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ko_arr = crate::to32(slice::from_raw_parts(ko, 32));
+        let vt: [u8; 3] = {
+            let s = slice::from_raw_parts(view_tag, 3);
+            [s[0], s[1], s[2]]
+        };
+        let d_e_arr = crate::to32(slice::from_raw_parts(d_e, 32));
+        let enc_amt: [u8; 8] = {
+            let s = slice::from_raw_parts(enc_amount, 8);
+            let mut a = [0u8; 8];
+            a.copy_from_slice(s);
+            a
+        };
+        let commit_opt = if commitment.is_null() {
+            None
+        } else {
+            Some(crate::to32(slice::from_raw_parts(commitment, 32)))
+        };
+        let k_vi_arr = crate::to32(slice::from_raw_parts(k_vi, 32));
+        let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
+        let ic = slice::from_raw_parts(input_context, input_context_len);
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+
+        // Parse subaddress map: each entry is 40 bytes (32 key + 4 major + 4 minor)
+        let n = n_sub as usize;
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
+            let base = i * 40;
+            let key = crate::to32(&sub_slice[base..base + 32]);
+            let major = u32::from_le_bytes([
+                sub_slice[base + 32], sub_slice[base + 33],
+                sub_slice[base + 34], sub_slice[base + 35],
+            ]);
+            let minor = u32::from_le_bytes([
+                sub_slice[base + 36], sub_slice[base + 37],
+                sub_slice[base + 38], sub_slice[base + 39],
+            ]);
+            (key, major, minor)
+        }).collect();
+
+        match crate::carrot_scan::scan_carrot_output(
+            &ko_arr, &vt, &d_e_arr, &enc_amt, commit_opt.as_ref(),
+            &k_vi_arr, &ks_arr, ic, &subaddrs, ct_amount,
+        ) {
+            Some(result) => {
+                let json = result.to_json();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                1
+            }
+            None => 0,
+        }
+    })
+}
+
+/// CARROT output scan — self-send (internal) path.
+/// Same as salvium_carrot_scan_output but takes view_balance_secret
+/// instead of k_vi (view incoming key).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_carrot_scan_internal(
+    ko: *const u8,
+    view_tag: *const u8,
+    d_e: *const u8,
+    enc_amount: *const u8,
+    commitment: *const u8,     // nullable
+    view_balance_secret: *const u8,
+    account_spend_pubkey: *const u8,
+    input_context: *const u8,
+    input_context_len: usize,
+    clear_text_amount: u64,    // u64::MAX = not provided
+    subaddr_data: *const u8,   // n * 40 bytes
+    n_sub: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ko_arr = crate::to32(slice::from_raw_parts(ko, 32));
+        let vt: [u8; 3] = {
+            let s = slice::from_raw_parts(view_tag, 3);
+            [s[0], s[1], s[2]]
+        };
+        let d_e_arr = crate::to32(slice::from_raw_parts(d_e, 32));
+        let enc_amt: [u8; 8] = {
+            let s = slice::from_raw_parts(enc_amount, 8);
+            let mut a = [0u8; 8];
+            a.copy_from_slice(s);
+            a
+        };
+        let commit_opt = if commitment.is_null() {
+            None
+        } else {
+            Some(crate::to32(slice::from_raw_parts(commitment, 32)))
+        };
+        let vbs_arr = crate::to32(slice::from_raw_parts(view_balance_secret, 32));
+        let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
+        let ic = slice::from_raw_parts(input_context, input_context_len);
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+
+        let n = n_sub as usize;
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
+            let base = i * 40;
+            let key = crate::to32(&sub_slice[base..base + 32]);
+            let major = u32::from_le_bytes([
+                sub_slice[base + 32], sub_slice[base + 33],
+                sub_slice[base + 34], sub_slice[base + 35],
+            ]);
+            let minor = u32::from_le_bytes([
+                sub_slice[base + 36], sub_slice[base + 37],
+                sub_slice[base + 38], sub_slice[base + 39],
+            ]);
+            (key, major, minor)
+        }).collect();
+
+        match crate::carrot_scan::scan_carrot_internal_output(
+            &ko_arr, &vt, &d_e_arr, &enc_amt, commit_opt.as_ref(),
+            &vbs_arr, &ks_arr, ic, &subaddrs, ct_amount,
+        ) {
+            Some(result) => {
+                let json = result.to_json();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                1
+            }
+            None => 0,
+        }
+    })
+}
+
 // ─── Storage (SQLCipher) ────────────────────────────────────────────────────
 
 /// Open/create an encrypted SQLite database.

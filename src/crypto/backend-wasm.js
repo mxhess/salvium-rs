@@ -108,6 +108,9 @@ export class WasmCryptoBackend {
   pointNegate(p) { return nullIfEmpty(this.wasm.point_negate(p)); }
   doubleScalarMultBase(a, p, b) { return nullIfEmpty(this.wasm.double_scalar_mult_base(a, p, b)); }
 
+  // X25519
+  x25519ScalarMult(scalar, uCoord) { return this.wasm.x25519_scalar_mult(scalar, uCoord); }
+
   // Hash-to-point & key derivation
   hashToPoint(data) { return this.wasm.hash_to_point(data); }
   generateKeyImage(pubKey, secKey) {

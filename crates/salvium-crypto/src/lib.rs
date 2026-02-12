@@ -7,6 +7,7 @@ use curve25519_dalek::traits::VartimeMultiscalarMul;
 use sha2::{Sha256, Digest};
 
 mod x25519;
+pub mod carrot_scan;
 
 pub(crate) mod elligator2;
 pub mod clsag;

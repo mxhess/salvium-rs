@@ -16,7 +16,7 @@
  */
 
 import { hexToBytes, bytesToHex } from './address.js';
-import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint, commit as pedersenCommit } from './crypto/index.js';
+import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint, commit as pedersenCommit, x25519ScalarMult } from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
@@ -82,105 +82,10 @@ function modPow(base, exp, mod) {
   return result;
 }
 
-/**
- * X25519 scalar multiplication on Montgomery curve
- * Computes scalar * u where u is a Montgomery u-coordinate
- *
- * This implements Salvium's mx25519, which differs from RFC 7748:
- * - Does NOT clear bits 0-2 of scalar (caller must do this if needed)
- * - Only clears bit 255
- * - Does NOT set bit 254
- * - Uses formula z2 = E * (BB + a24 * E) with a24 = 121666
- *
- * @param {Uint8Array} scalar - 32-byte scalar
- * @param {Uint8Array} u - 32-byte Montgomery u-coordinate
- * @returns {Uint8Array} 32-byte result u-coordinate
- */
-export function x25519ScalarMult(scalar, u) {
-  const p = 2n ** 255n - 19n;
-  const a24 = 121666n; // Salvium uses 121666, not 121665
-
-  // Clamp the scalar as per Salvium's mx25519:
-  // - Do NOT clear bits 0-2 (unlike standard X25519)
-  // - Clear bit 255
-  // - Do NOT set bit 254 (unlike standard X25519)
-  const k = new Uint8Array(scalar);
-  // k[0] &= 248;  // Salvium does NOT clear bits 0-2
-  k[31] &= 127;    // Only clear bit 255
-
-  // Convert inputs to BigInt
-  let kVal = 0n;
-  let uVal = 0n;
-  for (let i = 0; i < 32; i++) {
-    kVal |= BigInt(k[i]) << (8n * BigInt(i));
-    uVal |= BigInt(u[i]) << (8n * BigInt(i));
-  }
-  uVal &= (1n << 255n) - 1n; // Clear top bit
-
-  // Montgomery ladder
-  let x1 = uVal;
-  let x2 = 1n;
-  let z2 = 0n;
-  let x3 = uVal;
-  let z3 = 1n;
-  let swap = 0n;
-
-  // Process bits from 254 down to 0
-  for (let t = 254; t >= 0; t--) {
-    const kt = (kVal >> BigInt(t)) & 1n;
-    swap ^= kt;
-
-    // Conditional swap
-    if (swap) {
-      [x2, x3] = [x3, x2];
-      [z2, z3] = [z3, z2];
-    }
-    swap = kt;
-
-    // Montgomery ladder step (matching Salvium's mx25519 portable implementation)
-    const D = (p + x3 - z3) % p;     // tmp0 = x3 - z3
-    const B = (p + x2 - z2) % p;     // tmp1 = x2 - z2
-    const A = (x2 + z2) % p;         // x2 = x2 + z2 (reusing as A)
-    const C = (x3 + z3) % p;         // z2 = x3 + z3 (reusing as C)
-    const DA = (D * A) % p;          // z3 = D * A
-    const CB = (C * B) % p;          // z2 = C * B
-    const BB = (B * B) % p;          // tmp0 = B^2
-    const AA = (A * A) % p;          // tmp1 = A^2
-    const x3_new = ((DA + CB) % p) ** 2n % p;  // x3 = (DA + CB)^2
-    const diff = (p + DA - CB) % p;
-    const z2_diff = (diff * diff) % p;         // z2 = (DA - CB)^2
-    const x2_new = (AA * BB) % p;              // x2 = AA * BB
-    const E = (p + AA - BB) % p;               // tmp1 = AA - BB = E
-    const z3_new = (x1 * z2_diff) % p;         // z3 = x1 * (DA - CB)^2
-    const a24E = (a24 * E) % p;                // z3 = a24 * E
-    const z2_new = (E * ((BB + a24E) % p)) % p; // z2 = E * (BB + a24 * E)
-
-    x2 = x2_new;
-    z2 = z2_new;
-    x3 = x3_new;
-    z3 = z3_new;
-  }
-
-  // Final conditional swap
-  if (swap) {
-    [x2, x3] = [x3, x2];
-    [z2, z3] = [z3, z2];
-  }
-
-  // Compute result = x2 / z2
-  const z2Inv = modPow(z2, p - 2n, p);
-  const result = (x2 * z2Inv) % p;
-
-  // Convert to bytes
-  const out = new Uint8Array(32);
-  let val = result;
-  for (let i = 0; i < 32; i++) {
-    out[i] = Number(val & 0xffn);
-    val >>= 8n;
-  }
-
-  return out;
-}
+// x25519ScalarMult is now imported from ./crypto/index.js (routed through the crypto provider).
+// The JS backend has a pure-JS BigInt fallback; WASM/FFI backends use native Rust.
+// Re-export for consumers that import from this module.
+export { x25519ScalarMult };
 
 /**
  * Perform X25519 ECDH key exchange for CARROT scanning

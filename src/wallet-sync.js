@@ -17,6 +17,7 @@ import { parseTransaction, parseBlock, extractTxPubKey, extractPaymentId, extrac
 import { bytesToHex, hexToBytes } from './address.js';
 import { TX_TYPE } from './wallet.js';
 import {
+  getCryptoBackend,
   generateKeyDerivation, derivePublicKey, deriveSecretKey,
   generateKeyImage, commit as pedersonCommit,
   deriveViewTag, computeSharedSecret, ecdhDecodeFull,
@@ -1533,19 +1534,44 @@ export class WalletSync {
         : BigInt(output.amount || 0);
     }
 
-    // Scan with CARROT algorithm
+    // Scan with CARROT algorithm — prefer native Rust scanner (single FFI call)
+    // over JS scanner (many individual crypto ops).
+    const backend = getCryptoBackend();
+    const hasNativeScanner = typeof backend.scanCarrotOutput === 'function';
     let result;
     let isReturnOutput = false;
     try {
-      result = scanCarrotOutput(
-        outputForScan,
-        this.carrotKeys.viewIncomingKey,
-        this.carrotKeys.accountSpendPubkey,
-        inputContext,
-        this.carrotSubaddresses,
-        amountCommitment,
-        scanOptions
-      );
+      if (hasNativeScanner) {
+        // Native Rust scanner: extract raw fields and pass directly
+        const Ko = typeof outputForScan.key === 'string' ? hexToBytes(outputForScan.key) : outputForScan.key;
+        const vtBytes = typeof outputForScan.viewTag === 'string' ? hexToBytes(outputForScan.viewTag) : outputForScan.viewTag;
+        const De = typeof outputForScan.enoteEphemeralPubkey === 'string'
+          ? hexToBytes(outputForScan.enoteEphemeralPubkey) : outputForScan.enoteEphemeralPubkey;
+        const encAmt = outputForScan.encryptedAmount
+          ? (typeof outputForScan.encryptedAmount === 'string'
+              ? hexToBytes(outputForScan.encryptedAmount) : outputForScan.encryptedAmount)
+          : null;
+        result = backend.scanCarrotOutput(
+          Ko, vtBytes, De, encAmt,
+          amountCommitment,
+          this.carrotKeys.viewIncomingKey,
+          this.carrotKeys.accountSpendPubkey,
+          inputContext,
+          this.carrotSubaddresses,
+          scanOptions.clearTextAmount
+        );
+      } else {
+        // JS fallback scanner
+        result = scanCarrotOutput(
+          outputForScan,
+          this.carrotKeys.viewIncomingKey,
+          this.carrotKeys.accountSpendPubkey,
+          inputContext,
+          this.carrotSubaddresses,
+          amountCommitment,
+          scanOptions
+        );
+      }
     } catch (e) {
       // Missing required fields in CARROT output - skip this output
       return null;
@@ -1556,15 +1582,35 @@ export class WalletSync {
     // Only for regular transactions with key images (not coinbase/protocol_tx).
     if (!result && this.carrotKeys.viewBalanceSecret && firstKi) {
       try {
-        result = scanCarrotInternalOutput(
-          outputForScan,
-          this.carrotKeys.viewBalanceSecret,
-          this.carrotKeys.accountSpendPubkey,
-          inputContext,
-          this.carrotSubaddresses,
-          amountCommitment,
-          scanOptions
-        );
+        if (hasNativeScanner) {
+          const Ko = typeof outputForScan.key === 'string' ? hexToBytes(outputForScan.key) : outputForScan.key;
+          const vtBytes = typeof outputForScan.viewTag === 'string' ? hexToBytes(outputForScan.viewTag) : outputForScan.viewTag;
+          const De = typeof outputForScan.enoteEphemeralPubkey === 'string'
+            ? hexToBytes(outputForScan.enoteEphemeralPubkey) : outputForScan.enoteEphemeralPubkey;
+          const encAmt = outputForScan.encryptedAmount
+            ? (typeof outputForScan.encryptedAmount === 'string'
+                ? hexToBytes(outputForScan.encryptedAmount) : outputForScan.encryptedAmount)
+            : null;
+          result = backend.scanCarrotInternalOutput(
+            Ko, vtBytes, De, encAmt,
+            amountCommitment,
+            this.carrotKeys.viewBalanceSecret,
+            this.carrotKeys.accountSpendPubkey,
+            inputContext,
+            this.carrotSubaddresses,
+            scanOptions.clearTextAmount
+          );
+        } else {
+          result = scanCarrotInternalOutput(
+            outputForScan,
+            this.carrotKeys.viewBalanceSecret,
+            this.carrotKeys.accountSpendPubkey,
+            inputContext,
+            this.carrotSubaddresses,
+            amountCommitment,
+            scanOptions
+          );
+        }
 
         // If we detected a self-send, compute the expected return address.
         // When this wallet's STAKE tx unlocks, the return output will appear
