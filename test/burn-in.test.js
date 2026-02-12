@@ -393,7 +393,7 @@ async function phaseCN(walletA, walletB) {
   // Post-HF10: CARROT outputs require CARROT addresses. Using legacy addresses
   // at CARROT heights causes a pubkey mismatch (legacy CN view key != CARROT view key),
   // making outputs undetectable by the receiver's CARROT scanner.
-  const h = await getHeight(daemon);
+  let h = await getHeight(daemon);
   const postCarrot = h >= CARROT_FORK_HEIGHT;
   const addrA = postCarrot ? walletA.getCarrotAddress() : walletA.getLegacyAddress();
   const addrB = postCarrot ? walletB.getCarrotAddress() : walletB.getLegacyAddress();
@@ -417,7 +417,7 @@ async function phaseCN(walletA, walletB) {
   section('CN Round 1: A -> B transfers (0.5-5 SAL)');
   await batchTransfers(walletA, 'A', addrB, 50, 50_000_000n, 500_000_000n, SYNC_CACHE_A);
 
-  let h = await getHeight(daemon);
+  h = await getHeight(daemon);
   await waitForHeight(daemon, h + SPENDABLE_AGE + 2, 'A->B confirms');
 
   syncA = await syncAndReport(walletA, 'A', SYNC_CACHE_A);
