@@ -954,7 +954,14 @@ export class Wallet {
         balance += amount;
         if (output.isUnlocked(this._syncHeight)) unlockedBalance += amount;
       }
-      return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance };
+      // Sum staked amounts from STAKE transactions (type 6)
+      let stakedBalance = 0n;
+      for (const tx of this._storage._transactions.values()) {
+        if (tx.txType === TX_TYPE.STAKE && tx.isOutgoing) {
+          stakedBalance += typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0);
+        }
+      }
+      return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
     }
 
     // Legacy path (populated by sync())
@@ -980,18 +987,19 @@ export class Wallet {
       }
     }
 
-    // Subtract locked staked coins
+    // Sum staked amounts from locked coins
+    let stakedBalance = 0n;
     for (const [ki, locked] of this._lockedCoins) {
       if (locked.assetType === assetType) {
-        // Locked stakes are still in balance but not unlocked
-        // (already counted above, don't double-count)
+        stakedBalance += BigInt(locked.amount || 0);
       }
     }
 
     return {
       balance,
       unlockedBalance,
-      lockedBalance: balance - unlockedBalance
+      lockedBalance: balance - unlockedBalance,
+      stakedBalance
     };
   }
 
@@ -1976,6 +1984,25 @@ export class Wallet {
     return Array.from(this._lockedCoins.values());
   }
 
+  /**
+   * Get stake transaction history
+   * @returns {Promise<Array<Object>>} Stake records with txHash, blockHeight, amountBurnt, fee, timestamp
+   */
+  async getStakeHistory() {
+    if (!this._storage) return [];
+    const stakeTxs = await this._storage.getTransactions({ txType: TX_TYPE.STAKE });
+    return stakeTxs.map(tx => ({
+      txHash: tx.txHash,
+      blockHeight: tx.blockHeight,
+      blockTimestamp: tx.blockTimestamp,
+      amountStaked: typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0),
+      fee: typeof tx.fee === 'bigint' ? tx.fee : BigInt(tx.fee || 0),
+      changeAmount: typeof tx.changeAmount === 'bigint' ? tx.changeAmount : BigInt(tx.changeAmount || 0),
+      isOutgoing: tx.isOutgoing,
+      isIncoming: tx.isIncoming
+    }));
+  }
+
   // ===========================================================================
   // SERIALIZATION
   // ===========================================================================
@@ -2164,7 +2191,13 @@ export class Wallet {
       balance += o.amount;
       if (o.isSpendable(this._syncHeight)) unlockedBalance += o.amount;
     }
-    return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance };
+    // Sum staked amounts from STAKE transactions (type 6)
+    const stakeTxs = await this._storage.getTransactions({ txType: TX_TYPE.STAKE, isOutgoing: true });
+    let stakedBalance = 0n;
+    for (const tx of stakeTxs) {
+      stakedBalance += typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0);
+    }
+    return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
   }
 
   /**

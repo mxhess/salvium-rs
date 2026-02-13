@@ -831,6 +831,7 @@ export class WalletSync {
       for (const output of ownedOutputs) incomingAmount += output.amount;
       for (const spent of spentOutputs) outgoingAmount += spent.amount;
 
+      const amountBurnt = this._safeBigInt(tx.prefix?.amount_burnt);
       const walletTx = new WalletTransaction({
         txHash,
         txPubKey: txPubKey ? bytesToHex(txPubKey) : null,
@@ -848,6 +849,7 @@ export class WalletSync {
         txType,
         isMinerTx,
         isProtocolTx,
+        amountBurnt,
         transfers: [
           ...ownedOutputs.map(o => ({
             type: 'incoming',
@@ -931,6 +933,7 @@ export class WalletSync {
       }
 
       // Create transaction record
+      const amountBurnt = this._safeBigInt(txJson.amount_burnt || tx.prefix?.amount_burnt);
       const walletTx = new WalletTransaction({
         txHash,
         txPubKey: txPubKey ? bytesToHex(txPubKey) : null,
@@ -948,6 +951,7 @@ export class WalletSync {
         txType,
         isMinerTx,
         isProtocolTx,
+        amountBurnt,
         transfers: [
           ...ownedOutputs.map(o => ({
             type: 'incoming',
@@ -1096,7 +1100,8 @@ export class WalletSync {
       vin,
       vout,
       extra,
-      type: txJson.type || 0
+      type: txJson.type || 0,
+      amount_burnt: this._safeBigInt(txJson.amount_burnt)
     };
 
     // RCT signatures (minimal for coinbase)
@@ -1264,6 +1269,7 @@ export class WalletSync {
       }
 
       // Create transaction record
+      const amountBurnt = this._safeBigInt(tx.prefix?.amount_burnt);
       const walletTx = new WalletTransaction({
         txHash,
         txPubKey: txPubKey ? bytesToHex(txPubKey) : null,
@@ -1281,6 +1287,7 @@ export class WalletSync {
         txType,
         isMinerTx,
         isProtocolTx,
+        amountBurnt,
         transfers: [
           ...ownedOutputs.map(o => ({
             type: 'incoming',
@@ -2088,9 +2095,9 @@ export class WalletSync {
    * @private
    */
   _getTxType(tx) {
-    // Salvium transaction type is in prefix.type
-    // Maps to TX_TYPE enum values
-    const prefixType = tx.prefix?.type;
+    // Salvium transaction type is in prefix.txType (from parseTransaction)
+    // or prefix.type (from JSON-converted transactions)
+    const prefixType = tx.prefix?.txType ?? tx.prefix?.type;
     if (prefixType !== undefined && prefixType !== null) {
       // Direct mapping from Salvium transaction_type enum
       switch (prefixType) {

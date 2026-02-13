@@ -293,6 +293,9 @@ export class WalletTransaction {
     this.isMinerTx = data.isMinerTx || false;        // Coinbase (block reward)
     this.isProtocolTx = data.isProtocolTx || false;  // Protocol tx (yields, conversions, refunds)
 
+    // Staking/burn/convert amount (from prefix.amount_burnt)
+    this.amountBurnt = data.amountBurnt !== undefined ? BigInt(data.amountBurnt) : 0n;
+
     // Note (user-defined)
     this.note = data.note || '';
 
@@ -336,6 +339,7 @@ export class WalletTransaction {
       assetType: this.assetType,
       isMinerTx: this.isMinerTx,
       isProtocolTx: this.isProtocolTx,
+      amountBurnt: this.amountBurnt.toString(),
       note: this.note,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
@@ -354,7 +358,8 @@ export class WalletTransaction {
       outgoingAmount: BigInt(data.outgoingAmount || 0),
       fee: BigInt(data.fee || 0),
       changeAmount: BigInt(data.changeAmount || 0),
-      unlockTime: BigInt(data.unlockTime || 0)
+      unlockTime: BigInt(data.unlockTime || 0),
+      amountBurnt: BigInt(data.amountBurnt || 0)
     });
   }
 }
