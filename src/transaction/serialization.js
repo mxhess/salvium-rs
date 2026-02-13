@@ -514,7 +514,7 @@ export function serializeGenInput(height) {
 export function serializeTxExtra(extra) {
   // Try Rust backend first (matches C++ behavior exactly)
   const bt = getCurrentBackendType();
-  if (bt === 'ffi' || bt === 'wasm') {
+  if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
     try {
       const backend = getCryptoBackend();
       if (backend.serializeTxExtra) {
@@ -707,7 +707,7 @@ export function getTxPrefixHash(tx) {
   if (tx instanceof Uint8Array) {
     // Try Rust backend for raw bytes (pure keccak256, faster)
     const bt = getCurrentBackendType();
-    if (bt === 'ffi' || bt === 'wasm') {
+    if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
       try {
         const backend = getCryptoBackend();
         if (backend.computeTxPrefixHash) {

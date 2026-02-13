@@ -302,7 +302,7 @@ export function parseTransaction(data) {
 export function parseExtra(extraBytes) {
   // Try Rust backend first (faster, matches C++ behavior exactly)
   const bt = getCurrentBackendType();
-  if (bt === 'ffi' || bt === 'wasm') {
+  if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
     try {
       const backend = getCryptoBackend();
       if (backend.parseExtra) {
