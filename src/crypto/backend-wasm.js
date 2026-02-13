@@ -108,6 +108,56 @@ export class WasmCryptoBackend {
   pointNegate(p) { return nullIfEmpty(this.wasm.point_negate(p)); }
   doubleScalarMultBase(a, p, b) { return nullIfEmpty(this.wasm.double_scalar_mult_base(a, p, b)); }
 
+  // Batch subaddress map generation
+  cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount) {
+    const buf = this.wasm.cn_subaddress_map_batch(spendPubkey, viewSecretKey, majorCount, minorCount);
+    return _parseSubaddressMapBuffer(buf);
+  }
+
+  carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount) {
+    const buf = this.wasm.carrot_subaddress_map_batch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount);
+    return _parseSubaddressMapBuffer(buf);
+  }
+
+  // CARROT key derivation (batch)
+  deriveCarrotKeysBatch(masterSecret) { return this.wasm.derive_carrot_keys_batch(masterSecret); }
+  deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey) {
+    return this.wasm.derive_carrot_view_only_keys_batch(viewBalanceSecret, accountSpendPubkey);
+  }
+
+  // CARROT helpers
+  computeCarrotViewTag(sSrUnctx, inputContext, ko) {
+    return this.wasm.compute_carrot_view_tag(sSrUnctx, inputContext, ko);
+  }
+  decryptCarrotAmount(encAmount, sSrCtx, ko) {
+    return this.wasm.decrypt_carrot_amount(encAmount, sSrCtx, ko);
+  }
+  deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType) {
+    return this.wasm.derive_carrot_commitment_mask(sSrCtx, BigInt(amount), addressSpendPubkey, enoteType);
+  }
+  recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment) {
+    const result = this.wasm.recover_carrot_address_spend_pubkey(ko, sSrCtx, commitment);
+    return (result && result.length > 0) ? result : null;
+  }
+  makeInputContextRct(firstKeyImage) {
+    return this.wasm.make_input_context_rct(firstKeyImage);
+  }
+  makeInputContextCoinbase(blockHeight) {
+    return this.wasm.make_input_context_coinbase(BigInt(blockHeight));
+  }
+
+  // Transaction extra parsing & serialization
+  parseExtra(extraBytes) {
+    return this.wasm.parse_extra(extraBytes);
+  }
+  serializeTxExtra(jsonStr) {
+    const result = this.wasm.serialize_tx_extra(jsonStr);
+    return (result && result.length > 0) ? result : null;
+  }
+  computeTxPrefixHash(data) {
+    return this.wasm.compute_tx_prefix_hash(data);
+  }
+
   // X25519
   x25519ScalarMult(scalar, uCoord) { return this.wasm.x25519_scalar_mult(scalar, uCoord); }
 
@@ -440,6 +490,27 @@ function deserializeBpProveResult(bytes) {
   }
   const proofBytes = bytes.slice(offset);
   return { V, proofBytes };
+}
+
+/**
+ * Parse flat subaddress map buffer into Map<hex → {major, minor}>
+ * Format: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ */
+function _parseSubaddressMapBuffer(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const count = dv.getUint32(0, true);
+  const map = new Map();
+  let offset = 4;
+  for (let i = 0; i < count; i++) {
+    const key = buf.slice(offset, offset + 32);
+    offset += 32;
+    const major = dv.getUint32(offset, true);
+    offset += 4;
+    const minor = dv.getUint32(offset, true);
+    offset += 4;
+    map.set(bytesToHex(key), { major, minor });
+  }
+  return map;
 }
 
 function containsBytesWasm(haystack, needle) {

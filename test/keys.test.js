@@ -26,6 +26,9 @@ function isValidPoint(p) {
 }
 import { deriveCarrotKeys, deriveKeys } from '../src/carrot.js';
 import { bytesToHex, hexToBytes } from '../src/index.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

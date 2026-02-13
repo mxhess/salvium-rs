@@ -1,17 +1,23 @@
 #!/usr/bin/env bun
 /**
- * Cross-Backend Compatibility Tests
+ * Signature Self-Consistency Tests (WASM Backend)
  *
- * Signs/proves with one backend, verifies with the other.
- * Ensures binary-level compatibility between JS and WASM implementations.
+ * Verifies CLSAG, TCLSAG, and Bulletproofs+ sign/prove + verify roundtrips.
+ * Previously tested cross-backend (JS vs WASM) compatibility, now WASM-only
+ * since JS backend no longer supports scalar/point/signature operations.
  */
 
-import { setCryptoBackend, getCryptoBackend } from '../src/crypto/index.js';
+import { initCrypto, setCryptoBackend, getCryptoBackend } from '../src/crypto/index.js';
 import { clsagSign, clsagVerify, tclsagSign, tclsagVerify, scSub } from '../src/transaction.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../src/ed25519.js';
+import {
+  scalarMultBase, scalarMultPoint, pointAddCompressed,
+  getGeneratorT, randomScalar as providerRandomScalar
+} from '../src/crypto/provider.js';
 import { scRandom, commit, bytesToBigInt } from '../src/transaction/serialization.js';
-import { keccak256 } from '../src/keccak.js';
+import { keccak256 } from '../src/crypto/provider.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;
@@ -35,8 +41,6 @@ function randomScalar() {
 
 /**
  * Generate a CLSAG-compatible test ring.
- * Each ring member has an independent random key and commitment mask.
- * The signing commitment mask is scSub(realMask, pseudoMask).
  */
 function generateClsagTestData(ringSize, secretIndex) {
   const ringSecrets = [];
@@ -57,7 +61,6 @@ function generateClsagTestData(ringSize, secretIndex) {
   const secretKey = ringSecrets[secretIndex];
   const pseudoMask = randomScalar();
   const pseudoOutput = scalarMultBase(pseudoMask);
-  // Commitment mask for signing = difference between real mask and pseudo mask
   const commitmentMask = scSub(commitmentMasks[secretIndex], pseudoMask);
   const message = keccak256(new Uint8Array(32));
 
@@ -66,15 +69,12 @@ function generateClsagTestData(ringSize, secretIndex) {
 
 /**
  * Generate a TCLSAG-compatible test ring.
- * TCLSAG public keys are P = x*G + y*T (twin keys).
- * Commitments are Pedersen commitments: C = mask*G + amount*H.
  */
 function generateTclsagTestData(ringSize, secretIndex) {
   const T = getGeneratorT();
   const secretKeyX = scRandom();
   const secretKeyY = scRandom();
 
-  // TCLSAG public key: P = x*G + y*T
   function tclsagPublicKey(x, y) {
     return pointAddCompressed(scalarMultBase(x), scalarMultPoint(y, T));
   }
@@ -98,11 +98,10 @@ function generateTclsagTestData(ringSize, secretIndex) {
   const pseudoMask = scRandom();
   const pseudoOutput = commit(amount, pseudoMask);
 
-  // Commitment mask = realMask - pseudoMask (as scalar)
-  const L_order = 2n ** 252n + 27742317777372353535851937790883648493n;
+  const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');
   const maskBig = bytesToBigInt(commitmentMasks[secretIndex]);
   const pseudoBig = bytesToBigInt(pseudoMask);
-  const zBig = ((maskBig - pseudoBig) % L_order + L_order) % L_order;
+  const zBig = ((maskBig - pseudoBig) % L + L) % L;
   const commitmentMask = new Uint8Array(32);
   let temp = zBig;
   for (let i = 0; i < 32; i++) {
@@ -115,107 +114,84 @@ function generateTclsagTestData(ringSize, secretIndex) {
   return { message, ring, secretKeyX, secretKeyY, commitments, commitmentMask, pseudoOutput, secretIndex };
 }
 
-// ─── CLSAG Cross-Backend Tests ──────────────────────────────────────────────
+// ─── CLSAG Self-Consistency Tests ───────────────────────────────────────────
 
-async function testClsagCrossBackend() {
-  console.log('\n=== CLSAG Cross-Backend Tests ===\n');
+async function testClsagSelfConsistency() {
+  console.log('\n=== CLSAG Self-Consistency (WASM) ===\n');
 
   const ringSize = 11;
   const secretIndex = 4;
   const data = generateClsagTestData(ringSize, secretIndex);
 
-  // Sign with JS backend
-  await setCryptoBackend('js');
-  const jsSig = clsagSign(data.message, data.ring, data.secretKey, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
-  assert(jsSig && jsSig.c1, 'JS backend signs CLSAG');
+  // Sign with WASM
+  const sig = clsagSign(data.message, data.ring, data.secretKey, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
+  assert(sig && sig.c1, 'WASM signs CLSAG');
 
-  // Verify JS sig with JS backend
-  const jsVerifyJs = clsagVerify(data.message, jsSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(jsVerifyJs === true, 'JS sig verifies with JS backend');
+  // Verify with WASM
+  const valid = clsagVerify(data.message, sig, data.ring, data.commitments, data.pseudoOutput);
+  assert(valid === true, 'WASM CLSAG sig verifies');
 
-  // Sign with WASM backend
-  await setCryptoBackend('wasm');
-  const wasmSig = clsagSign(data.message, data.ring, data.secretKey, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
-  assert(wasmSig && wasmSig.c1, 'WASM backend signs CLSAG');
+  // Key image is 32 bytes
+  const I = sig.I instanceof Uint8Array ? sig.I : hexToBytes(sig.I);
+  assert(I.length === 32, 'Key image is 32 bytes');
 
-  // Verify WASM sig with WASM backend
-  const wasmVerifyWasm = clsagVerify(data.message, wasmSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(wasmVerifyWasm === true, 'WASM sig verifies with WASM backend');
+  // D (commitment key image) is 32 bytes
+  const D = sig.D instanceof Uint8Array ? sig.D : hexToBytes(sig.D);
+  assert(D.length === 32, 'Commitment key image (D) is 32 bytes');
 
-  // Cross-verify: WASM sig with JS backend
-  await setCryptoBackend('js');
-  const jsVerifyWasm = clsagVerify(data.message, wasmSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(jsVerifyWasm === true, 'WASM sig verifies with JS backend (cross-backend)');
+  // Signing twice produces same key image (deterministic)
+  const sig2 = clsagSign(data.message, data.ring, data.secretKey, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
+  const I2 = sig2.I instanceof Uint8Array ? bytesToHex(sig2.I) : sig2.I;
+  const I1 = sig.I instanceof Uint8Array ? bytesToHex(sig.I) : sig.I;
+  assert(I1 === I2, 'Key image is deterministic across signings');
 
-  // Cross-verify: JS sig with WASM backend
-  await setCryptoBackend('wasm');
-  const wasmVerifyJs = clsagVerify(data.message, jsSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(wasmVerifyJs === true, 'JS sig verifies with WASM backend (cross-backend)');
-
-  // Both produce same key image
-  const jsI = typeof jsSig.I === 'string' ? jsSig.I : bytesToHex(jsSig.I);
-  const wasmI = typeof wasmSig.I === 'string' ? wasmSig.I : bytesToHex(wasmSig.I);
-  assert(jsI === wasmI, 'Key images match between JS and WASM');
-
-  // Both produce same D (commitment key image)
-  const jsD = typeof jsSig.D === 'string' ? jsSig.D : bytesToHex(jsSig.D);
-  const wasmD = typeof wasmSig.D === 'string' ? wasmSig.D : bytesToHex(wasmSig.D);
-  assert(jsD === wasmD, 'Commitment key images (D) match between JS and WASM');
+  // Wrong message fails verification
+  const wrongMessage = keccak256(new Uint8Array([1, 2, 3]));
+  const wrongValid = clsagVerify(wrongMessage, sig, data.ring, data.commitments, data.pseudoOutput);
+  assert(wrongValid === false, 'Wrong message fails CLSAG verification');
 }
 
-// ─── TCLSAG Cross-Backend Tests ─────────────────────────────────────────────
+// ─── TCLSAG Self-Consistency Tests ──────────────────────────────────────────
 
-async function testTclsagCrossBackend() {
-  console.log('\n=== TCLSAG Cross-Backend Tests ===\n');
+async function testTclsagSelfConsistency() {
+  console.log('\n=== TCLSAG Self-Consistency (WASM) ===\n');
 
   const ringSize = 4;
   const secretIndex = 2;
   const data = generateTclsagTestData(ringSize, secretIndex);
 
-  // Sign with JS backend
-  await setCryptoBackend('js');
-  const jsSig = tclsagSign(data.message, data.ring, data.secretKeyX, data.secretKeyY, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
-  assert(jsSig && jsSig.c1, 'JS backend signs TCLSAG');
+  // Sign with WASM
+  const sig = tclsagSign(data.message, data.ring, data.secretKeyX, data.secretKeyY, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
+  assert(sig && sig.c1, 'WASM signs TCLSAG');
 
-  // Verify JS sig with JS backend
-  const jsVerifyJs = tclsagVerify(data.message, jsSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(jsVerifyJs === true, 'JS TCLSAG sig verifies with JS backend');
+  // Verify with WASM
+  const valid = tclsagVerify(data.message, sig, data.ring, data.commitments, data.pseudoOutput);
+  assert(valid === true, 'WASM TCLSAG sig verifies');
 
-  // Sign with WASM backend
-  await setCryptoBackend('wasm');
-  const wasmSig = tclsagSign(data.message, data.ring, data.secretKeyX, data.secretKeyY, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
-  assert(wasmSig && wasmSig.c1, 'WASM backend signs TCLSAG');
+  // Key image is 32 bytes
+  const I = sig.I instanceof Uint8Array ? sig.I : hexToBytes(sig.I);
+  assert(I.length === 32, 'TCLSAG key image is 32 bytes');
 
-  // Verify WASM sig with WASM backend
-  const wasmVerifyWasm = tclsagVerify(data.message, wasmSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(wasmVerifyWasm === true, 'WASM TCLSAG sig verifies with WASM backend');
+  // Deterministic key image
+  const sig2 = tclsagSign(data.message, data.ring, data.secretKeyX, data.secretKeyY, data.commitments, data.commitmentMask, data.pseudoOutput, secretIndex);
+  const I1 = sig.I instanceof Uint8Array ? bytesToHex(sig.I) : sig.I;
+  const I2 = sig2.I instanceof Uint8Array ? bytesToHex(sig2.I) : sig2.I;
+  assert(I1 === I2, 'TCLSAG key image is deterministic');
 
-  // Cross-verify: WASM sig with JS backend
-  await setCryptoBackend('js');
-  const jsVerifyWasm = tclsagVerify(data.message, wasmSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(jsVerifyWasm === true, 'WASM TCLSAG sig verifies with JS backend (cross-backend)');
-
-  // Cross-verify: JS sig with WASM backend
-  await setCryptoBackend('wasm');
-  const wasmVerifyJs = tclsagVerify(data.message, jsSig, data.ring, data.commitments, data.pseudoOutput);
-  assert(wasmVerifyJs === true, 'JS TCLSAG sig verifies with WASM backend (cross-backend)');
-
-  // Key images match
-  const jsI = typeof jsSig.I === 'string' ? jsSig.I : bytesToHex(jsSig.I);
-  const wasmI = typeof wasmSig.I === 'string' ? wasmSig.I : bytesToHex(wasmSig.I);
-  assert(jsI === wasmI, 'TCLSAG key images match between JS and WASM');
+  // Wrong message fails verification
+  const wrongValid = tclsagVerify(scRandom(), sig, data.ring, data.commitments, data.pseudoOutput);
+  assert(wrongValid === false, 'Wrong message fails TCLSAG verification');
 }
 
-// ─── Bulletproofs+ Cross-Backend Tests ──────────────────────────────────────
+// ─── Bulletproofs+ Self-Consistency Tests ───────────────────────────────────
 
-async function testBpPlusCrossBackend() {
-  console.log('\n=== Bulletproofs+ Cross-Backend Tests ===\n');
+async function testBpPlusSelfConsistency() {
+  console.log('\n=== Bulletproofs+ Self-Consistency (WASM) ===\n');
 
   const { bulletproofPlusProve, verifyRangeProof, serializeProof, parseProof } =
     await import('../src/bulletproofs_plus.js');
 
   const amounts = [1000n, 2000n];
-  // BP+ masks must be BigInt scalars mod L
   const L = BigInt('0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed');
   function randomBigIntScalar() {
     const bytes = new Uint8Array(64);
@@ -228,84 +204,71 @@ async function testBpPlusCrossBackend() {
   }
   const masks = [randomBigIntScalar(), randomBigIntScalar()];
 
-  // Prove with JS backend (JS backend always uses JS fallback since backend returns null)
-  await setCryptoBackend('js');
-  const jsProof = bulletproofPlusProve(amounts, masks);
-  assert(jsProof && jsProof.A, 'JS backend proves BP+');
+  // Prove with WASM
+  const proof = bulletproofPlusProve(amounts, masks);
+  assert(proof != null, 'WASM proves BP+');
 
-  // Serialize the JS proof for cross-backend testing
-  const jsProofBytes = serializeProof(jsProof);
-  const jsCommitmentBytes = jsProof.V.map(v => v.toBytes());
-
-  // Verify JS proof with JS backend
-  const jsVerifyJs = verifyRangeProof(jsCommitmentBytes, jsProofBytes);
-  assert(jsVerifyJs === true, 'JS BP+ proof verifies with JS backend');
-
-  // Prove with WASM backend
-  await setCryptoBackend('wasm');
-  let wasmProof;
-  try {
-    wasmProof = bulletproofPlusProve(amounts, masks);
-    if (wasmProof) {
-      assert(true, 'WASM backend proves BP+');
-      // The WASM proof returns { V: [Uint8Array...], proofBytes: Uint8Array }
-      const wasmCommitments = wasmProof.V;
-      const wasmProofBytes = wasmProof.proofBytes;
-      if (wasmCommitments && wasmProofBytes) {
-        const wasmVerifyWasm = verifyRangeProof(wasmCommitments, wasmProofBytes);
-        assert(wasmVerifyWasm === true, 'WASM BP+ proof verifies with WASM backend');
-
-        // Cross-verify: WASM proof with JS backend
-        await setCryptoBackend('js');
-        const jsVerifyWasm = verifyRangeProof(wasmCommitments, wasmProofBytes);
-        assert(jsVerifyWasm === true, 'WASM BP+ proof verifies with JS backend (cross-backend)');
-      }
-    } else {
-      // WASM returned null — BP+ prove fell through to JS fallback
-      console.log('  [INFO] WASM BP+ prove returned null, testing JS proof with WASM verify');
-      const wasmVerifyJs = verifyRangeProof(jsCommitmentBytes, jsProofBytes);
-      assert(wasmVerifyJs === true, 'JS BP+ proof verifies with WASM verify');
+  if (proof) {
+    // Handle both return formats (native WASM vs JS fallback)
+    let commitmentBytes, proofBytes;
+    if (proof.proofBytes) {
+      // WASM native format
+      commitmentBytes = proof.V;
+      proofBytes = proof.proofBytes;
+    } else if (proof.A) {
+      // JS fallback format
+      proofBytes = serializeProof(proof);
+      commitmentBytes = proof.V.map(v => v.toBytes());
     }
-  } catch (e) {
-    console.log(`  [SKIP] WASM BP+ prove: ${e.message}`);
-  }
 
-  await setCryptoBackend('js');
+    if (commitmentBytes && proofBytes) {
+      // Verify with WASM
+      const valid = verifyRangeProof(commitmentBytes, proofBytes);
+      assert(valid === true, 'WASM BP+ proof verifies');
+
+      // Serialize/parse roundtrip
+      if (proof.A) {
+        const serialized = serializeProof(proof);
+        const parsed = parseProof(serialized);
+        assert(parsed != null, 'BP+ proof serialize/parse roundtrip');
+      }
+    }
+  }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log('============================================================');
-  console.log('Cross-Backend Compatibility Tests');
+  console.log('Signature Self-Consistency Tests (WASM Backend)');
   console.log('============================================================');
 
   try {
-    await testClsagCrossBackend();
+    await testClsagSelfConsistency();
   } catch (e) {
-    console.log(`\nCLSAG cross-backend test failed: ${e.message}`);
+    console.log(`\nCLSAG test failed: ${e.message}`);
     console.log(e.stack);
     failed++;
   }
 
   try {
-    await testTclsagCrossBackend();
+    await testTclsagSelfConsistency();
   } catch (e) {
-    console.log(`\nTCLSAG cross-backend test failed: ${e.message}`);
+    console.log(`\nTCLSAG test failed: ${e.message}`);
     console.log(e.stack);
     failed++;
   }
 
   try {
-    await testBpPlusCrossBackend();
+    await testBpPlusSelfConsistency();
   } catch (e) {
-    console.log(`\nBP+ cross-backend test failed: ${e.message}`);
+    console.log(`\nBP+ test failed: ${e.message}`);
     console.log(e.stack);
     failed++;
   }
 
   console.log('\n============================================================');
-  console.log(`Cross-Backend Test Summary`);
+  console.log(`Signature Test Summary`);
   console.log(`============================================================`);
   console.log(`Passed: ${passed}`);
   console.log(`Failed: ${failed}`);
@@ -314,7 +277,7 @@ async function main() {
   if (failed > 0) {
     process.exit(1);
   } else {
-    console.log('\n\u2713 All cross-backend tests passed!');
+    console.log('\n\u2713 All signature tests passed!');
   }
 }
 

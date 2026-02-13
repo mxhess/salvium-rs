@@ -41,9 +41,11 @@ salvium-js includes four interchangeable crypto backends behind a unified provid
 | **WASM** (default) | Browser, Node, Bun | 8-26x faster than JS | 336KB |
 | **FFI** | Bun (native dlopen) | Native speed via Rust .so | ~1.6MB |
 | **JSI** | React Native (iOS/Android) | Native speed via FFI | Static lib |
-| **JS** | QuickJS, any JS runtime | Baseline (Noble curves) | Zero deps |
+| **JS** | QuickJS, any JS runtime | Hashing only (keccak, blake2b) | Zero deps |
 
-The WASM backend is loaded automatically via `initCrypto()`. All 28+ low-level primitives plus the expensive high-level protocols (CLSAG, TCLSAG, Bulletproofs+) run in Rust-compiled WASM. The FFI backend uses Bun's native `dlopen` to call the Rust shared library directly — no WASM overhead. The JS backend is a transparent fallback for environments without WASM support.
+The WASM backend is loaded automatically via `initCrypto()`. All 28+ low-level primitives plus the expensive high-level protocols (CLSAG, TCLSAG, Bulletproofs+) run in Rust-compiled WASM. The FFI backend uses Bun's native `dlopen` to call the Rust shared library directly — no WASM overhead. The JS backend provides hashing only (keccak256, blake2b, sha256) — scalar/point operations require the WASM or FFI backend.
+
+**Important:** You must call `await initCrypto()` before using any wallet, key derivation, or transaction operations. The JS backend no longer supports scalar/point operations and will throw if used for them.
 
 ```javascript
 import { initCrypto, getCryptoBackend } from 'salvium-js';
@@ -137,8 +139,12 @@ import {
   deriveKeys,
   createAddress,
   generateCNSubaddress,
-  bytesToHex
+  bytesToHex,
+  initCrypto
 } from 'salvium-js';
+
+// 0. Initialize crypto backend (required before any key/wallet ops)
+await initCrypto();
 
 // 1. Generate a cryptographically secure random seed
 const seed = generateSeed();  // 32 random bytes
@@ -184,7 +190,9 @@ console.log('View secret key:', bytesToHex(keys.viewSecretKey));
 ## Restore Wallet from Mnemonic
 
 ```javascript
-import { mnemonicToSeed, deriveKeys, createAddress } from 'salvium-js';
+import { mnemonicToSeed, deriveKeys, createAddress, initCrypto } from 'salvium-js';
+
+await initCrypto();
 
 const mnemonic = 'abbey ability able about above absent ...';  // 25 words
 
@@ -214,8 +222,11 @@ import {
   createAddress,
   generateCarrotSubaddress,
   hexToBytes,
-  scalarMultPoint
+  scalarMultPoint,
+  initCrypto
 } from 'salvium-js';
+
+await initCrypto();
 
 const seed = generateSeed();
 
@@ -1087,8 +1098,11 @@ import {
   Wallet,
   createWallet,
   restoreWallet,
-  createViewOnlyWallet
+  createViewOnlyWallet,
+  initCrypto
 } from 'salvium-js';
+
+await initCrypto();
 
 // Create a new wallet
 const { wallet, mnemonic, seed } = createWallet({ network: 'mainnet' });
@@ -1373,7 +1387,7 @@ miner.stop();
 ## Testing
 
 ```bash
-# Run all tests
+# Run all unit tests
 bun test/all.js
 
 # Run with integration tests (requires running daemon)
@@ -1387,9 +1401,18 @@ CRYPTO_BACKEND=ffi bun test/wallet-store-ffi.test.js
 
 # Run integration sync with FFI storage backend
 STORAGE_BACKEND=ffi STORAGE_PATH=./test-wallet.db bun test/integration-sync.test.js
+
+# Full testnet validation — mines through all 10 hard forks with WASM probes
+bun test/full-testnet.js --daemon http://web.whiskymine.io:29081
+
+# Resume testnet validation from a specific hard fork
+bun test/full-testnet.js --resume-from 6
+
+# Skip mining (if chain already at target heights)
+bun test/full-testnet.js --skip-mining
 ```
 
-25+ test suites covering addresses, keys, mnemonics, CryptoNote + CARROT scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, oracle verification, cross-backend WASM/JS interop, and SQLCipher FFI storage.
+25+ test suites covering addresses, keys, mnemonics, CryptoNote + CARROT scanning, CLSAG/TCLSAG signatures, Bulletproofs+ range proofs, consensus rules, wallet sync, encrypted storage, blockchain reorgs, oracle verification, WASM/JS crypto backend switching, and SQLCipher FFI storage. The full testnet validation mines through all 10 hard forks (HF1-HF10) with WASM probes at every fork boundary and per-fork TX tests at era transitions (CN, SAL1, CARROT).
 
 ## Project Structure
 

@@ -16,6 +16,7 @@ import {
   multiScalarMul,
   verifyBulletproofPlus,
   verifyBulletproofPlusBatch,
+  verifyRangeProof,
   Point,
   // Proving functions
   randomScalar,
@@ -26,6 +27,9 @@ import {
   L,
   INV_EIGHT
 } from '../src/bulletproofs_plus.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;
@@ -413,8 +417,10 @@ test('proveRange proof verifies correctly', () => {
 
   const proof = proveRange(amount, mask);
 
-  // Verify the proof
-  const valid = verifyBulletproofPlus(proof.V, proof);
+  // Use high-level API which handles both WASM and JS verification paths
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const proofBytes = proof.proofBytes || serializeProof(proof);
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   assertTrue(valid, 'Proof should verify');
 });
 
@@ -423,7 +429,9 @@ test('proveRange works for zero amount', () => {
   const mask = randomScalar();
 
   const proof = proveRange(amount, mask);
-  const valid = verifyBulletproofPlus(proof.V, proof);
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const proofBytes = proof.proofBytes || serializeProof(proof);
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   assertTrue(valid, 'Zero amount proof should verify');
 });
 
@@ -432,7 +440,9 @@ test('proveRange works for max amount (2^64 - 1)', () => {
   const mask = randomScalar();
 
   const proof = proveRange(amount, mask);
-  const valid = verifyBulletproofPlus(proof.V, proof);
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const proofBytes = proof.proofBytes || serializeProof(proof);
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   assertTrue(valid, 'Max amount proof should verify');
 });
 
@@ -451,7 +461,9 @@ test('proveRangeMultiple proof verifies correctly', () => {
   const masks = [randomScalar(), randomScalar()];
 
   const proof = proveRangeMultiple(amounts, masks);
-  const valid = verifyBulletproofPlus(proof.V, proof);
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const proofBytes = proof.proofBytes || serializeProof(proof);
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   assertTrue(valid, 'Multi-amount proof should verify');
 });
 
@@ -472,13 +484,15 @@ test('serialized proof can be parsed and verified', () => {
   const mask = randomScalar();
 
   const proof = proveRange(amount, mask);
-  const bytes = serializeProof(proof);
+  const proofBytes = proof.proofBytes || serializeProof(proof);
 
   // Parse it back
-  const parsed = parseProof(bytes);
+  const parsed = parseProof(proofBytes);
+  assertTrue(parsed !== null, 'Proof should parse');
 
-  // Verify with original V
-  const valid = verifyBulletproofPlus(proof.V, parsed);
+  // Verify with original V via high-level API
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   assertTrue(valid, 'Parsed proof should verify');
 });
 
@@ -534,8 +548,11 @@ testAsync('Benchmark: Proof generation + verification round-trip', async () => {
   const proof = proveRange(amount, mask);
   const genTime = performance.now() - start;
 
+  const commitmentBytes = proof.V.map(v => v instanceof Uint8Array ? v : v.toBytes());
+  const proofBytes = proof.proofBytes || serializeProof(proof);
+
   const verifyStart = performance.now();
-  const valid = verifyBulletproofPlus(proof.V, proof);
+  const valid = verifyRangeProof(commitmentBytes, proofBytes);
   const verifyTime = performance.now() - verifyStart;
 
   console.log(`      Generation: ${genTime.toFixed(2)}ms, Verification: ${verifyTime.toFixed(2)}ms`);

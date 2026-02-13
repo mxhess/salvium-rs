@@ -7,6 +7,8 @@ import { hexToBytes, bytesToHex } from './address.js';
 import {
   blake2b, keccak256, scalarMultBase,
   computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey,
+  deriveCarrotKeysBatch as _deriveKeysBatch,
+  deriveCarrotViewOnlyKeysBatch as _deriveViewOnlyBatch,
 } from './crypto/index.js';
 
 // Group order L for scalar reduction
@@ -230,7 +232,27 @@ export function deriveCarrotKeys(masterSecret) {
     masterSecret = hexToBytes(masterSecret);
   }
 
-  // Derive account secrets
+  // Try single-call Rust batch derivation (eliminates 10+ FFI round-trips)
+  try {
+    const buf = _deriveKeysBatch(masterSecret);
+    if (buf && buf.length === 288) {
+      return {
+        masterSecret:             bytesToHex(buf.slice(0, 32)),
+        proveSpendKey:            bytesToHex(buf.slice(32, 64)),
+        viewBalanceSecret:        bytesToHex(buf.slice(64, 96)),
+        generateImageKey:         bytesToHex(buf.slice(96, 128)),
+        viewIncomingKey:          bytesToHex(buf.slice(128, 160)),
+        generateAddressSecret:    bytesToHex(buf.slice(160, 192)),
+        accountSpendPubkey:       bytesToHex(buf.slice(192, 224)),
+        primaryAddressViewPubkey: bytesToHex(buf.slice(224, 256)),
+        accountViewPubkey:        bytesToHex(buf.slice(256, 288)),
+      };
+    }
+  } catch (_e) {
+    // Fall back to JS derivation
+  }
+
+  // JS fallback — individual crypto calls
   const viewBalanceSecret = makeViewBalanceSecret(masterSecret);
   const proveSpendKey = makeProveSpendKey(masterSecret);
   const viewIncomingKey = makeViewIncomingKey(viewBalanceSecret);
@@ -276,7 +298,26 @@ export function deriveCarrotViewOnlyKeys(viewBalanceSecret, accountSpendPubkey) 
     accountSpendPubkey = hexToBytes(accountSpendPubkey);
   }
 
-  // Derive keys from view-balance secret
+  // Try single-call Rust batch derivation
+  try {
+    const buf = _deriveViewOnlyBatch(viewBalanceSecret, accountSpendPubkey);
+    if (buf && buf.length === 224) {
+      return {
+        viewBalanceSecret:        bytesToHex(buf.slice(0, 32)),
+        viewIncomingKey:          bytesToHex(buf.slice(32, 64)),
+        generateImageKey:         bytesToHex(buf.slice(64, 96)),
+        generateAddressSecret:    bytesToHex(buf.slice(96, 128)),
+        accountSpendPubkey:       bytesToHex(buf.slice(128, 160)),
+        primaryAddressViewPubkey: bytesToHex(buf.slice(160, 192)),
+        accountViewPubkey:        bytesToHex(buf.slice(192, 224)),
+        isViewOnly: true,
+      };
+    }
+  } catch (_e) {
+    // Fall back to JS derivation
+  }
+
+  // JS fallback
   const viewIncomingKey = makeViewIncomingKey(viewBalanceSecret);
   const generateImageKey = makeGenerateImageKey(viewBalanceSecret);
   const generateAddressSecret = makeGenerateAddressSecret(viewBalanceSecret);

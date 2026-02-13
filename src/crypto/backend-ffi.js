@@ -13,7 +13,7 @@
  * @module crypto/backend-ffi
  */
 
-import { dlopen, FFIType, CString } from 'bun:ffi';
+import { dlopen, FFIType, CString, toArrayBuffer } from 'bun:ffi';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 const { ptr, i32, u32, usize } = FFIType;
@@ -73,6 +73,27 @@ function serializeAmounts(amounts) {
     }
   }
   return buf;
+}
+
+/**
+ * Parse flat subaddress map buffer into Map<hex → {major, minor}>
+ * Format: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ */
+function _parseSubaddressMapBuffer(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const count = dv.getUint32(0, true);
+  const map = new Map();
+  let offset = 4;
+  for (let i = 0; i < count; i++) {
+    const key = buf.slice(offset, offset + 32);
+    offset += 32;
+    const major = dv.getUint32(offset, true);
+    offset += 4;
+    const minor = dv.getUint32(offset, true);
+    offset += 4;
+    map.set(bytesToHex(key), { major, minor });
+  }
+  return map;
 }
 
 // ─── Library path resolution ────────────────────────────────────────────────
@@ -157,6 +178,27 @@ const FFI_SYMBOLS = {
   // AES-256-GCM
   salvium_aes256gcm_encrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
   salvium_aes256gcm_decrypt: { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
+
+  // Batch subaddress map generation
+  salvium_cn_subaddress_map_batch:      { args: [ptr, ptr, u32, u32, ptr, ptr], returns: i32 },
+  salvium_carrot_subaddress_map_batch:  { args: [ptr, ptr, ptr, u32, u32, ptr, ptr], returns: i32 },
+
+  // CARROT key derivation (batch)
+  salvium_derive_carrot_keys_batch:             { args: [ptr, ptr], returns: i32 },
+  salvium_derive_carrot_view_only_keys_batch:   { args: [ptr, ptr, ptr], returns: i32 },
+
+  // CARROT helpers
+  salvium_compute_carrot_view_tag:              { args: [ptr, ptr, usize, ptr, ptr], returns: i32 },
+  salvium_decrypt_carrot_amount:                { args: [ptr, ptr, ptr], returns: FFIType.u64 },
+  salvium_derive_carrot_commitment_mask:        { args: [ptr, FFIType.u64, ptr, FFIType.u8, ptr], returns: i32 },
+  salvium_recover_carrot_address_spend_pubkey:  { args: [ptr, ptr, ptr, ptr], returns: i32 },
+  salvium_make_input_context_rct:               { args: [ptr, ptr], returns: i32 },
+  salvium_make_input_context_coinbase:          { args: [FFIType.u64, ptr], returns: i32 },
+
+  // Transaction extra parsing & serialization
+  salvium_parse_extra:             { args: [ptr, usize, ptr, ptr], returns: i32 },
+  salvium_serialize_tx_extra:      { args: [ptr, usize, ptr, ptr], returns: i32 },
+  salvium_compute_tx_prefix_hash:  { args: [ptr, usize, ptr], returns: i32 },
 
   // CARROT scanning
   salvium_carrot_scan_output:   { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
@@ -617,6 +659,204 @@ export class FfiCryptoBackend {
     if (rc !== 0) throw new Error('aes256gcm_decrypt failed (authentication or key error)');
     const actualLen = Number(outLenBuf.readBigUInt64LE(0));
     return new Uint8Array(out.slice(0, actualLen));
+  }
+
+  // ─── Batch Subaddress Map Generation ──────────────────────────────────────
+
+  /**
+   * Generate CryptoNote subaddress map in a single FFI call.
+   * Returns Map<hex string → {major, minor}>
+   */
+  cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount) {
+    const bSpend = ensureBuffer(spendPubkey);
+    const bView = ensureBuffer(viewSecretKey);
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+
+    const rc = this.lib.symbols.salvium_cn_subaddress_map_batch(
+      bSpend, bView, majorCount, minorCount, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) throw new Error('cn_subaddress_map_batch failed');
+
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    // .slice() copies data before freeing Rust-owned memory (toArrayBuffer is a view, not a copy)
+    const resultBuf = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+
+    return _parseSubaddressMapBuffer(resultBuf);
+  }
+
+  /**
+   * Generate CARROT subaddress map in a single FFI call.
+   * Returns Map<hex string → {major, minor}>
+   */
+  carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount) {
+    const bSpend = ensureBuffer(accountSpendPubkey);
+    const bView = ensureBuffer(accountViewPubkey);
+    const bSecret = ensureBuffer(generateAddressSecret);
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+
+    const rc = this.lib.symbols.salvium_carrot_subaddress_map_batch(
+      bSpend, bView, bSecret, majorCount, minorCount, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) throw new Error('carrot_subaddress_map_batch failed');
+
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    const resultBuf = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+
+    return _parseSubaddressMapBuffer(resultBuf);
+  }
+
+  // ─── CARROT Key Derivation (Batch) ──────────────────────────────────────
+
+  /**
+   * Derive all 9 CARROT keys from master secret in a single FFI call.
+   * Returns 288-byte Uint8Array (9 × 32).
+   */
+  deriveCarrotKeysBatch(masterSecret) {
+    const bMs = ensureBuffer(masterSecret);
+    const out = Buffer.alloc(288);
+    const rc = this.lib.symbols.salvium_derive_carrot_keys_batch(bMs, out);
+    if (rc !== 0) throw new Error('derive_carrot_keys_batch failed');
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Derive view-only CARROT keys in a single FFI call.
+   * Returns 224-byte Uint8Array (7 × 32).
+   */
+  deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey) {
+    const bVbs = ensureBuffer(viewBalanceSecret);
+    const bKs = ensureBuffer(accountSpendPubkey);
+    const out = Buffer.alloc(224);
+    const rc = this.lib.symbols.salvium_derive_carrot_view_only_keys_batch(bVbs, bKs, out);
+    if (rc !== 0) throw new Error('derive_carrot_view_only_keys_batch failed');
+    return new Uint8Array(out);
+  }
+
+  // ─── CARROT Helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Compute CARROT 3-byte view tag.
+   * @returns {Uint8Array} 3-byte view tag
+   */
+  computeCarrotViewTag(sSrUnctx, inputContext, ko) {
+    const bS = ensureBuffer(sSrUnctx);
+    const bIc = ensureBuffer(inputContext);
+    const bKo = ensureBuffer(ko);
+    const out = Buffer.alloc(3);
+    const rc = this.lib.symbols.salvium_compute_carrot_view_tag(bS, bIc, bIc.length, bKo, out);
+    if (rc !== 0) throw new Error('compute_carrot_view_tag failed');
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Decrypt CARROT amount from encrypted 8 bytes.
+   * @returns {bigint} Decrypted amount
+   */
+  decryptCarrotAmount(encAmount, sSrCtx, ko) {
+    const bEnc = ensureBuffer(encAmount);
+    const bS = ensureBuffer(sSrCtx);
+    const bKo = ensureBuffer(ko);
+    return this.lib.symbols.salvium_decrypt_carrot_amount(bEnc, bS, bKo);
+  }
+
+  /**
+   * Derive CARROT commitment mask. Returns 32-byte scalar.
+   */
+  deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType) {
+    const bS = ensureBuffer(sSrCtx);
+    const bAddr = ensureBuffer(addressSpendPubkey);
+    const out = Buffer.alloc(32);
+    const rc = this.lib.symbols.salvium_derive_carrot_commitment_mask(
+      bS, BigInt(amount), bAddr, enoteType, out
+    );
+    if (rc !== 0) throw new Error('derive_carrot_commitment_mask failed');
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Recover CARROT address spend pubkey. Returns 32 bytes or null on invalid.
+   */
+  recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment) {
+    const bKo = ensureBuffer(ko);
+    const bS = ensureBuffer(sSrCtx);
+    const bC = ensureBuffer(commitment);
+    const out = Buffer.alloc(32);
+    const rc = this.lib.symbols.salvium_recover_carrot_address_spend_pubkey(bKo, bS, bC, out);
+    if (rc !== 0) return null;
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Make input context for RCT transactions. Returns 33 bytes.
+   */
+  makeInputContextRct(firstKeyImage) {
+    const bKi = ensureBuffer(firstKeyImage);
+    const out = Buffer.alloc(33);
+    this.lib.symbols.salvium_make_input_context_rct(bKi, out);
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Make input context for coinbase transactions. Returns 33 bytes.
+   */
+  makeInputContextCoinbase(blockHeight) {
+    const out = Buffer.alloc(33);
+    this.lib.symbols.salvium_make_input_context_coinbase(BigInt(blockHeight), out);
+    return new Uint8Array(out);
+  }
+
+  // ─── Transaction Extra Parsing & Serialization ──────────────────────────
+
+  /**
+   * Parse tx_extra binary into JSON string (array of entries).
+   */
+  parseExtra(extraBytes) {
+    const bExtra = ensureBuffer(extraBytes);
+    const outPtrBuf = Buffer.alloc(8);  // pointer
+    const outLenBuf = Buffer.alloc(8);  // usize
+    const rc = this.lib.symbols.salvium_parse_extra(bExtra, bExtra.length, outPtrBuf, outLenBuf);
+    if (rc !== 0) return '[]';
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    if (!resultPtr || !resultLen) return '[]';
+    const resultBuf = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+    const jsonStr = new TextDecoder().decode(resultBuf);
+    return jsonStr;
+  }
+
+  /**
+   * Serialize tx_extra from JSON string to binary.
+   */
+  serializeTxExtra(jsonStr) {
+    const bJson = Buffer.from(jsonStr, 'utf8');
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = this.lib.symbols.salvium_serialize_tx_extra(bJson, bJson.length, outPtrBuf, outLenBuf);
+    if (rc !== 0) return null;
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    if (!resultPtr) return new Uint8Array(0);
+    const result = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+    return result;
+  }
+
+  /**
+   * Compute keccak256 hash of transaction prefix bytes.
+   */
+  computeTxPrefixHash(data) {
+    const bData = ensureBuffer(data);
+    const out = Buffer.alloc(32);
+    const rc = this.lib.symbols.salvium_compute_tx_prefix_hash(bData, bData.length, out);
+    if (rc !== 0) return null;
+    return new Uint8Array(out);
   }
 
   // ─── CARROT Output Scanning ──────────────────────────────────────────────

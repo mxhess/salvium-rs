@@ -19,6 +19,9 @@ import {
 import { MemoryStorage, WalletOutput, WalletTransaction } from '../src/wallet-store.js';
 import { generateSeed, deriveKeys } from '../src/carrot.js';
 import { mnemonicToSeed, seedToMnemonic } from '../src/mnemonic.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

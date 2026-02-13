@@ -1,5 +1,11 @@
 /**
- * Key Image Generation Module
+ * Key Image Generation Module (DEPRECATED)
+ *
+ * @deprecated Use the Rust crypto backend (WASM/FFI/JSI) instead.
+ * hashToPoint() and generateKeyImage() are now implemented in Rust
+ * for correctness and performance. This module is kept for reference
+ * and as a fallback for direct-import consumers. It will be removed
+ * in a future version.
  *
  * Implements key image generation for Salvium transactions.
  * Key images are used to detect double-spending without revealing which output was spent.

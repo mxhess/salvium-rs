@@ -7,7 +7,9 @@
  */
 
 import { deriveCarrotCommitmentMask } from '../src/carrot-scanning.js';
-import { commit, scalarMultBase } from '../src/crypto/index.js';
+import { commit, scalarMultBase, initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 function hexToBytes(hex) {
   const bytes = new Uint8Array(hex.length / 2);

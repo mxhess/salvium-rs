@@ -20,6 +20,9 @@ import {
 
 import { bytesToHex, hexToBytes } from '../src/address.js';
 import { NETWORK, ADDRESS_FORMAT } from '../src/constants.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

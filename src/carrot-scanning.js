@@ -16,7 +16,13 @@
  */
 
 import { hexToBytes, bytesToHex } from './address.js';
-import { blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint, commit as pedersenCommit, x25519ScalarMult } from './crypto/index.js';
+import {
+  blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint,
+  commit as pedersenCommit, x25519ScalarMult,
+  computeCarrotViewTagRust, decryptCarrotAmountRust,
+  deriveCarrotCommitmentMaskRust, recoverCarrotAddressSpendPubkeyRust,
+  makeInputContextRctRust, makeInputContextCoinbaseRust,
+} from './crypto/index.js';
 
 // Group order L for scalar reduction
 const L = (1n << 252n) + 27742317777372353535851937790883648493n;
@@ -122,6 +128,13 @@ export function carrotEcdhKeyExchange(viewIncomingKey, enoteEphemeralPubkey) {
  * @returns {Uint8Array} 3-byte view tag
  */
 export function computeCarrotViewTag(senderReceiverUnctx, inputContext, onetimeAddress) {
+  // Try Rust backend first
+  try {
+    const result = computeCarrotViewTagRust(senderReceiverUnctx, inputContext, onetimeAddress);
+    if (result && result.length === 3) return result;
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   // Build transcript: [length_byte] || domain_sep || input_context || Ko
   // SpFixedTranscript format: domain separator is length-prefixed with a single byte
   const domainSep = new TextEncoder().encode('Carrot view tag');
@@ -168,6 +181,13 @@ export function makeInputContext(firstKeyImage) {
     firstKeyImage = hexToBytes(firstKeyImage);
   }
 
+  // Try Rust backend first
+  try {
+    const result = makeInputContextRctRust(firstKeyImage);
+    if (result && result.length === 33) return result;
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   // input_context_t is always 33 bytes: 1 byte type + 32 bytes data
   const result = new Uint8Array(33);
   result[0] = 0x52; // 'R' for RingCT
@@ -183,6 +203,13 @@ export function makeInputContext(firstKeyImage) {
  * @returns {Uint8Array} Input context (33 bytes)
  */
 export function makeInputContextCoinbase(blockHeight) {
+  // Try Rust backend first
+  try {
+    const result = makeInputContextCoinbaseRust(blockHeight);
+    if (result && result.length === 33) return result;
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   // input_context_t is always 33 bytes: 1 byte type + 32 bytes data
   const result = new Uint8Array(33);
   result[0] = 0x43; // 'C' for Coinbase
@@ -438,6 +465,13 @@ function computeOnetimeExtensionPubkey(senderReceiverCtx, amountCommitment) {
  * K^j_s = Ko - K^o_ext
  */
 export function recoverAddressSpendPubkey(onetimeAddress, senderReceiverCtx, amountCommitment) {
+  // Try Rust backend first
+  try {
+    const result = recoverCarrotAddressSpendPubkeyRust(onetimeAddress, senderReceiverCtx, amountCommitment);
+    if (result && result.length === 32) return result;
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   // Compute extension pubkey
   const extensionPubkey = computeOnetimeExtensionPubkey(senderReceiverCtx, amountCommitment);
 
@@ -459,6 +493,13 @@ export function recoverAddressSpendPubkey(onetimeAddress, senderReceiverCtx, amo
  * Key = s_sender_receiver, transcript = Ko
  */
 export function decryptCarrotAmount(encryptedAmount, senderReceiverCtx, onetimeAddress) {
+  // Try Rust backend first
+  try {
+    const result = decryptCarrotAmountRust(encryptedAmount, senderReceiverCtx, onetimeAddress);
+    if (result !== undefined) return BigInt(result);
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   // Key is s_sender_receiver, transcript is just Ko
   const mask = deriveBytes8(senderReceiverCtx, CARROT_DOMAIN.ENCRYPTION_MASK_AMOUNT, onetimeAddress);
 
@@ -482,6 +523,13 @@ export function decryptCarrotAmount(encryptedAmount, senderReceiverCtx, onetimeA
  * Key = s_sender_receiver, transcript = amount + K_s + enote_type
  */
 export function deriveCarrotCommitmentMask(senderReceiverCtx, amount, addressSpendPubkey, enoteType = 0) {
+  // Try Rust backend first
+  try {
+    const result = deriveCarrotCommitmentMaskRust(senderReceiverCtx, amount, addressSpendPubkey, enoteType);
+    if (result && result.length === 32) return result;
+  } catch (_e) { /* fall through to JS */ }
+
+  // JS fallback
   const amountBytes = new Uint8Array(8);
   let a = typeof amount === 'bigint' ? amount : BigInt(amount);
   for (let i = 0; i < 8; i++) {

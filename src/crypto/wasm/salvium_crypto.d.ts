@@ -27,9 +27,53 @@ export function bulletproof_plus_prove_wasm(amounts_bytes: Uint8Array, masks_fla
 
 export function bulletproof_plus_verify_wasm(proof_data: Uint8Array, commitments_flat: Uint8Array): boolean;
 
+/**
+ * Generate CARROT subaddress map in a single call.
+ * Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ */
+export function carrot_subaddress_map_batch(account_spend_pubkey: Uint8Array, account_view_pubkey: Uint8Array, generate_address_secret: Uint8Array, major_count: number, minor_count: number): Uint8Array;
+
 export function clsag_sign_wasm(message: Uint8Array, ring_flat: Uint8Array, secret_key: Uint8Array, commitments_flat: Uint8Array, commitment_mask: Uint8Array, pseudo_output: Uint8Array, secret_index: number): Uint8Array;
 
 export function clsag_verify_wasm(message: Uint8Array, sig_bytes: Uint8Array, ring_flat: Uint8Array, commitments_flat: Uint8Array, pseudo_output: Uint8Array): boolean;
+
+/**
+ * Generate CryptoNote subaddress map in a single call.
+ * Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ */
+export function cn_subaddress_map_batch(spend_pubkey: Uint8Array, view_secret_key: Uint8Array, major_count: number, minor_count: number): Uint8Array;
+
+/**
+ * Compute CARROT 3-byte view tag.
+ */
+export function compute_carrot_view_tag(s_sr_unctx: Uint8Array, input_context: Uint8Array, ko: Uint8Array): Uint8Array;
+
+/**
+ * Compute keccak256 of transaction prefix bytes.
+ */
+export function compute_tx_prefix_hash(data: Uint8Array): Uint8Array;
+
+/**
+ * Decrypt CARROT amount from encrypted 8 bytes.
+ */
+export function decrypt_carrot_amount(enc_amount: Uint8Array, s_sr_ctx: Uint8Array, ko: Uint8Array): bigint;
+
+/**
+ * Derive CARROT commitment mask. Returns 32-byte scalar.
+ */
+export function derive_carrot_commitment_mask(s_sr_ctx: Uint8Array, amount: bigint, address_spend_pubkey: Uint8Array, enote_type: number): Uint8Array;
+
+/**
+ * Derive all 9 CARROT keys from master secret.
+ * Returns 288 bytes (9 × 32) — see carrot_keys::derive_carrot_keys for layout.
+ */
+export function derive_carrot_keys_batch(master_secret: Uint8Array): Uint8Array;
+
+/**
+ * Derive view-only CARROT keys.
+ * Returns 224 bytes (7 × 32) — see carrot_keys::derive_carrot_view_only_keys for layout.
+ */
+export function derive_carrot_view_only_keys_batch(view_balance_secret: Uint8Array, account_spend_pubkey: Uint8Array): Uint8Array;
 
 /**
  * Derive public key: base + H(derivation || index) * G
@@ -72,6 +116,21 @@ export function hash_to_point(data: Uint8Array): Uint8Array;
 export function keccak256(data: Uint8Array): Uint8Array;
 
 /**
+ * Make input context for coinbase transactions: "C" + height_LE_8 + 24 zero bytes (33 bytes).
+ */
+export function make_input_context_coinbase(block_height: bigint): Uint8Array;
+
+/**
+ * Make input context for RCT transactions: "R" + first_key_image (33 bytes).
+ */
+export function make_input_context_rct(first_key_image: Uint8Array): Uint8Array;
+
+/**
+ * Parse tx_extra binary into JSON string.
+ */
+export function parse_extra(extra_bytes: Uint8Array): string;
+
+/**
  * Pedersen commitment: C = mask*G + amount*H
  */
 export function pedersen_commit(amount: Uint8Array, mask: Uint8Array): Uint8Array;
@@ -81,6 +140,11 @@ export function point_add_compressed(p: Uint8Array, q: Uint8Array): Uint8Array;
 export function point_negate(p: Uint8Array): Uint8Array;
 
 export function point_sub_compressed(p: Uint8Array, q: Uint8Array): Uint8Array;
+
+/**
+ * Recover CARROT address spend pubkey. Returns 32 bytes or empty on invalid.
+ */
+export function recover_carrot_address_spend_pubkey(ko: Uint8Array, s_sr_ctx: Uint8Array, commitment: Uint8Array): Uint8Array;
 
 export function sc_add(a: Uint8Array, b: Uint8Array): Uint8Array;
 
@@ -105,6 +169,11 @@ export function sc_sub(a: Uint8Array, b: Uint8Array): Uint8Array;
 export function scalar_mult_base(s: Uint8Array): Uint8Array;
 
 export function scalar_mult_point(s: Uint8Array, p: Uint8Array): Uint8Array;
+
+/**
+ * Serialize tx_extra from JSON to binary. Returns empty on error.
+ */
+export function serialize_tx_extra(json_str: string): Uint8Array;
 
 /**
  * SHA-256 hash
@@ -142,8 +211,16 @@ export interface InitOutput {
     readonly blake2b_keyed: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly bulletproof_plus_prove_wasm: (a: number, b: number, c: number, d: number) => [number, number];
     readonly bulletproof_plus_verify_wasm: (a: number, b: number, c: number, d: number) => number;
+    readonly carrot_subaddress_map_batch: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly clsag_sign_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly clsag_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+    readonly cn_subaddress_map_batch: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly compute_carrot_view_tag: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly compute_tx_prefix_hash: (a: number, b: number) => [number, number];
+    readonly decrypt_carrot_amount: (a: number, b: number, c: number, d: number, e: number, f: number) => bigint;
+    readonly derive_carrot_commitment_mask: (a: number, b: number, c: bigint, d: number, e: number, f: number) => [number, number];
+    readonly derive_carrot_keys_batch: (a: number, b: number) => [number, number];
+    readonly derive_carrot_view_only_keys_batch: (a: number, b: number, c: number, d: number) => [number, number];
     readonly derive_public_key: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly derive_secret_key: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly double_scalar_mult_base: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
@@ -152,10 +229,14 @@ export interface InitOutput {
     readonly generate_key_image: (a: number, b: number, c: number, d: number) => [number, number];
     readonly hash_to_point: (a: number, b: number) => [number, number];
     readonly keccak256: (a: number, b: number) => [number, number];
+    readonly make_input_context_coinbase: (a: bigint) => [number, number];
+    readonly make_input_context_rct: (a: number, b: number) => [number, number];
+    readonly parse_extra: (a: number, b: number) => [number, number];
     readonly pedersen_commit: (a: number, b: number, c: number, d: number) => [number, number];
     readonly point_add_compressed: (a: number, b: number, c: number, d: number) => [number, number];
     readonly point_negate: (a: number, b: number) => [number, number];
     readonly point_sub_compressed: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly recover_carrot_address_spend_pubkey: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly sc_add: (a: number, b: number, c: number, d: number) => [number, number];
     readonly sc_check: (a: number, b: number) => number;
     readonly sc_invert: (a: number, b: number) => [number, number];
@@ -168,6 +249,7 @@ export interface InitOutput {
     readonly sc_sub: (a: number, b: number, c: number, d: number) => [number, number];
     readonly scalar_mult_base: (a: number, b: number) => [number, number];
     readonly scalar_mult_point: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly serialize_tx_extra: (a: number, b: number) => [number, number];
     readonly sha256: (a: number, b: number) => [number, number];
     readonly tclsag_sign_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number];
     readonly tclsag_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
@@ -178,6 +260,7 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_start: () => void;
 }
 

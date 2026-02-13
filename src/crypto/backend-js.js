@@ -1,27 +1,21 @@
 /**
- * JavaScript Crypto Backend
+ * JavaScript Crypto Backend (Minimal Fallback)
  *
- * Wraps existing pure-JS implementations behind the unified backend interface.
- * All existing code remains untouched — this is just a thin adapter.
+ * Provides only hashing primitives (keccak256, blake2b, sha256) and
+ * signature verification as pure JS. All scalar, point, commitment,
+ * and key derivation operations require a Rust-backed backend (WASM,
+ * FFI, or JSI). Call initCrypto() or setCryptoBackend() at startup.
  *
  * @module crypto/backend-js
+ * @deprecated Scalar/point operations removed. Use WASM/FFI/JSI backend.
  */
 
 import { keccak256 as jsKeccak } from '../keccak.js';
 import { blake2b as jsBlake2b } from '../blake2b.js';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { argon2id as nobleArgon2id } from '@noble/hashes/argon2.js';
-import {
-  scAdd, scSub, scMul, scMulAdd, scMulSub,
-  scReduce32, scReduce64, scInvert, scCheck, scIsZero
-} from '../transaction/serialization.js';
-import {
-  scalarMultBase, scalarMultPoint, pointAddCompressed,
-  pointSubCompressed, pointNegate, doubleScalarMultBase
-} from '../ed25519.js';
-import { hashToPoint, generateKeyImage } from '../keyimage.js';
-import { generateKeyDerivation, derivePublicKey, deriveSecretKey } from '../scanning.js';
-import { commit, zeroCommit, genCommitmentMask } from '../transaction/serialization.js';
+
+const RUST_REQUIRED = 'Rust crypto backend required. Call initCrypto() or setCryptoBackend("wasm"/"ffi"/"jsi") before using crypto operations.';
 
 export class JsCryptoBackend {
   constructor() {
@@ -40,60 +34,50 @@ export class JsCryptoBackend {
     return jsBlake2b(data, outLen, key);
   }
 
-  // Scalar ops
-  scAdd(a, b) { return scAdd(a, b); }
-  scSub(a, b) { return scSub(a, b); }
-  scMul(a, b) { return scMul(a, b); }
-  scMulAdd(a, b, c) { return scMulAdd(a, b, c); }
-  scMulSub(a, b, c) { return scMulSub(a, b, c); }
-  scReduce32(s) { return scReduce32(s); }
-  scReduce64(s) { return scReduce64(s); }
-  scInvert(a) { return scInvert(a); }
-  scCheck(s) { return scCheck(s); }
-  scIsZero(s) { return scIsZero(s); }
+  // Scalar ops — require Rust backend
+  scAdd() { throw new Error(RUST_REQUIRED); }
+  scSub() { throw new Error(RUST_REQUIRED); }
+  scMul() { throw new Error(RUST_REQUIRED); }
+  scMulAdd() { throw new Error(RUST_REQUIRED); }
+  scMulSub() { throw new Error(RUST_REQUIRED); }
+  scReduce32() { throw new Error(RUST_REQUIRED); }
+  scReduce64() { throw new Error(RUST_REQUIRED); }
+  scInvert() { throw new Error(RUST_REQUIRED); }
+  scCheck() { throw new Error(RUST_REQUIRED); }
+  scIsZero() { throw new Error(RUST_REQUIRED); }
 
-  // X25519 (pure JS fallback — Montgomery ladder with BigInt)
-  x25519ScalarMult(scalar, uCoord) {
-    return jsX25519ScalarMult(scalar, uCoord);
-  }
+  // X25519 — requires Rust backend
+  x25519ScalarMult() { throw new Error(RUST_REQUIRED); }
 
-  // Point ops
-  scalarMultBase(s) { return scalarMultBase(s); }
-  scalarMultPoint(s, p) { return scalarMultPoint(s, p); }
-  pointAddCompressed(p, q) { return pointAddCompressed(p, q); }
-  pointSubCompressed(p, q) { return pointSubCompressed(p, q); }
-  pointNegate(p) { return pointNegate(p); }
-  doubleScalarMultBase(a, p, b) {
-    // JS doubleScalarMultBase expects decompressed point object, not bytes.
-    // Compose from primitives instead: a*P + b*G
-    const aP = scalarMultPoint(a, p);
-    const bG = scalarMultBase(b);
-    return pointAddCompressed(aP, bG);
-  }
+  // Point ops — require Rust backend
+  scalarMultBase() { throw new Error(RUST_REQUIRED); }
+  scalarMultPoint() { throw new Error(RUST_REQUIRED); }
+  pointAddCompressed() { throw new Error(RUST_REQUIRED); }
+  pointSubCompressed() { throw new Error(RUST_REQUIRED); }
+  pointNegate() { throw new Error(RUST_REQUIRED); }
+  doubleScalarMultBase() { throw new Error(RUST_REQUIRED); }
 
-  // Hash-to-point & key derivation
-  hashToPoint(data) { return hashToPoint(data); }
-  generateKeyImage(pubKey, secKey) { return generateKeyImage(pubKey, secKey); }
-  generateKeyDerivation(pubKey, secKey) { return generateKeyDerivation(pubKey, secKey); }
-  derivePublicKey(derivation, outputIndex, basePub) { return derivePublicKey(derivation, outputIndex, basePub); }
-  deriveSecretKey(derivation, outputIndex, baseSec) { return deriveSecretKey(derivation, outputIndex, baseSec); }
+  // Hash-to-point & key derivation — require Rust backend
+  hashToPoint() { throw new Error(RUST_REQUIRED); }
+  generateKeyImage() { throw new Error(RUST_REQUIRED); }
+  generateKeyDerivation() { throw new Error(RUST_REQUIRED); }
+  derivePublicKey() { throw new Error(RUST_REQUIRED); }
+  deriveSecretKey() { throw new Error(RUST_REQUIRED); }
 
-  // Pedersen commitments
-  commit(amount, mask) { return commit(amount, mask); }
-  zeroCommit(amount) { return zeroCommit(amount); }
-  genCommitmentMask(sharedSecret) { return genCommitmentMask(sharedSecret); }
+  // Pedersen commitments — require Rust backend
+  commit() { throw new Error(RUST_REQUIRED); }
+  zeroCommit() { throw new Error(RUST_REQUIRED); }
+  genCommitmentMask() { throw new Error(RUST_REQUIRED); }
 
-  // ─── CLSAG/TCLSAG/BP+ — no native implementation, return null ──────────
-  // The JS fallback for these lives in transaction.js and bulletproofs_plus.js.
-  // The backend returning null signals callers to use the JS fallback path.
-  clsagSign() { return null; }
-  clsagVerify() { return null; }
-  tclsagSign() { return null; }
-  tclsagVerify() { return null; }
-  bulletproofPlusProve() { return null; }
-  bulletproofPlusVerify() { return null; }
+  // CLSAG/TCLSAG/BP+ — require Rust backend
+  clsagSign() { throw new Error(RUST_REQUIRED); }
+  clsagVerify() { throw new Error(RUST_REQUIRED); }
+  tclsagSign() { throw new Error(RUST_REQUIRED); }
+  tclsagVerify() { throw new Error(RUST_REQUIRED); }
+  bulletproofPlusProve() { throw new Error(RUST_REQUIRED); }
+  bulletproofPlusVerify() { throw new Error(RUST_REQUIRED); }
 
-  // Oracle signature verification
+  // Oracle signature verification — JS fallback (WebCrypto / Node.js crypto)
   sha256(data) { return nobleSha256(data); }
 
   // Argon2id key derivation (JS fallback via Noble — slow, use WASM/JSI when possible)
@@ -200,71 +184,6 @@ function derSignatureToRaw(der, componentLen) {
   const sTrim = sBytes[0] === 0 ? sBytes.slice(1) : sBytes;
   raw.set(sTrim, componentLen * 2 - sTrim.length);
   return raw;
-}
-
-/**
- * Pure JS X25519 scalar multiplication (Montgomery ladder with BigInt).
- * Implements Salvium's mx25519 variant: only clears bit 255, does NOT
- * clear bits 0-2 or set bit 254 (unlike RFC 7748).
- */
-function jsX25519ScalarMult(scalar, u) {
-  const p = 2n ** 255n - 19n;
-  const a24 = 121666n;
-
-  const k = new Uint8Array(scalar);
-  k[31] &= 127; // Only clear bit 255
-
-  let kVal = 0n;
-  let uVal = 0n;
-  for (let i = 0; i < 32; i++) {
-    kVal |= BigInt(k[i]) << (8n * BigInt(i));
-    uVal |= BigInt(u[i]) << (8n * BigInt(i));
-  }
-  uVal &= (1n << 255n) - 1n;
-
-  let x1 = uVal;
-  let x2 = 1n, z2 = 0n, x3 = uVal, z3 = 1n;
-  let swap = 0n;
-
-  for (let t = 254; t >= 0; t--) {
-    const kt = (kVal >> BigInt(t)) & 1n;
-    swap ^= kt;
-    if (swap) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
-    swap = kt;
-
-    const D = (p + x3 - z3) % p;
-    const B = (p + x2 - z2) % p;
-    const A = (x2 + z2) % p;
-    const C = (x3 + z3) % p;
-    const DA = (D * A) % p;
-    const CB = (C * B) % p;
-    const BB = (B * B) % p;
-    const AA = (A * A) % p;
-    x3 = ((DA + CB) % p) ** 2n % p;
-    const diff = (p + DA - CB) % p;
-    const z2_diff = (diff * diff) % p;
-    x2 = (AA * BB) % p;
-    const E = (p + AA - BB) % p;
-    z3 = (x1 * z2_diff) % p;
-    const a24E = (a24 * E) % p;
-    z2 = (E * ((BB + a24E) % p)) % p;
-  }
-
-  if (swap) { [x2, x3] = [x3, x2]; [z2, z3] = [z3, z2]; }
-
-  // modPow for inversion
-  let base = z2 % p, exp = p - 2n, result = 1n;
-  while (exp > 0n) {
-    if (exp % 2n === 1n) result = (result * base) % p;
-    exp >>= 1n;
-    base = (base * base) % p;
-  }
-  const finalResult = (x2 * result) % p;
-
-  const out = new Uint8Array(32);
-  let val = finalResult;
-  for (let i = 0; i < 32; i++) { out[i] = Number(val & 0xffn); val >>= 8n; }
-  return out;
 }
 
 /** Check if haystack contains needle bytes at any offset */

@@ -26,6 +26,9 @@ import {
 import { scalarMultBase } from '../src/ed25519.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
 import { generateKeyImage } from '../src/keyimage.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

@@ -8,6 +8,9 @@ use sha2::{Sha256, Digest};
 
 mod x25519;
 pub mod carrot_scan;
+pub mod subaddress;
+pub mod carrot_keys;
+pub mod tx_format;
 
 pub(crate) mod elligator2;
 pub mod clsag;
@@ -505,4 +508,146 @@ pub fn x25519_scalar_mult(scalar: &[u8], u_coord: &[u8]) -> Vec<u8> {
     // Salvium clamping: only clear bit 255
     s[31] &= 0x7F;
     x25519::montgomery_ladder(&s, &to32(u_coord)).to_vec()
+}
+
+// ─── Batch Subaddress Map Generation ────────────────────────────────────────
+
+/// Generate CryptoNote subaddress map in a single call.
+/// Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+#[wasm_bindgen]
+pub fn cn_subaddress_map_batch(
+    spend_pubkey: &[u8],
+    view_secret_key: &[u8],
+    major_count: u32,
+    minor_count: u32,
+) -> Vec<u8> {
+    subaddress::cn_subaddress_map_batch(
+        &to32(spend_pubkey),
+        &to32(view_secret_key),
+        major_count,
+        minor_count,
+    )
+}
+
+/// Generate CARROT subaddress map in a single call.
+/// Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+#[wasm_bindgen]
+pub fn carrot_subaddress_map_batch(
+    account_spend_pubkey: &[u8],
+    account_view_pubkey: &[u8],
+    generate_address_secret: &[u8],
+    major_count: u32,
+    minor_count: u32,
+) -> Vec<u8> {
+    subaddress::carrot_subaddress_map_batch(
+        &to32(account_spend_pubkey),
+        &to32(account_view_pubkey),
+        &to32(generate_address_secret),
+        major_count,
+        minor_count,
+    )
+}
+
+// ─── CARROT Key Derivation ──────────────────────────────────────────────────
+
+/// Derive all 9 CARROT keys from master secret.
+/// Returns 288 bytes (9 × 32) — see carrot_keys::derive_carrot_keys for layout.
+#[wasm_bindgen]
+pub fn derive_carrot_keys_batch(master_secret: &[u8]) -> Vec<u8> {
+    carrot_keys::derive_carrot_keys(&to32(master_secret)).to_vec()
+}
+
+/// Derive view-only CARROT keys.
+/// Returns 224 bytes (7 × 32) — see carrot_keys::derive_carrot_view_only_keys for layout.
+#[wasm_bindgen]
+pub fn derive_carrot_view_only_keys_batch(
+    view_balance_secret: &[u8],
+    account_spend_pubkey: &[u8],
+) -> Vec<u8> {
+    carrot_keys::derive_carrot_view_only_keys(
+        &to32(view_balance_secret),
+        &to32(account_spend_pubkey),
+    ).to_vec()
+}
+
+// ─── CARROT Helpers ─────────────────────────────────────────────────────────
+
+/// Compute CARROT 3-byte view tag.
+#[wasm_bindgen]
+pub fn compute_carrot_view_tag(s_sr_unctx: &[u8], input_context: &[u8], ko: &[u8]) -> Vec<u8> {
+    carrot_scan::compute_view_tag(&to32(s_sr_unctx), input_context, &to32(ko)).to_vec()
+}
+
+/// Decrypt CARROT amount from encrypted 8 bytes.
+#[wasm_bindgen]
+pub fn decrypt_carrot_amount(enc_amount: &[u8], s_sr_ctx: &[u8], ko: &[u8]) -> u64 {
+    let mut enc = [0u8; 8];
+    let len = enc_amount.len().min(8);
+    enc[..len].copy_from_slice(&enc_amount[..len]);
+    carrot_scan::decrypt_amount(&enc, &to32(s_sr_ctx), &to32(ko))
+}
+
+/// Derive CARROT commitment mask. Returns 32-byte scalar.
+#[wasm_bindgen]
+pub fn derive_carrot_commitment_mask(
+    s_sr_ctx: &[u8],
+    amount: u64,
+    address_spend_pubkey: &[u8],
+    enote_type: u8,
+) -> Vec<u8> {
+    carrot_scan::derive_commitment_mask(
+        &to32(s_sr_ctx), amount, &to32(address_spend_pubkey), enote_type,
+    ).to_bytes().to_vec()
+}
+
+/// Recover CARROT address spend pubkey. Returns 32 bytes or empty on invalid.
+#[wasm_bindgen]
+pub fn recover_carrot_address_spend_pubkey(
+    ko: &[u8],
+    s_sr_ctx: &[u8],
+    commitment: &[u8],
+) -> Vec<u8> {
+    match carrot_scan::recover_address_spend_pubkey(&to32(ko), &to32(s_sr_ctx), &to32(commitment)) {
+        Some(pk) => pk.to_vec(),
+        None => Vec::new(),
+    }
+}
+
+/// Make input context for RCT transactions: "R" + first_key_image (33 bytes).
+#[wasm_bindgen]
+pub fn make_input_context_rct(first_key_image: &[u8]) -> Vec<u8> {
+    let mut ctx = Vec::with_capacity(33);
+    ctx.push(0x52); // 'R'
+    ctx.extend_from_slice(&to32(first_key_image));
+    ctx
+}
+
+/// Make input context for coinbase transactions: "C" + height_LE_8 + 24 zero bytes (33 bytes).
+#[wasm_bindgen]
+pub fn make_input_context_coinbase(block_height: u64) -> Vec<u8> {
+    let mut ctx = vec![0u8; 33];
+    ctx[0] = 0x43; // 'C'
+    ctx[1..9].copy_from_slice(&block_height.to_le_bytes());
+    // bytes 9..33 are already zero
+    ctx
+}
+
+// ─── Transaction Extra Parsing & Serialization ──────────────────────────────
+
+/// Parse tx_extra binary into JSON string.
+#[wasm_bindgen]
+pub fn parse_extra(extra_bytes: &[u8]) -> String {
+    tx_format::parse_extra(extra_bytes)
+}
+
+/// Serialize tx_extra from JSON to binary. Returns empty on error.
+#[wasm_bindgen]
+pub fn serialize_tx_extra(json_str: &str) -> Vec<u8> {
+    tx_format::serialize_tx_extra(json_str).unwrap_or_default()
+}
+
+/// Compute keccak256 of transaction prefix bytes.
+#[wasm_bindgen]
+pub fn compute_tx_prefix_hash(data: &[u8]) -> Vec<u8> {
+    tx_format::compute_tx_prefix_hash(data).to_vec()
 }

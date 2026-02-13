@@ -23,6 +23,7 @@ import {
 } from './constants.js';
 
 import { decodeVarint } from './serialization.js';
+import { getCryptoBackend, getCurrentBackendType } from '../crypto/provider.js';
 
 // =============================================================================
 // TRANSACTION PARSING
@@ -299,6 +300,39 @@ export function parseTransaction(data) {
  * @returns {Array} Parsed extra fields
  */
 export function parseExtra(extraBytes) {
+  // Try Rust backend first (faster, matches C++ behavior exactly)
+  const bt = getCurrentBackendType();
+  if (bt === 'ffi' || bt === 'wasm') {
+    try {
+      const backend = getCryptoBackend();
+      if (backend.parseExtra) {
+        const jsonStr = backend.parseExtra(extraBytes);
+        if (jsonStr && jsonStr !== '[]') {
+          const entries = JSON.parse(jsonStr);
+          // Convert hex strings back to Uint8Array for JS API compatibility
+          for (const entry of entries) {
+            if (entry.key && typeof entry.key === 'string') {
+              entry.key = hexToBytes(entry.key);
+            }
+            if (entry.keys && Array.isArray(entry.keys)) {
+              entry.keys = entry.keys.map(k => typeof k === 'string' ? hexToBytes(k) : k);
+            }
+            if (entry.data && typeof entry.data === 'string') {
+              entry.data = hexToBytes(entry.data);
+            }
+            if (entry.paymentId && typeof entry.paymentId === 'string') {
+              entry.paymentId = hexToBytes(entry.paymentId);
+            }
+          }
+          return entries;
+        }
+      }
+    } catch (_e) {
+      // Fall through to JS implementation
+    }
+  }
+
+  // JS fallback
   const extra = [];
   let offset = 0;
 

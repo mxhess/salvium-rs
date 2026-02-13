@@ -60,7 +60,8 @@ export async function setCryptoBackend(type) {
  */
 export function getCryptoBackend() {
   if (!currentBackend) {
-    // Sync fallback to JS — WASM is set as default via initCrypto()
+    // Sync fallback to JS — provides only hashing (keccak/blake2b).
+    // Scalar/point operations will throw; call initCrypto() for full crypto.
     currentBackend = new JsCryptoBackend();
   }
   return currentBackend;
@@ -290,6 +291,53 @@ export function computeCarrotMainAddressViewPubkey(k_vi) {
 // X25519
 export function x25519ScalarMult(scalar, uCoord) {
   return getCryptoBackend().x25519ScalarMult(scalar, uCoord);
+}
+
+// Batch subaddress map generation
+export function cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount) {
+  return getCryptoBackend().cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount);
+}
+export function carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount) {
+  return getCryptoBackend().carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount);
+}
+
+// CARROT key derivation (batch)
+export function deriveCarrotKeysBatch(masterSecret) {
+  return getCryptoBackend().deriveCarrotKeysBatch(masterSecret);
+}
+export function deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey) {
+  return getCryptoBackend().deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey);
+}
+
+// CARROT helpers
+export function computeCarrotViewTag(sSrUnctx, inputContext, ko) {
+  return getCryptoBackend().computeCarrotViewTag(sSrUnctx, inputContext, ko);
+}
+export function decryptCarrotAmount(encAmount, sSrCtx, ko) {
+  return getCryptoBackend().decryptCarrotAmount(encAmount, sSrCtx, ko);
+}
+export function deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType) {
+  return getCryptoBackend().deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType);
+}
+export function recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment) {
+  return getCryptoBackend().recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment);
+}
+export function makeInputContextRct(firstKeyImage) {
+  return getCryptoBackend().makeInputContextRct(firstKeyImage);
+}
+export function makeInputContextCoinbase(blockHeight) {
+  return getCryptoBackend().makeInputContextCoinbase(blockHeight);
+}
+
+// Transaction extra parsing & serialization
+export function parseExtra(extraBytes) {
+  return getCryptoBackend().parseExtra(extraBytes);
+}
+export function serializeTxExtra(jsonStr) {
+  return getCryptoBackend().serializeTxExtra(jsonStr);
+}
+export function computeTxPrefixHash(data) {
+  return getCryptoBackend().computeTxPrefixHash(data);
 }
 
 // Scalar add (simple wrapper around scAdd)

@@ -12,7 +12,7 @@
 import { WalletSync, SYNC_STATUS, DEFAULT_BATCH_SIZE } from '../src/wallet-sync.js';
 import { MemoryStorage } from '../src/wallet-store.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
-import { randomScalar, scalarMultBase } from '../src/crypto/index.js';
+import { randomScalar, scalarMultBase, initCrypto } from '../src/crypto/index.js';
 import { bytesToHex } from '../src/address.js';
 
 const args = process.argv.slice(2);
@@ -115,4 +115,5 @@ async function main() {
   process.exit(pass ? 0 : 1);
 }
 
+await initCrypto();
 main().catch(e => { console.error('Fatal:', e); process.exit(1); });

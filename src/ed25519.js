@@ -1,5 +1,11 @@
 /**
- * Ed25519 Elliptic Curve Operations
+ * Ed25519 Elliptic Curve Operations (DEPRECATED)
+ *
+ * @deprecated Use the Rust crypto backend (WASM/FFI/JSI) instead.
+ * All scalar and point operations are now implemented in Rust for
+ * correctness and performance. This module is kept for reference
+ * and as a fallback for direct-import consumers (scanning.js, etc.).
+ * It will be removed in a future version.
  *
  * Uses @noble/ed25519 for optimized scalar multiplication (hot path).
  * Falls back to BigInt implementation for specialized operations.

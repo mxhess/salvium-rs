@@ -46,6 +46,20 @@ export {
   // CARROT key derivation
   computeCarrotSpendPubkey, computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey,
+  // Batch operations
+  cnSubaddressMapBatch, carrotSubaddressMapBatch,
+  deriveCarrotKeysBatch, deriveCarrotViewOnlyKeysBatch,
+  // CARROT helpers
+  computeCarrotViewTag as computeCarrotViewTagRust,
+  decryptCarrotAmount as decryptCarrotAmountRust,
+  deriveCarrotCommitmentMask as deriveCarrotCommitmentMaskRust,
+  recoverCarrotAddressSpendPubkey as recoverCarrotAddressSpendPubkeyRust,
+  makeInputContextRct as makeInputContextRctRust,
+  makeInputContextCoinbase as makeInputContextCoinbaseRust,
+  // Transaction extra parsing & serialization
+  parseExtra as parseExtraRust,
+  serializeTxExtra as serializeTxExtraRust,
+  computeTxPrefixHash as computeTxPrefixHashRust,
 } from './provider.js';
 
 // Backends (for direct access / testing)

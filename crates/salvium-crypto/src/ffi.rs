@@ -1021,6 +1021,277 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
     })
 }
 
+// ─── Batch Subaddress Map Generation ────────────────────────────────────────
+
+/// Generate CryptoNote subaddress map as flat binary.
+/// Output: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+/// out_ptr receives Rust-allocated buffer pointer, out_len receives length.
+/// Caller must free with salvium_storage_free_buf.
+/// Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_cn_subaddress_map_batch(
+    spend_pubkey: *const u8,
+    view_secret_key: *const u8,
+    major_count: u32,
+    minor_count: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let sp = crate::to32(slice::from_raw_parts(spend_pubkey, 32));
+        let vk = crate::to32(slice::from_raw_parts(view_secret_key, 32));
+        let result = crate::subaddress::cn_subaddress_map_batch(&sp, &vk, major_count, minor_count);
+        let len = result.len();
+        let buf = result.into_boxed_slice();
+        let raw = Box::into_raw(buf);
+        *out_ptr = (*raw).as_mut_ptr();
+        *out_len = len;
+        0
+    })
+}
+
+/// Generate CARROT subaddress map as flat binary.
+/// Output: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+/// out_ptr receives Rust-allocated buffer pointer, out_len receives length.
+/// Caller must free with salvium_storage_free_buf.
+/// Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_carrot_subaddress_map_batch(
+    account_spend_pubkey: *const u8,
+    account_view_pubkey: *const u8,
+    generate_address_secret: *const u8,
+    major_count: u32,
+    minor_count: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let sp = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
+        let vp = crate::to32(slice::from_raw_parts(account_view_pubkey, 32));
+        let ga = crate::to32(slice::from_raw_parts(generate_address_secret, 32));
+        let result = crate::subaddress::carrot_subaddress_map_batch(&sp, &vp, &ga, major_count, minor_count);
+        let len = result.len();
+        let buf = result.into_boxed_slice();
+        let raw = Box::into_raw(buf);
+        *out_ptr = (*raw).as_mut_ptr();
+        *out_len = len;
+        0
+    })
+}
+
+// ─── CARROT Key Derivation ──────────────────────────────────────────────────
+
+/// Derive all 9 CARROT keys from master secret.
+/// out: 288 bytes (9 × 32). Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_derive_carrot_keys_batch(
+    master_secret: *const u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let ms = crate::to32(slice::from_raw_parts(master_secret, 32));
+        let result = crate::carrot_keys::derive_carrot_keys(&ms);
+        ptr::copy_nonoverlapping(result.as_ptr(), out, 288);
+        0
+    })
+}
+
+/// Derive view-only CARROT keys.
+/// out: 224 bytes (7 × 32). Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_derive_carrot_view_only_keys_batch(
+    view_balance_secret: *const u8,
+    account_spend_pubkey: *const u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let vbs = crate::to32(slice::from_raw_parts(view_balance_secret, 32));
+        let ks = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
+        let result = crate::carrot_keys::derive_carrot_view_only_keys(&vbs, &ks);
+        ptr::copy_nonoverlapping(result.as_ptr(), out, 224);
+        0
+    })
+}
+
+// ─── CARROT Helpers ─────────────────────────────────────────────────────────
+
+/// Compute CARROT 3-byte view tag.
+/// out: 3 bytes. Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_compute_carrot_view_tag(
+    s_sr_unctx: *const u8,
+    input_context: *const u8,
+    input_context_len: usize,
+    ko: *const u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let s = crate::to32(slice::from_raw_parts(s_sr_unctx, 32));
+        let ic = slice::from_raw_parts(input_context, input_context_len);
+        let ko_arr = crate::to32(slice::from_raw_parts(ko, 32));
+        let vt = crate::carrot_scan::compute_view_tag(&s, ic, &ko_arr);
+        ptr::copy_nonoverlapping(vt.as_ptr(), out, 3);
+        0
+    })
+}
+
+/// Decrypt CARROT amount from encrypted 8 bytes.
+/// Returns the decrypted amount as u64.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_decrypt_carrot_amount(
+    enc_amount: *const u8,
+    s_sr_ctx: *const u8,
+    ko: *const u8,
+) -> u64 {
+    let enc = {
+        let s = slice::from_raw_parts(enc_amount, 8);
+        let mut a = [0u8; 8];
+        a.copy_from_slice(s);
+        a
+    };
+    let s = crate::to32(slice::from_raw_parts(s_sr_ctx, 32));
+    let ko_arr = crate::to32(slice::from_raw_parts(ko, 32));
+    crate::carrot_scan::decrypt_amount(&enc, &s, &ko_arr)
+}
+
+/// Derive CARROT commitment mask. out: 32-byte scalar. Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_derive_carrot_commitment_mask(
+    s_sr_ctx: *const u8,
+    amount: u64,
+    address_spend_pubkey: *const u8,
+    enote_type: u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let s = crate::to32(slice::from_raw_parts(s_sr_ctx, 32));
+        let addr = crate::to32(slice::from_raw_parts(address_spend_pubkey, 32));
+        let mask = crate::carrot_scan::derive_commitment_mask(&s, amount, &addr, enote_type);
+        let bytes = mask.to_bytes();
+        ptr::copy_nonoverlapping(bytes.as_ptr(), out, 32);
+        0
+    })
+}
+
+/// Recover CARROT address spend pubkey. out: 32 bytes.
+/// Returns 0 on success, -1 on invalid point.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_recover_carrot_address_spend_pubkey(
+    ko: *const u8,
+    s_sr_ctx: *const u8,
+    commitment: *const u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let ko_arr = crate::to32(slice::from_raw_parts(ko, 32));
+        let s = crate::to32(slice::from_raw_parts(s_sr_ctx, 32));
+        let c = crate::to32(slice::from_raw_parts(commitment, 32));
+        match crate::carrot_scan::recover_address_spend_pubkey(&ko_arr, &s, &c) {
+            Some(pk) => {
+                ptr::copy_nonoverlapping(pk.as_ptr(), out, 32);
+                0
+            }
+            None => -1,
+        }
+    })
+}
+
+/// Make input context for RCT transactions: "R" + first_key_image (33 bytes).
+/// out: 33 bytes. Returns 0.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_make_input_context_rct(
+    first_key_image: *const u8,
+    out: *mut u8,
+) -> i32 {
+    let ki = slice::from_raw_parts(first_key_image, 32);
+    *out = 0x52; // 'R'
+    ptr::copy_nonoverlapping(ki.as_ptr(), out.add(1), 32);
+    0
+}
+
+/// Make input context for coinbase: "C" + height_LE_8 + 24 zero bytes (33 bytes).
+/// out: 33 bytes. Returns 0.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_make_input_context_coinbase(
+    block_height: u64,
+    out: *mut u8,
+) -> i32 {
+    // Zero-fill first
+    ptr::write_bytes(out, 0, 33);
+    *out = 0x43; // 'C'
+    let height_bytes = block_height.to_le_bytes();
+    ptr::copy_nonoverlapping(height_bytes.as_ptr(), out.add(1), 8);
+    0
+}
+
+// ─── Transaction Extra Parsing & Serialization ──────────────────────────────
+
+/// Parse tx_extra binary into JSON string.
+/// Rust allocates result buffer; caller frees with salvium_storage_free_buf.
+/// Returns 0 on success.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_parse_extra(
+    extra: *const u8,
+    extra_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let data = slice::from_raw_parts(extra, extra_len);
+        let json = crate::tx_format::parse_extra(data);
+        let bytes = json.into_bytes().into_boxed_slice();
+        let len = bytes.len();
+        let raw = Box::into_raw(bytes);
+        *out_ptr = (*raw).as_mut_ptr();
+        *out_len = len;
+        0
+    })
+}
+
+/// Serialize tx_extra from JSON string to binary.
+/// Rust allocates result buffer; caller frees with salvium_storage_free_buf.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_serialize_tx_extra(
+    json: *const u8,
+    json_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::tx_format::serialize_tx_extra(json_str) {
+            Ok(result) => {
+                let len = result.len();
+                let buf = result.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(_) => -1,
+        }
+    })
+}
+
+/// Compute keccak256 of transaction prefix bytes. out: 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_compute_tx_prefix_hash(
+    data: *const u8,
+    data_len: usize,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let input = slice::from_raw_parts(data, data_len);
+        let hash = crate::tx_format::compute_tx_prefix_hash(input);
+        ptr::copy_nonoverlapping(hash.as_ptr(), out, 32);
+        0
+    })
+}
+
 // ─── Storage (SQLCipher) ────────────────────────────────────────────────────
 
 /// Open/create an encrypted SQLite database.

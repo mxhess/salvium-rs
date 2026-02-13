@@ -33,6 +33,9 @@ import {
   ADDRESS_TYPE,
   ADDRESS_FORMAT
 } from '../src/index.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

@@ -68,6 +68,10 @@ import { hashToPoint, generateKeyImage } from '../src/keyimage.js';
 import { deriveKeys } from '../src/carrot.js';
 import { generateSeed } from '../src/carrot.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
+import { initCrypto } from '../src/crypto/index.js';
+
+// Initialize Rust crypto backend (required for carrot.js key derivation)
+await initCrypto();
 
 let passed = 0;
 let failed = 0;

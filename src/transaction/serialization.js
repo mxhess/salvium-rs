@@ -15,6 +15,10 @@
 import { keccak256 } from '../keccak.js';
 import { scalarMultBase, scalarMultPoint, pointAddCompressed } from '../ed25519.js';
 import { bytesToHex, hexToBytes } from '../address.js';
+// NOTE: provider.js is a safe import here despite the circular path through backend-js.js.
+// ESM handles circular deps via live bindings — getCryptoBackend/getCurrentBackendType are
+// only accessed at runtime (in function bodies), well after all modules are initialized.
+import { getCryptoBackend, getCurrentBackendType } from '../crypto/provider.js';
 
 import {
   L,
@@ -508,6 +512,36 @@ export function serializeGenInput(height) {
  * @returns {Uint8Array} Serialized extra field
  */
 export function serializeTxExtra(extra) {
+  // Try Rust backend first (matches C++ behavior exactly)
+  const bt = getCurrentBackendType();
+  if (bt === 'ffi' || bt === 'wasm') {
+    try {
+      const backend = getCryptoBackend();
+      if (backend.serializeTxExtra) {
+        // Convert JS object to JSON with hex strings for Rust
+        const jsonObj = {};
+        if (extra.txPubKey) {
+          jsonObj.txPubKey = typeof extra.txPubKey === 'string'
+            ? extra.txPubKey : bytesToHex(extra.txPubKey);
+        }
+        if (extra.additionalPubKeys && extra.additionalPubKeys.length > 0) {
+          jsonObj.additionalPubKeys = extra.additionalPubKeys.map(
+            pk => typeof pk === 'string' ? pk : bytesToHex(pk)
+          );
+        }
+        if (extra.paymentId) {
+          jsonObj.paymentId = typeof extra.paymentId === 'string'
+            ? extra.paymentId : bytesToHex(extra.paymentId);
+        }
+        const result = backend.serializeTxExtra(JSON.stringify(jsonObj));
+        if (result && result.length > 0) return result;
+      }
+    } catch (_e) {
+      // Fall through to JS implementation
+    }
+  }
+
+  // JS fallback
   const chunks = [];
   const additionalKeys = extra.additionalPubKeys || [];
 
@@ -671,6 +705,17 @@ export function serializeTxPrefix(tx) {
  */
 export function getTxPrefixHash(tx) {
   if (tx instanceof Uint8Array) {
+    // Try Rust backend for raw bytes (pure keccak256, faster)
+    const bt = getCurrentBackendType();
+    if (bt === 'ffi' || bt === 'wasm') {
+      try {
+        const backend = getCryptoBackend();
+        if (backend.computeTxPrefixHash) {
+          const result = backend.computeTxPrefixHash(tx);
+          if (result && result.length === 32) return result;
+        }
+      } catch (_e) { /* fall through */ }
+    }
     return keccak256(tx);
   }
 

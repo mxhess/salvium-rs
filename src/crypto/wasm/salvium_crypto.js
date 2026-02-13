@@ -92,6 +92,29 @@ export function bulletproof_plus_verify_wasm(proof_data, commitments_flat) {
 }
 
 /**
+ * Generate CARROT subaddress map in a single call.
+ * Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ * @param {Uint8Array} account_spend_pubkey
+ * @param {Uint8Array} account_view_pubkey
+ * @param {Uint8Array} generate_address_secret
+ * @param {number} major_count
+ * @param {number} minor_count
+ * @returns {Uint8Array}
+ */
+export function carrot_subaddress_map_batch(account_spend_pubkey, account_view_pubkey, generate_address_secret, major_count, minor_count) {
+    const ptr0 = passArray8ToWasm0(account_spend_pubkey, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(account_view_pubkey, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(generate_address_secret, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.carrot_subaddress_map_batch(ptr0, len0, ptr1, len1, ptr2, len2, major_count, minor_count);
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * @param {Uint8Array} message
  * @param {Uint8Array} ring_flat
  * @param {Uint8Array} secret_key
@@ -141,6 +164,130 @@ export function clsag_verify_wasm(message, sig_bytes, ring_flat, commitments_fla
     const len4 = WASM_VECTOR_LEN;
     const ret = wasm.clsag_verify_wasm(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
     return ret !== 0;
+}
+
+/**
+ * Generate CryptoNote subaddress map in a single call.
+ * Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
+ * @param {Uint8Array} spend_pubkey
+ * @param {Uint8Array} view_secret_key
+ * @param {number} major_count
+ * @param {number} minor_count
+ * @returns {Uint8Array}
+ */
+export function cn_subaddress_map_batch(spend_pubkey, view_secret_key, major_count, minor_count) {
+    const ptr0 = passArray8ToWasm0(spend_pubkey, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(view_secret_key, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.cn_subaddress_map_batch(ptr0, len0, ptr1, len1, major_count, minor_count);
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Compute CARROT 3-byte view tag.
+ * @param {Uint8Array} s_sr_unctx
+ * @param {Uint8Array} input_context
+ * @param {Uint8Array} ko
+ * @returns {Uint8Array}
+ */
+export function compute_carrot_view_tag(s_sr_unctx, input_context, ko) {
+    const ptr0 = passArray8ToWasm0(s_sr_unctx, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(input_context, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(ko, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_carrot_view_tag(ptr0, len0, ptr1, len1, ptr2, len2);
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
+ * Compute keccak256 of transaction prefix bytes.
+ * @param {Uint8Array} data
+ * @returns {Uint8Array}
+ */
+export function compute_tx_prefix_hash(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_tx_prefix_hash(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Decrypt CARROT amount from encrypted 8 bytes.
+ * @param {Uint8Array} enc_amount
+ * @param {Uint8Array} s_sr_ctx
+ * @param {Uint8Array} ko
+ * @returns {bigint}
+ */
+export function decrypt_carrot_amount(enc_amount, s_sr_ctx, ko) {
+    const ptr0 = passArray8ToWasm0(enc_amount, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(s_sr_ctx, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(ko, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decrypt_carrot_amount(ptr0, len0, ptr1, len1, ptr2, len2);
+    return BigInt.asUintN(64, ret);
+}
+
+/**
+ * Derive CARROT commitment mask. Returns 32-byte scalar.
+ * @param {Uint8Array} s_sr_ctx
+ * @param {bigint} amount
+ * @param {Uint8Array} address_spend_pubkey
+ * @param {number} enote_type
+ * @returns {Uint8Array}
+ */
+export function derive_carrot_commitment_mask(s_sr_ctx, amount, address_spend_pubkey, enote_type) {
+    const ptr0 = passArray8ToWasm0(s_sr_ctx, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(address_spend_pubkey, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.derive_carrot_commitment_mask(ptr0, len0, amount, ptr1, len1, enote_type);
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Derive all 9 CARROT keys from master secret.
+ * Returns 288 bytes (9 × 32) — see carrot_keys::derive_carrot_keys for layout.
+ * @param {Uint8Array} master_secret
+ * @returns {Uint8Array}
+ */
+export function derive_carrot_keys_batch(master_secret) {
+    const ptr0 = passArray8ToWasm0(master_secret, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.derive_carrot_keys_batch(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Derive view-only CARROT keys.
+ * Returns 224 bytes (7 × 32) — see carrot_keys::derive_carrot_view_only_keys for layout.
+ * @param {Uint8Array} view_balance_secret
+ * @param {Uint8Array} account_spend_pubkey
+ * @returns {Uint8Array}
+ */
+export function derive_carrot_view_only_keys_batch(view_balance_secret, account_spend_pubkey) {
+    const ptr0 = passArray8ToWasm0(view_balance_secret, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(account_spend_pubkey, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.derive_carrot_view_only_keys_batch(ptr0, len0, ptr1, len1);
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
 }
 
 /**
@@ -278,6 +425,52 @@ export function keccak256(data) {
 }
 
 /**
+ * Make input context for coinbase transactions: "C" + height_LE_8 + 24 zero bytes (33 bytes).
+ * @param {bigint} block_height
+ * @returns {Uint8Array}
+ */
+export function make_input_context_coinbase(block_height) {
+    const ret = wasm.make_input_context_coinbase(block_height);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+}
+
+/**
+ * Make input context for RCT transactions: "R" + first_key_image (33 bytes).
+ * @param {Uint8Array} first_key_image
+ * @returns {Uint8Array}
+ */
+export function make_input_context_rct(first_key_image) {
+    const ptr0 = passArray8ToWasm0(first_key_image, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.make_input_context_rct(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Parse tx_extra binary into JSON string.
+ * @param {Uint8Array} extra_bytes
+ * @returns {string}
+ */
+export function parse_extra(extra_bytes) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(extra_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_extra(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Pedersen commitment: C = mask*G + amount*H
  * @param {Uint8Array} amount
  * @param {Uint8Array} mask
@@ -337,6 +530,26 @@ export function point_sub_compressed(p, q) {
     var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v3;
+}
+
+/**
+ * Recover CARROT address spend pubkey. Returns 32 bytes or empty on invalid.
+ * @param {Uint8Array} ko
+ * @param {Uint8Array} s_sr_ctx
+ * @param {Uint8Array} commitment
+ * @returns {Uint8Array}
+ */
+export function recover_carrot_address_spend_pubkey(ko, s_sr_ctx, commitment) {
+    const ptr0 = passArray8ToWasm0(ko, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(s_sr_ctx, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.recover_carrot_address_spend_pubkey(ptr0, len0, ptr1, len1, ptr2, len2);
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
 }
 
 /**
@@ -513,6 +726,20 @@ export function scalar_mult_point(s, p) {
     var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v3;
+}
+
+/**
+ * Serialize tx_extra from JSON to binary. Returns empty on error.
+ * @param {string} json_str
+ * @returns {Uint8Array}
+ */
+export function serialize_tx_extra(json_str) {
+    const ptr0 = passStringToWasm0(json_str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.serialize_tx_extra(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
@@ -789,6 +1016,43 @@ function passArray8ToWasm0(arg, malloc) {
     return ptr;
 }
 
+function passStringToWasm0(arg, malloc, realloc) {
+    if (realloc === undefined) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr = malloc(buf.length, 1) >>> 0;
+        getUint8ArrayMemory0().subarray(ptr, ptr + buf.length).set(buf);
+        WASM_VECTOR_LEN = buf.length;
+        return ptr;
+    }
+
+    let len = arg.length;
+    let ptr = malloc(len, 1) >>> 0;
+
+    const mem = getUint8ArrayMemory0();
+
+    let offset = 0;
+
+    for (; offset < len; offset++) {
+        const code = arg.charCodeAt(offset);
+        if (code > 0x7F) break;
+        mem[ptr + offset] = code;
+    }
+    if (offset !== len) {
+        if (offset !== 0) {
+            arg = arg.slice(offset);
+        }
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
+        const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
+        const ret = cachedTextEncoder.encodeInto(arg, view);
+
+        offset += ret.written;
+        ptr = realloc(ptr, len, offset, 1) >>> 0;
+    }
+
+    WASM_VECTOR_LEN = offset;
+    return ptr;
+}
+
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
@@ -801,6 +1065,19 @@ function decodeText(ptr, len) {
         numBytesDecoded = len;
     }
     return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+}
+
+const cachedTextEncoder = new TextEncoder();
+
+if (!('encodeInto' in cachedTextEncoder)) {
+    cachedTextEncoder.encodeInto = function (arg, view) {
+        const buf = cachedTextEncoder.encode(arg);
+        view.set(buf);
+        return {
+            read: arg.length,
+            written: buf.length
+        };
+    };
 }
 
 let WASM_VECTOR_LEN = 0;

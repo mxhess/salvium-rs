@@ -128,12 +128,14 @@ async function runIntegrationTest() {
   console.log('║           Salvium Wallet Sync Integration Test             ║');
   console.log('╚════════════════════════════════════════════════════════════╝\n');
 
-  // Initialize crypto backend (WASM by default, CRYPTO_BACKEND=js|ffi to override)
+  // Initialize crypto backend (WASM by default, CRYPTO_BACKEND=ffi to override)
+  // Note: JS backend no longer supports scalar/point ops (Phase 6 deprecation),
+  // so we always init WASM unless FFI is explicitly requested.
   const requestedBackend = process.env.CRYPTO_BACKEND || 'wasm';
   if (requestedBackend === 'ffi') {
     await setCryptoBackend('ffi');
-  } else if (requestedBackend === 'wasm') {
-    await initCrypto();  // Loads WASM, falls back to JS
+  } else {
+    await initCrypto();  // Loads WASM (required for key derivation)
   }
   console.log(`Crypto backend: ${getCurrentBackendType()}\n`);
 

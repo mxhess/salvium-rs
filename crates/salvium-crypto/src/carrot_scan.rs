@@ -69,7 +69,7 @@ impl CarrotScanResult {
 // ─── Transcript builder (SpFixedTranscript) ─────────────────────────────────
 
 /// Build `[domain_len_byte] + domain + data...`
-fn build_transcript(domain: &[u8], data: &[&[u8]]) -> Vec<u8> {
+pub fn build_transcript(domain: &[u8], data: &[&[u8]]) -> Vec<u8> {
     let total: usize = 1 + domain.len() + data.iter().map(|d| d.len()).sum::<usize>();
     let mut buf = Vec::with_capacity(total);
     buf.push(domain.len() as u8);
@@ -118,7 +118,7 @@ fn derive_bytes_8(key: &[u8], domain: &[u8], data: &[&[u8]]) -> [u8; 8] {
 // ─── Core scanning steps ────────────────────────────────────────────────────
 
 /// Step 2: View tag test (3-byte fast filter).
-fn compute_view_tag(s_sr_unctx: &[u8; 32], input_context: &[u8], ko: &[u8; 32]) -> [u8; 3] {
+pub fn compute_view_tag(s_sr_unctx: &[u8; 32], input_context: &[u8], ko: &[u8; 32]) -> [u8; 3] {
     let transcript = build_transcript(DOMAIN_VIEW_TAG, &[input_context, ko]);
     let hash = blake2b_keyed(&transcript, 3, s_sr_unctx);
     [hash[0], hash[1], hash[2]]
@@ -145,7 +145,7 @@ fn derive_extension_t(s_sr_ctx: &[u8; 32], commitment: &[u8; 32]) -> Scalar {
 
 /// Step 4: Recover address spend pubkey.
 /// K^j_s = Ko - (k^o_g * G + k^o_t * T)
-fn recover_address_spend_pubkey(
+pub fn recover_address_spend_pubkey(
     ko: &[u8; 32],
     s_sr_ctx: &[u8; 32],
     commitment: &[u8; 32],
@@ -168,7 +168,7 @@ fn recover_address_spend_pubkey(
 }
 
 /// Step 6: Decrypt amount.
-fn decrypt_amount(
+pub fn decrypt_amount(
     enc_amount: &[u8; 8],
     s_sr_ctx: &[u8; 32],
     ko: &[u8; 32],
@@ -182,7 +182,7 @@ fn decrypt_amount(
 }
 
 /// Step 7a: Derive commitment mask.
-fn derive_commitment_mask(
+pub fn derive_commitment_mask(
     s_sr_ctx: &[u8; 32],
     amount: u64,
     address_spend_pubkey: &[u8; 32],

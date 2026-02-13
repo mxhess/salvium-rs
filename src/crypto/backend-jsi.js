@@ -96,6 +96,61 @@ export class JsiCryptoBackend {
     return this.native.deriveSecretKey(derivation, outputIndex, baseSec);
   }
 
+  // ─── Batch Subaddress Map Generation ────────────────────────────────────
+
+  cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount) {
+    const buf = this.native.cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount);
+    return _parseSubaddressMapBufferJsi(buf);
+  }
+
+  carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount) {
+    const buf = this.native.carrotSubaddressMapBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorCount, minorCount);
+    return _parseSubaddressMapBufferJsi(buf);
+  }
+
+  // ─── CARROT Key Derivation (Batch) ────────────────────────────────────
+
+  deriveCarrotKeysBatch(masterSecret) {
+    return this.native.deriveCarrotKeysBatch(masterSecret);
+  }
+
+  deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey) {
+    return this.native.deriveCarrotViewOnlyKeysBatch(viewBalanceSecret, accountSpendPubkey);
+  }
+
+  // ─── CARROT Helpers ────────────────────────────────────────────────────
+
+  computeCarrotViewTag(sSrUnctx, inputContext, ko) {
+    return this.native.computeCarrotViewTag(sSrUnctx, inputContext, ko);
+  }
+  decryptCarrotAmount(encAmount, sSrCtx, ko) {
+    return this.native.decryptCarrotAmount(encAmount, sSrCtx, ko);
+  }
+  deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType) {
+    return this.native.deriveCarrotCommitmentMask(sSrCtx, amount, addressSpendPubkey, enoteType);
+  }
+  recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment) {
+    return this.native.recoverCarrotAddressSpendPubkey(ko, sSrCtx, commitment);
+  }
+  makeInputContextRct(firstKeyImage) {
+    return this.native.makeInputContextRct(firstKeyImage);
+  }
+  makeInputContextCoinbase(blockHeight) {
+    return this.native.makeInputContextCoinbase(blockHeight);
+  }
+
+  // ─── Transaction Extra Parsing & Serialization ────────────────────────────
+
+  parseExtra(extraBytes) {
+    return this.native.parseExtra(extraBytes);
+  }
+  serializeTxExtra(jsonStr) {
+    return this.native.serializeTxExtra(jsonStr);
+  }
+  computeTxPrefixHash(data) {
+    return this.native.computeTxPrefixHash(data);
+  }
+
   // ─── Pedersen Commitments ───────────────────────────────────────────────
 
   commit(amount, mask) {
@@ -266,6 +321,23 @@ function serializeTclsagNative(sig) {
   buf.set(ensureBytes(sig.I), offset); offset += 32;
   buf.set(ensureBytes(sig.D), offset);
   return buf;
+}
+
+function _parseSubaddressMapBufferJsi(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const count = dv.getUint32(0, true);
+  const map = new Map();
+  let offset = 4;
+  for (let i = 0; i < count; i++) {
+    const key = buf.slice(offset, offset + 32);
+    offset += 32;
+    const major = dv.getUint32(offset, true);
+    offset += 4;
+    const minor = dv.getUint32(offset, true);
+    offset += 4;
+    map.set(bytesToHexJsi(key), { major, minor });
+  }
+  return map;
 }
 
 function deserializeBpProveJsi(bytes) {

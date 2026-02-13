@@ -8,6 +8,8 @@
 import {
   keccak256, blake2b,
   scalarMultBase, scalarMultPoint, pointAddCompressed,
+  cnSubaddressMapBatch as _cnBatch,
+  carrotSubaddressMapBatch as _carrotBatch,
 } from './crypto/index.js';
 
 // Group order L for scalar reduction
@@ -362,16 +364,21 @@ function bytesToHex(bytes) {
  * @returns {Map<string, {major: number, minor: number}>}
  */
 export function generateCNSubaddressMap(spendPublicKey, viewSecretKey, majorLookahead = SUBADDRESS_LOOKAHEAD_MAJOR, minorLookahead = SUBADDRESS_LOOKAHEAD_MINOR) {
-  const map = new Map();
+  // Try batch Rust call (single FFI round-trip for all entries)
+  try {
+    return _cnBatch(spendPublicKey, viewSecretKey, majorLookahead, minorLookahead);
+  } catch (e) {
+    console.warn('CN subaddress batch failed, using chunked JS fallback:', e.message);
+  }
 
+  // Chunked JS fallback — process one major index at a time to limit memory pressure
+  const map = new Map();
   for (let major = 0; major <= majorLookahead; major++) {
     for (let minor = 0; minor <= minorLookahead; minor++) {
       const subaddr = cnSubaddress(spendPublicKey, viewSecretKey, major, minor);
-      const spendPubkeyHex = bytesToHex(subaddr.spendPublicKey);
-      map.set(spendPubkeyHex, { major, minor });
+      map.set(bytesToHex(subaddr.spendPublicKey), { major, minor });
     }
   }
-
   return map;
 }
 
@@ -387,16 +394,21 @@ export function generateCNSubaddressMap(spendPublicKey, viewSecretKey, majorLook
  * @returns {Map<string, {major: number, minor: number}>}
  */
 export function generateCarrotSubaddressMap(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorLookahead = SUBADDRESS_LOOKAHEAD_MAJOR, minorLookahead = SUBADDRESS_LOOKAHEAD_MINOR) {
-  const map = new Map();
+  // Try batch Rust call (single FFI round-trip for all entries)
+  try {
+    return _carrotBatch(accountSpendPubkey, accountViewPubkey, generateAddressSecret, majorLookahead, minorLookahead);
+  } catch (e) {
+    console.warn('CARROT subaddress batch failed, using JS fallback:', e.message);
+  }
 
+  // JS fallback — process per-major to limit memory pressure
+  const map = new Map();
   for (let major = 0; major <= majorLookahead; major++) {
     for (let minor = 0; minor <= minorLookahead; minor++) {
       const subaddr = carrotSubaddress(accountSpendPubkey, accountViewPubkey, generateAddressSecret, major, minor);
-      const spendPubkeyHex = bytesToHex(subaddr.spendPublicKey);
-      map.set(spendPubkeyHex, { major, minor });
+      map.set(bytesToHex(subaddr.spendPublicKey), { major, minor });
     }
   }
-
   return map;
 }
 

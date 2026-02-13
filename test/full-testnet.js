@@ -4,22 +4,18 @@
  * types in CN / SAL1 / CARROT eras, and validates the salvium-js stack.
  *
  * Usage:
- *   bun test/full-testnet.js [--daemon URL] [--skip-mining] [--resume-from PHASE]
+ *   bun test/full-testnet.js [--daemon URL] [--skip-mining] [--resume-from HF]
  *
- * Phases:
- *   0  Setup — load wallets, verify daemon
- *   1  Mine to HF2 (height 270) — WASM probe + Rust fill
- *   2  CN TX tests — transfers A→B, B→A
- *   3  Mine to HF6 (height 835) — Rust
- *   4  SAL1 TX tests — transfers, stake
- *   5  Mine to CARROT (height 1120) — Rust + WASM probe
- *   6  CARROT TX tests — transfers, stake, burn, sweep
- *   7  Final reconciliation — balances, output counts
- *   8  Gap sync — fresh wallet C syncs from genesis
+ * Mines through each of the 10 hard forks with:
+ *   - WASM probe (3 blocks) at every fork boundary
+ *   - Full TX tests at era boundaries (HF2, HF6, HF10)
+ *   - Lightweight transfer test at intermediate forks
+ *   - Final reconciliation and gap sync
  */
 
 import { Wallet } from '../src/wallet.js';
 import { DaemonRPC } from '../src/rpc/daemon.js';
+import { initCrypto } from '../src/crypto/index.js';
 import {
   TESTNET_CONFIG, COIN, CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW,
   CRYPTONOTE_DEFAULT_TX_SPENDABLE_AGE,
@@ -37,18 +33,23 @@ const WALLET_DIR = join(homedir(), 'testnet-wallet');
 const LOG_PATH = join(WALLET_DIR, 'full-testnet-log.json');
 const DEFAULT_DAEMON = 'http://web.whiskymine.io:29081';
 
-// Target heights (HF activation + coinbase maturity + ring buffer)
-// Coinbase outputs lock for 60 blocks. After a fork, new-era outputs need
-// to unlock before they can be spent. Need: 60 (lock) + 16 (ring size) + 4 buffer = 80.
-const TARGET = {
-  HF2_MATURE: 270,    // HF2 at 250 + 20 (SAL outputs already plentiful)
-  HF6_MATURE: 895,    // HF6 at 815 + 80 (SAL1 coinbase needs 60-block unlock)
-  CARROT_MATURE: 1180, // HF10 at 1100 + 80 (same coinbase maturity requirement)
-  FINAL: 1260,
-};
+// ─── Fork table ──────────────────────────────────────────────────────────────
 
-const MATURITY_BLOCKS = 10; // blocks to mine after TX for spendable age
+const FORKS = [
+  { hf: 1,  height: 1,    asset: 'SAL',  addrFormat: 'legacy' },
+  { hf: 2,  height: 250,  asset: 'SAL',  addrFormat: 'legacy', fullTests: true },
+  { hf: 3,  height: 500,  asset: 'SAL',  addrFormat: 'legacy' },
+  { hf: 4,  height: 600,  asset: 'SAL',  addrFormat: 'legacy' },
+  { hf: 5,  height: 800,  asset: 'SAL',  addrFormat: 'legacy' },
+  { hf: 6,  height: 815,  asset: 'SAL1', addrFormat: 'legacy', fullTests: true },
+  { hf: 7,  height: 900,  asset: 'SAL1', addrFormat: 'legacy' },
+  { hf: 8,  height: 950,  asset: 'SAL1', addrFormat: 'legacy' },
+  { hf: 9,  height: 1000, asset: 'SAL1', addrFormat: 'legacy' },
+  { hf: 10, height: 1100, asset: 'SAL1', addrFormat: 'carrot', fullTests: true },
+];
 const WASM_PROBE_BLOCKS = 3;
+const MATURITY_OFFSET = 80;  // 60 coinbase lock + 16 ring + 4 buffer
+const MATURITY_BLOCKS = 10;  // blocks to mine after TX for spendable age
 
 // ─── CLI ────────────────────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function parseArgs() {
       case '--skip-mining': opts.skipMining = true; break;
       case '--resume-from': case '-r': opts.resumeFrom = parseInt(args[++i], 10); break;
       case '--help': case '-h':
-        console.log('Usage: bun test/full-testnet.js [--daemon URL] [--skip-mining] [--resume-from PHASE]');
+        console.log('Usage: bun test/full-testnet.js [--daemon URL] [--skip-mining] [--resume-from HF]');
         process.exit(0);
     }
   }
@@ -254,7 +255,7 @@ async function doSweep(wallet, address, label, assetType) {
   }
 }
 
-// ─── Phases ─────────────────────────────────────────────────────────────────
+// ─── Setup ──────────────────────────────────────────────────────────────────
 
 async function phase0_setup(daemon, daemonUrl) {
   console.log('\n═══ Phase 0: Setup ═══');
@@ -284,210 +285,114 @@ async function phase0_setup(daemon, daemonUrl) {
   return { walletA, walletB, startHeight: height };
 }
 
-async function phase1_mineToHF2(daemon, daemonUrl, walletA) {
-  console.log('\n═══ Phase 1: Mine to HF2 (target height 270) ═══');
-  const t0 = performance.now();
-  const address = walletA.getLegacyAddress();
-  const startHeight = await getDaemonHeight(daemon);
+// ─── Fork-driven mining and testing ─────────────────────────────────────────
 
-  // WASM probe: mine 3 blocks to validate WASM mining works
-  if (startHeight < 35) {
-    console.log('\n  ── WASM Probe 1 ──');
-    await mineTo(daemon, startHeight + WASM_PROBE_BLOCKS, address, daemonUrl, 'wasm');
-  } else {
-    console.log('  WASM probe skipped (already past bootstrap)');
-  }
-
-  // Rust fill to target
-  await mineTo(daemon, TARGET.HF2_MATURE, address, daemonUrl, 'rust');
-
-  const finalHeight = await getDaemonHeight(daemon);
-  const hfVer = getHfVersionForHeight(finalHeight, NETWORK_ID.TESTNET);
-  const elapsed = (performance.now() - t0) / 1000;
-  console.log(`  HF version at ${finalHeight}: ${hfVer}`);
-  log.phase('mine-to-hf2', { startHeight, finalHeight, hfVer, elapsed });
-}
-
-async function phase2_cnTxTests(daemon, daemonUrl, walletA, walletB) {
-  console.log('\n═══ Phase 2: CN Era TX Tests ═══');
-  const t0 = performance.now();
-
-  // Sync both wallets to pick up mined coinbases
-  const AT = 'SAL'; // CN era asset type
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletA, 'A', AT);
-  await printBalance(walletB, 'B', AT);
-
-  // Transfers A→B (legacy CN addresses — pre-CARROT era)
-  const LG = { legacy: true, assetType: AT };
-  await doTransfer(walletA, walletB, sal(1), 'CN A→B 1 SAL', LG);
-  await doTransfer(walletA, walletB, sal(2), 'CN A→B 2 SAL', LG);
-  await doTransfer(walletA, walletB, sal(5), 'CN A→B 5 SAL', LG);
-
-  // Mine maturity blocks so B can spend
-  const address = walletA.getLegacyAddress();
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-
-  // Sync, then B→A
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletB, 'B', AT);
-
-  await doTransfer(walletB, walletA, sal(0.5), 'CN B→A 0.5 SAL', LG);
-
-  // Mine maturity for the B→A tx
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
-  const balA = await printBalance(walletA, 'A', AT);
-  const balB = await printBalance(walletB, 'B', AT);
-
-  saveSyncCache(walletA, 'a');
-  saveSyncCache(walletB, 'b');
-
-  const elapsed = (performance.now() - t0) / 1000;
-  log.phase('cn-tx-tests', { elapsed, balA: balA.balance.toString(), balB: balB.balance.toString() });
-}
-
-async function phase3_mineToHF6(daemon, daemonUrl, walletA) {
-  console.log(`\n═══ Phase 3: Mine to HF6 / SAL1 (target height ${TARGET.HF6_MATURE}) ═══`);
-  const t0 = performance.now();
-  const address = walletA.getLegacyAddress();
-  await mineTo(daemon, TARGET.HF6_MATURE, address, daemonUrl, 'rust');
-  const finalHeight = await getDaemonHeight(daemon);
-  const hfVer = getHfVersionForHeight(finalHeight, NETWORK_ID.TESTNET);
-  const elapsed = (performance.now() - t0) / 1000;
-  console.log(`  HF version at ${finalHeight}: ${hfVer}`);
-  log.phase('mine-to-hf6', { finalHeight, hfVer, elapsed });
-}
-
-async function phase4_sal1TxTests(daemon, daemonUrl, walletA, walletB) {
-  console.log('\n═══ Phase 4: SAL1 Era TX Tests ═══');
-  const t0 = performance.now();
-  const AT = 'SAL1'; // SAL1 era asset type
-
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletA, 'A', AT);
-
-  // Transfers A→B in SAL1 era (still pre-CARROT, use legacy addresses)
-  const LG = { legacy: true, assetType: AT };
-  await doTransfer(walletA, walletB, sal(1), 'SAL1 A→B 1 SAL1', LG);
-  await doTransfer(walletA, walletB, sal(2), 'SAL1 A→B 2 SAL1', LG);
-
-  // Mine maturity
-  const address = walletA.getLegacyAddress();
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-  await syncWallet(walletA, daemon, 'A');
-
-  // Stake
-  await doStake(walletA, sal(10), 'SAL1 stake 10 SAL1', AT);
-
-  // Mine maturity
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
-  const balA = await printBalance(walletA, 'A', AT);
-  const balB = await printBalance(walletB, 'B', AT);
-
-  saveSyncCache(walletA, 'a');
-  saveSyncCache(walletB, 'b');
-
-  const elapsed = (performance.now() - t0) / 1000;
-  log.phase('sal1-tx-tests', { elapsed, balA: balA.balance.toString(), balB: balB.balance.toString() });
-}
-
-async function phase5_mineToCarrot(daemon, daemonUrl, walletA) {
-  console.log(`\n═══ Phase 5: Mine to CARROT (target height ${TARGET.CARROT_MATURE}) ═══`);
-  const t0 = performance.now();
-  const legacyAddr = walletA.getLegacyAddress();
-  const carrotAddr = walletA.getCarrotAddress();
-
-  // Mine up to HF10 boundary (1100) with legacy address
-  const HF10_HEIGHT = 1100;
+/**
+ * Mine to a fork boundary and run WASM probe blocks.
+ */
+async function mineToFork(fork, daemon, walletA, daemonUrl) {
   const currentHeight = await getDaemonHeight(daemon);
-  if (currentHeight < HF10_HEIGHT) {
-    console.log(`  Mining to HF10 boundary (${HF10_HEIGHT}) with legacy address...`);
-    await mineTo(daemon, HF10_HEIGHT, legacyAddr, daemonUrl, 'rust');
+  const miningAddr = fork.addrFormat === 'carrot'
+    ? walletA.getCarrotAddress()
+    : walletA.getLegacyAddress();
+
+  // For HF10: need legacy address up to fork boundary, CARROT after
+  if (fork.hf === 10 && currentHeight < fork.height) {
+    const legacyAddr = walletA.getLegacyAddress();
+    await mineTo(daemon, fork.height, legacyAddr, daemonUrl, 'rust');
+  } else if (currentHeight < fork.height) {
+    await mineTo(daemon, fork.height, miningAddr, daemonUrl, 'rust');
   }
 
-  // After HF10: daemon requires CARROT address for coinbase outputs
-  console.log(`  Switching to CARROT address for post-HF10 mining`);
-  await mineTo(daemon, TARGET.CARROT_MATURE, carrotAddr, daemonUrl, 'rust');
-
-  // WASM probe 2: mine 3 blocks in the CARROT era to validate WASM still works
-  const postHeight = await getDaemonHeight(daemon);
-  console.log('\n  ── WASM Probe 2 (CARROT era) ──');
-  await mineTo(daemon, postHeight + WASM_PROBE_BLOCKS, carrotAddr, daemonUrl, 'wasm');
-
-  // Mine a few more for maturity
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS + 2, carrotAddr, daemonUrl, 'rust');
-
-  const finalHeight = await getDaemonHeight(daemon);
-  const hfVer = getHfVersionForHeight(finalHeight, NETWORK_ID.TESTNET);
-  const elapsed = (performance.now() - t0) / 1000;
-  console.log(`  HF version at ${finalHeight}: ${hfVer}`);
-  log.phase('mine-to-carrot', { finalHeight, hfVer, elapsed });
+  // WASM probe: 3 blocks in the new era
+  console.log(`\n  ── WASM Probe HF${fork.hf} ──`);
+  const wasmAddr = fork.addrFormat === 'carrot'
+    ? walletA.getCarrotAddress()
+    : walletA.getLegacyAddress();
+  await mineTo(daemon, (await getDaemonHeight(daemon)) + WASM_PROBE_BLOCKS,
+               wasmAddr, daemonUrl, 'wasm');
 }
 
-async function phase6_carrotTxTests(daemon, daemonUrl, walletA, walletB) {
-  console.log('\n═══ Phase 6: CARROT Era TX Tests ═══');
-  const t0 = performance.now();
-  const AT = 'SAL1'; // CARROT era still uses SAL1 asset type
+/**
+ * Mine enough blocks after a fork for coinbase outputs to mature.
+ */
+async function mineMaturity(daemon, walletA, daemonUrl, fork) {
+  const addr = fork.addrFormat === 'carrot'
+    ? walletA.getCarrotAddress()
+    : walletA.getLegacyAddress();
+  const target = fork.height + MATURITY_OFFSET;
+  const current = await getDaemonHeight(daemon);
+  if (current < target) {
+    await mineTo(daemon, target, addr, daemonUrl, 'rust');
+  }
+}
+
+/**
+ * Run TX tests appropriate for the fork era.
+ * Full tests at era boundaries (HF2, HF6, HF10), lightweight at others.
+ */
+async function runForkTests(fork, daemon, daemonUrl, walletA, walletB) {
+  const AT = fork.asset;
+  const legacy = fork.addrFormat === 'legacy';
 
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
   await printBalance(walletA, 'A', AT);
   await printBalance(walletB, 'B', AT);
 
-  // CARROT transfers A→B
-  await doTransfer(walletA, walletB, sal(1), 'CARROT A→B 1 SAL1', { assetType: AT });
-  await doTransfer(walletA, walletB, sal(2), 'CARROT A→B 2 SAL1', { assetType: AT });
-  await doTransfer(walletA, walletB, sal(5), 'CARROT A→B 5 SAL1', { assetType: AT });
+  const miningAddr = legacy ? walletA.getLegacyAddress() : walletA.getCarrotAddress();
 
-  // Mine maturity so B can spend (CARROT address required post-HF10)
-  const address = walletA.getCarrotAddress();
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
+  if (fork.fullTests) {
+    // Full test suite for era boundaries (HF2, HF6, HF10)
+    // Transfers A→B
+    await doTransfer(walletA, walletB, sal(1), `HF${fork.hf} A→B 1 ${AT}`, { legacy, assetType: AT });
+    await doTransfer(walletA, walletB, sal(2), `HF${fork.hf} A→B 2 ${AT}`, { legacy, assetType: AT });
+    await doTransfer(walletA, walletB, sal(5), `HF${fork.hf} A→B 5 ${AT}`, { legacy, assetType: AT });
+
+    // Mine maturity so B can spend
+    await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, miningAddr, daemonUrl, 'rust');
+    await syncWallet(walletA, daemon, 'A');
+    await syncWallet(walletB, daemon, 'B');
+
+    // Transfer B→A
+    await doTransfer(walletB, walletA, sal(0.5), `HF${fork.hf} B→A 0.5 ${AT}`, { legacy, assetType: AT });
+
+    // Era-specific tests
+    if (fork.hf >= 6) {
+      // Stake available from SAL1 era onwards
+      await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, miningAddr, daemonUrl, 'rust');
+      await syncWallet(walletA, daemon, 'A');
+      await doStake(walletA, sal(10), `HF${fork.hf} stake 10 ${AT}`, AT);
+    }
+    if (fork.hf >= 10) {
+      // Burn + sweep in CARROT era
+      await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, miningAddr, daemonUrl, 'rust');
+      await syncWallet(walletA, daemon, 'A');
+      await doBurn(walletA, sal(0.1), `HF${fork.hf} burn 0.1 ${AT}`, AT);
+
+      await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, miningAddr, daemonUrl, 'rust');
+      await syncWallet(walletB, daemon, 'B');
+      await doSweep(walletB, walletB.getAddress(), `HF${fork.hf} sweep B→B`, AT);
+    }
+  } else {
+    // Lightweight transfer test at intermediate forks
+    await doTransfer(walletA, walletB, sal(0.5), `HF${fork.hf} A→B 0.5 ${AT}`, { legacy, assetType: AT });
+  }
+
+  // Mine maturity for the last TX
+  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, miningAddr, daemonUrl, 'rust');
   await syncWallet(walletA, daemon, 'A');
   await syncWallet(walletB, daemon, 'B');
-  await printBalance(walletB, 'B', AT);
 
-  // CARROT transfer B→A
-  await doTransfer(walletB, walletA, sal(0.5), 'CARROT B→A 0.5 SAL1', { assetType: AT });
-
-  // Mine maturity
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-  await syncWallet(walletA, daemon, 'A');
-
-  // CARROT stake
-  await doStake(walletA, sal(10), 'CARROT stake 10 SAL1', AT);
-
-  // CARROT burn
-  await doBurn(walletA, sal(0.1), 'CARROT burn 0.1 SAL1', AT);
-
-  // Mine maturity
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-  await syncWallet(walletB, daemon, 'B');
-
-  // CARROT sweep B→B
-  const bAddr = walletB.getAddress();
-  await doSweep(walletB, bAddr, 'CARROT sweep B→B', AT);
-
-  // Mine maturity for sweep
-  await mineTo(daemon, (await getDaemonHeight(daemon)) + MATURITY_BLOCKS, address, daemonUrl, 'rust');
-  await syncWallet(walletA, daemon, 'A');
-  await syncWallet(walletB, daemon, 'B');
   const balA = await printBalance(walletA, 'A', AT);
   const balB = await printBalance(walletB, 'B', AT);
-
   saveSyncCache(walletA, 'a');
   saveSyncCache(walletB, 'b');
 
-  const elapsed = (performance.now() - t0) / 1000;
-  log.phase('carrot-tx-tests', { elapsed, balA: balA.balance.toString(), balB: balB.balance.toString() });
+  return { balA, balB };
 }
+
+// ─── Reconciliation & Gap Sync ──────────────────────────────────────────────
 
 async function phase7_reconciliation(daemon, walletA, walletB) {
   console.log('\n═══ Phase 7: Final Reconciliation ═══');
@@ -564,23 +469,11 @@ async function phase8_gapSync(daemon) {
   log.phase('gap-sync', { syncHeight, elapsed, balance: bal.balance.toString() });
 }
 
-// ─── Extra mining to pad the chain ──────────────────────────────────────────
-
-async function phaseExtra_mine(daemon, daemonUrl, walletA) {
-  const currentHeight = await getDaemonHeight(daemon);
-  if (currentHeight >= TARGET.FINAL) {
-    console.log(`\n  Already at height ${currentHeight}, skipping extra mining`);
-    return;
-  }
-  console.log(`\n═══ Extra: Mine to ${TARGET.FINAL} ═══`);
-  // Post-HF10: use CARROT address for coinbase outputs
-  const address = currentHeight >= 1100 ? walletA.getCarrotAddress() : walletA.getLegacyAddress();
-  await mineTo(daemon, TARGET.FINAL, address, daemonUrl, 'rust');
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
+  await initCrypto();
+
   const opts = parseArgs();
   const daemon = new DaemonRPC({ url: opts.daemon });
 
@@ -593,45 +486,68 @@ async function main() {
   // Phase 0: Setup (always runs)
   const { walletA, walletB, startHeight } = await phase0_setup(daemon, opts.daemon);
 
-  const phases = [
-    { id: 1, name: 'Mine to HF2',        fn: () => phase1_mineToHF2(daemon, opts.daemon, walletA) },
-    { id: 2, name: 'CN TX tests',         fn: () => phase2_cnTxTests(daemon, opts.daemon, walletA, walletB) },
-    { id: 3, name: 'Mine to HF6',         fn: () => phase3_mineToHF6(daemon, opts.daemon, walletA) },
-    { id: 4, name: 'SAL1 TX tests',       fn: () => phase4_sal1TxTests(daemon, opts.daemon, walletA, walletB) },
-    { id: 5, name: 'Mine to CARROT',      fn: () => phase5_mineToCarrot(daemon, opts.daemon, walletA) },
-    { id: 6, name: 'CARROT TX tests',     fn: () => phase6_carrotTxTests(daemon, opts.daemon, walletA, walletB) },
-    { id: 7, name: 'Reconciliation',      fn: () => phase7_reconciliation(daemon, walletA, walletB) },
-    { id: 8, name: 'Gap sync',            fn: () => phase8_gapSync(daemon) },
-  ];
+  // Mine through each fork with WASM probes + TX tests
+  for (const fork of FORKS) {
+    if (fork.hf < opts.resumeFrom) {
+      console.log(`\n  Skipping HF${fork.hf} — resume-from=${opts.resumeFrom}`);
+      continue;
+    }
 
-  let lastResult;
-  for (const phase of phases) {
-    if (phase.id < opts.resumeFrom) {
-      console.log(`\n  Skipping phase ${phase.id} (${phase.name}) — resume-from=${opts.resumeFrom}`);
-      continue;
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`  HF${fork.hf} @ height ${fork.height} — ${fork.asset} / ${fork.addrFormat}`);
+    console.log(`${'═'.repeat(60)}`);
+
+    if (!opts.skipMining) {
+      try {
+        await mineToFork(fork, daemon, walletA, opts.daemon);
+      } catch (e) {
+        console.error(`\n  MINING FAILED at HF${fork.hf}: ${e.message}`);
+        console.error(e.stack);
+        log.phase(`hf${fork.hf}-mining-error`, { error: e.message });
+        log.save();
+        process.exit(1);
+      }
     }
-    if (opts.skipMining && [1, 3, 5].includes(phase.id)) {
-      console.log(`\n  Skipping phase ${phase.id} (${phase.name}) — --skip-mining`);
-      continue;
+
+    // Mine maturity for fullTests forks so coinbase outputs are spendable
+    if (fork.fullTests && !opts.skipMining) {
+      await mineMaturity(daemon, walletA, opts.daemon, fork);
     }
+
     try {
-      lastResult = await phase.fn();
+      await runForkTests(fork, daemon, opts.daemon, walletA, walletB);
     } catch (e) {
-      console.error(`\n  PHASE ${phase.id} FAILED: ${e.message}`);
+      console.error(`\n  TX TESTS FAILED at HF${fork.hf}: ${e.message}`);
       console.error(e.stack);
-      log.phase(`phase-${phase.id}-error`, { error: e.message });
+      log.phase(`hf${fork.hf}-tx-error`, { error: e.message });
       log.save();
       process.exit(1);
     }
+
+    log.phase(`hf${fork.hf}`, { height: await getDaemonHeight(daemon) });
   }
 
-  // Extra mining after all tests pass
-  if (!opts.skipMining) {
-    try {
-      await phaseExtra_mine(daemon, opts.daemon, walletA);
-    } catch (e) {
-      console.log(`  Extra mining skipped: ${e.message}`);
-    }
+  // Phase 7: Reconciliation
+  let lastResult;
+  try {
+    lastResult = await phase7_reconciliation(daemon, walletA, walletB);
+  } catch (e) {
+    console.error(`\n  RECONCILIATION FAILED: ${e.message}`);
+    console.error(e.stack);
+    log.phase('reconciliation-error', { error: e.message });
+    log.save();
+    process.exit(1);
+  }
+
+  // Phase 8: Gap sync
+  try {
+    await phase8_gapSync(daemon);
+  } catch (e) {
+    console.error(`\n  GAP SYNC FAILED: ${e.message}`);
+    console.error(e.stack);
+    log.phase('gap-sync-error', { error: e.message });
+    log.save();
+    process.exit(1);
   }
 
   const totalElapsed = (performance.now() - overallStart) / 1000;
