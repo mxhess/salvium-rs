@@ -40,7 +40,7 @@ const FORKS = [
   { hf: 2,  height: 250,  asset: 'SAL',  addrFormat: 'legacy', fullTests: true },
   { hf: 3,  height: 500,  asset: 'SAL',  addrFormat: 'legacy' },
   { hf: 4,  height: 600,  asset: 'SAL',  addrFormat: 'legacy' },
-  { hf: 5,  height: 800,  asset: 'SAL',  addrFormat: 'legacy' },
+  { hf: 5,  height: 800,  asset: 'SAL',  addrFormat: 'legacy', paused: true },  // SHUTDOWN_USER_TXS — daemon rejects all user TXs
   { hf: 6,  height: 815,  asset: 'SAL1', addrFormat: 'legacy', fullTests: true },
   { hf: 7,  height: 900,  asset: 'SAL1', addrFormat: 'legacy' },
   { hf: 8,  height: 950,  asset: 'SAL1', addrFormat: 'legacy' },
@@ -374,6 +374,9 @@ async function runForkTests(fork, daemon, daemonUrl, walletA, walletB) {
       await syncWallet(walletB, daemon, 'B');
       await doSweep(walletB, walletB.getAddress(), `HF${fork.hf} sweep B→B`, AT);
     }
+  } else if (fork.paused) {
+    // Paused forks (HF5, HF7, HF9): daemon rejects user transactions
+    console.log(`  (HF${fork.hf} paused — user transactions disabled by daemon, WASM probe only)`);
   } else if (fork.hf > 1) {
     // Lightweight transfer test at intermediate forks (skip HF1 — no mature outputs yet)
     await doTransfer(walletA, walletB, sal(0.5), `HF${fork.hf} A→B 0.5 ${AT}`, { legacy, assetType: AT });

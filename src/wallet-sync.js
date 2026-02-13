@@ -42,7 +42,7 @@ export const MIN_BATCH_SIZE = 2;
 /**
  * Maximum batch size (ceiling) - prevent memory/timeout issues
  */
-export const MAX_BATCH_SIZE = 500;
+export const MAX_BATCH_SIZE = 1000;
 
 /**
  * Maximum concurrent RPC calls for parallel block fetching
