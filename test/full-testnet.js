@@ -374,9 +374,11 @@ async function runForkTests(fork, daemon, daemonUrl, walletA, walletB) {
       await syncWallet(walletB, daemon, 'B');
       await doSweep(walletB, walletB.getAddress(), `HF${fork.hf} sweep B→B`, AT);
     }
-  } else {
-    // Lightweight transfer test at intermediate forks
+  } else if (fork.hf > 1) {
+    // Lightweight transfer test at intermediate forks (skip HF1 — no mature outputs yet)
     await doTransfer(walletA, walletB, sal(0.5), `HF${fork.hf} A→B 0.5 ${AT}`, { legacy, assetType: AT });
+  } else {
+    console.log('  (HF1 genesis — WASM probe only, no TX tests until coinbase matures)');
   }
 
   // Mine maturity for the last TX

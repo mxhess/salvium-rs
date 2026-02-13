@@ -72,6 +72,10 @@ export class JsiCryptoBackend {
   pointNegate(p) { return this.native.pointNegate(p); }
   doubleScalarMultBase(a, p, b) { return this.native.doubleScalarMultBase(a, p, b); }
 
+  // ─── X25519 ────────────────────────────────────────────────────────────
+
+  x25519ScalarMult(scalar, uCoord) { return this.native.x25519ScalarMult(scalar, uCoord); }
+
   // ─── Hash-to-Point & Key Derivation ─────────────────────────────────────
 
   hashToPoint(data) { return this.native.hashToPoint(data); }

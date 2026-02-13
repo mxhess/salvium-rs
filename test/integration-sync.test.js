@@ -481,32 +481,15 @@ async function runIntegrationTest() {
     }
   } else {
     // Manual balance computation for MemoryStorage
-    const CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW = 60;
-    const DEFAULT_UNLOCK_BLOCKS = 10;
     for (const output of outputs) {
       if (!output.isSpent) {
         const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
         balance += amount;
         unspentCount++;
 
-        // Check unlock status
-        const unlockTime = BigInt(output.unlockTime || 0);
-        const isCoinbase = output.txType === 'miner' || output.txType === 'protocol';
-        let isUnlocked = false;
-
-        if (isCoinbase) {
-          isUnlocked = output.blockHeight != null &&
-            (syncHeight - output.blockHeight) >= CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW;
-        } else if (unlockTime === 0n) {
-          isUnlocked = output.blockHeight != null &&
-            (syncHeight - output.blockHeight) >= DEFAULT_UNLOCK_BLOCKS;
-        } else if (unlockTime < 500000000n) {
-          isUnlocked = syncHeight >= Number(unlockTime);
-        } else {
-          isUnlocked = Date.now() / 1000 >= Number(unlockTime);
-        }
-
-        if (isUnlocked) {
+        // Use WalletOutput.isUnlocked() which correctly handles both
+        // string ('miner','protocol') and numeric (1,2) txType values
+        if (output.isUnlocked(syncHeight)) {
           unlockedBalance += amount;
           unlockedCount++;
         }
