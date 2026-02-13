@@ -869,7 +869,7 @@ export class WalletSync {
       await this.storage.putTransaction(walletTx);
 
       // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
-      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx, tx);
 
       if (ownedOutputs.length > 0) {
         this._emit('outputReceived', {
@@ -974,7 +974,7 @@ export class WalletSync {
       await this.storage.putTransaction(walletTx);
 
       // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
-      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx, tx);
 
       // Emit events
       if (ownedOutputs.length > 0) {
@@ -1110,7 +1110,17 @@ export class WalletSync {
       vout,
       extra,
       type: txJson.type || 0,
-      amount_burnt: this._safeBigInt(txJson.amount_burnt)
+      amount_burnt: this._safeBigInt(txJson.amount_burnt),
+      // Salvium staking/return fields
+      return_address: txJson.return_address ? hexToBytes(txJson.return_address) : null,
+      return_pubkey: txJson.return_pubkey ? hexToBytes(txJson.return_pubkey) : null,
+      protocol_tx_data: txJson.protocol_tx_data ? {
+        version: txJson.protocol_tx_data.version || 0,
+        return_address: txJson.protocol_tx_data.return_address ? hexToBytes(txJson.protocol_tx_data.return_address) : null,
+        return_pubkey: txJson.protocol_tx_data.return_pubkey ? hexToBytes(txJson.protocol_tx_data.return_pubkey) : null,
+        return_view_tag: txJson.protocol_tx_data.return_view_tag ? hexToBytes(txJson.protocol_tx_data.return_view_tag) : null,
+        return_anchor_enc: txJson.protocol_tx_data.return_anchor_enc ? hexToBytes(txJson.protocol_tx_data.return_anchor_enc) : null
+      } : null
     };
 
     // RCT signatures (minimal for coinbase)
@@ -1313,7 +1323,7 @@ export class WalletSync {
       await this.storage.putTransaction(walletTx);
 
       // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
-      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx, tx);
 
       // Emit events
       if (ownedOutputs.length > 0) {
@@ -2124,6 +2134,28 @@ export class WalletSync {
   }
 
   /**
+   * Extract the return pubkey from a STAKE transaction prefix.
+   * CARROT (v>=4): protocol_tx_data.return_pubkey
+   * Pre-CARROT: prefix.return_pubkey (top-level)
+   * @private
+   * @returns {string|null} Return pubkey as hex, or null
+   */
+  _extractReturnPubkey(tx) {
+    const prefix = tx.prefix || tx;
+    // CARROT STAKE (version >= 4): protocol_tx_data.return_pubkey
+    if (prefix.protocol_tx_data?.return_pubkey) {
+      const rp = prefix.protocol_tx_data.return_pubkey;
+      return typeof rp === 'string' ? rp : bytesToHex(rp);
+    }
+    // Pre-CARROT: top-level return_pubkey
+    if (prefix.return_pubkey) {
+      const rp = prefix.return_pubkey;
+      return typeof rp === 'string' ? rp : bytesToHex(rp);
+    }
+    return null;
+  }
+
+  /**
    * Record stake lifecycle events (STAKE creation + PROTOCOL return matching)
    * @private
    * @param {number} txType - TX_TYPE value
@@ -2133,10 +2165,14 @@ export class WalletSync {
    * @param {Array} ownedOutputs - WalletOutput instances we own in this tx
    * @param {Array} spentOutputs - Outputs spent by this tx
    * @param {WalletTransaction} walletTx - The wallet transaction record
+   * @param {Object} tx - The parsed transaction (for prefix field access)
    */
-  async _recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx) {
+  async _recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx, tx) {
     // Record new STAKE
     if (txType === TX_TYPE.STAKE && spentOutputs.length > 0) {
+      // Prefer explicit return_pubkey from prefix (works for both CARROT and pre-CARROT).
+      // Fall back to CARROT change output key for self-send-based matching.
+      const returnPubkey = this._extractReturnPubkey(tx);
       const changeOutput = ownedOutputs.find(o => o);
       await this.storage.putStake(new StakeRecord({
         stakeTxHash: txHash,
@@ -2145,16 +2181,30 @@ export class WalletSync {
         amountStaked: walletTx.amountBurnt,
         fee: walletTx.fee,
         assetType: changeOutput?.assetType || 'SAL',
-        changeOutputKey: changeOutput?.publicKey || null
+        changeOutputKey: returnPubkey || changeOutput?.publicKey || null
       }));
     }
 
     // Match PROTOCOL returns to their originating STAKE
     if (isProtocolTx && ownedOutputs.length > 0) {
       for (const output of ownedOutputs) {
+        // Path 1: CARROT — returnOriginKey set by _scanCarrotOutput via _returnOutputMap
         if (output.returnOriginKey) {
           const stake = await this.storage.getStakeByOutputKey(output.returnOriginKey);
           if (stake) {
+            await this.storage.markStakeReturned(stake.stakeTxHash, {
+              returnTxHash: txHash,
+              returnHeight: header.height,
+              returnTimestamp: header.timestamp,
+              returnAmount: output.amount
+            });
+            continue;
+          }
+        }
+        // Path 2: Pre-CARROT — match output public key against stored return_pubkey
+        if (output.publicKey) {
+          const stake = await this.storage.getStakeByOutputKey(output.publicKey);
+          if (stake && stake.status === 'locked') {
             await this.storage.markStakeReturned(stake.stakeTxHash, {
               returnTxHash: txHash,
               returnHeight: header.height,
