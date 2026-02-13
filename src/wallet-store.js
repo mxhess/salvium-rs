@@ -81,6 +81,14 @@ export class WalletStorage {
   // Asset types
   async getAssetTypes() { throw new Error('Not implemented'); }
 
+  // Stake operations
+  async putStake(record) { throw new Error('Not implemented'); }
+  async getStake(stakeTxHash) { throw new Error('Not implemented'); }
+  async getStakes(query) { throw new Error('Not implemented'); }
+  async getStakeByOutputKey(changeOutputKey) { throw new Error('Not implemented'); }
+  async markStakeReturned(stakeTxHash, returnInfo) { throw new Error('Not implemented'); }
+  async deleteStakesAbove(height) { throw new Error('Not implemented'); }
+
   // Reorg rollback operations
   async deleteOutputsAbove(height) { throw new Error('Not implemented'); }
   async deleteTransactionsAbove(height) { throw new Error('Not implemented'); }
@@ -140,6 +148,10 @@ export class WalletOutput {
 
     // TX public key (needed to derive output secret key for spending)
     this.txPubKey = data.txPubKey || null;
+
+    // Stake return detection (CARROT)
+    this.isReturn = data.isReturn || false;             // True if this output is a stake return from protocol_tx
+    this.returnOriginKey = data.returnOriginKey || null; // The STAKE change output's Ko (hex) that this return matches
 
     // Frozen (user-controlled)
     this.isFrozen = data.isFrozen || false;
@@ -223,6 +235,8 @@ export class WalletOutput {
       carrotEphemeralPubkey: this.carrotEphemeralPubkey,
       carrotSharedSecret: this.carrotSharedSecret,
       carrotEnoteType: this.carrotEnoteType,
+      isReturn: this.isReturn,
+      returnOriginKey: this.returnOriginKey,
       isFrozen: this.isFrozen,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt
@@ -365,6 +379,64 @@ export class WalletTransaction {
 }
 
 // ============================================================================
+// STAKE RECORD MODEL
+// ============================================================================
+
+/**
+ * Represents a stake lifecycle record (STAKE → RETURN)
+ */
+export class StakeRecord {
+  constructor(data = {}) {
+    // Stake info
+    this.stakeTxHash = data.stakeTxHash || null;
+    this.stakeHeight = data.stakeHeight || null;
+    this.stakeTimestamp = data.stakeTimestamp || null;
+    this.amountStaked = data.amountStaked !== undefined ? BigInt(data.amountStaked) : 0n;
+    this.fee = data.fee !== undefined ? BigInt(data.fee) : 0n;
+    this.assetType = data.assetType || 'SAL';
+    this.changeOutputKey = data.changeOutputKey || null;
+
+    // Return info (populated when PROTOCOL payout is detected)
+    this.status = data.status || 'locked';              // 'locked' | 'returned'
+    this.returnTxHash = data.returnTxHash || null;
+    this.returnHeight = data.returnHeight || null;
+    this.returnTimestamp = data.returnTimestamp || null;
+    this.returnAmount = data.returnAmount !== undefined ? BigInt(data.returnAmount) : 0n;
+
+    this.createdAt = data.createdAt || Date.now();
+    this.updatedAt = data.updatedAt || Date.now();
+  }
+
+  toJSON() {
+    return {
+      stakeTxHash: this.stakeTxHash,
+      stakeHeight: this.stakeHeight,
+      stakeTimestamp: this.stakeTimestamp,
+      amountStaked: this.amountStaked.toString(),
+      fee: this.fee.toString(),
+      assetType: this.assetType,
+      changeOutputKey: this.changeOutputKey,
+      status: this.status,
+      returnTxHash: this.returnTxHash,
+      returnHeight: this.returnHeight,
+      returnTimestamp: this.returnTimestamp,
+      returnAmount: this.returnAmount.toString(),
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt
+    };
+  }
+
+  static fromJSON(data) {
+    return new StakeRecord({
+      ...data,
+      amountStaked: BigInt(data.amountStaked || 0),
+      fee: BigInt(data.fee || 0),
+      returnAmount: BigInt(data.returnAmount || 0)
+    });
+  }
+}
+
+// ============================================================================
 // MEMORY STORAGE (Default)
 // ============================================================================
 
@@ -382,6 +454,8 @@ export class MemoryStorage extends WalletStorage {
     this._state = new Map();          // Generic key-value state
     this._blockHashes = new Map();    // height -> blockHash
     this._blockHashRetention = 200;   // Only keep last N block hashes (for reorg detection)
+    this._stakes = new Map();         // stakeTxHash -> StakeRecord
+    this._stakeOutputKeys = new Map(); // changeOutputKey -> stakeTxHash (for return matching)
     this._syncHeight = 0;
     this._isOpen = false;
   }
@@ -401,6 +475,8 @@ export class MemoryStorage extends WalletStorage {
     this._spentKeyImages.clear();
     this._state.clear();
     this._blockHashes.clear();
+    this._stakes.clear();
+    this._stakeOutputKeys.clear();
     this._syncHeight = 0;
   }
 
@@ -453,6 +529,66 @@ export class MemoryStorage extends WalletStorage {
       if (output.assetType) types.add(output.assetType);
     }
     return Array.from(types).sort();
+  }
+
+  // Stake operations
+  async putStake(record) {
+    const sr = record instanceof StakeRecord ? record : new StakeRecord(record);
+    sr.updatedAt = Date.now();
+    this._stakes.set(sr.stakeTxHash, sr);
+    if (sr.changeOutputKey) {
+      this._stakeOutputKeys.set(sr.changeOutputKey, sr.stakeTxHash);
+    }
+    return sr;
+  }
+
+  async getStake(stakeTxHash) {
+    const sr = this._stakes.get(stakeTxHash);
+    return sr ? StakeRecord.fromJSON(sr.toJSON()) : null;
+  }
+
+  async getStakes(query = {}) {
+    const results = [];
+    for (const sr of this._stakes.values()) {
+      if (query.status !== undefined && sr.status !== query.status) continue;
+      if (query.assetType && sr.assetType !== query.assetType) continue;
+      results.push(StakeRecord.fromJSON(sr.toJSON()));
+    }
+    return results;
+  }
+
+  async getStakeByOutputKey(changeOutputKey) {
+    const stakeTxHash = this._stakeOutputKeys.get(changeOutputKey);
+    if (!stakeTxHash) return null;
+    return this.getStake(stakeTxHash);
+  }
+
+  async markStakeReturned(stakeTxHash, returnInfo) {
+    const sr = this._stakes.get(stakeTxHash);
+    if (!sr) return;
+    sr.status = 'returned';
+    sr.returnTxHash = returnInfo.returnTxHash;
+    sr.returnHeight = returnInfo.returnHeight;
+    sr.returnTimestamp = returnInfo.returnTimestamp;
+    sr.returnAmount = returnInfo.returnAmount !== undefined ? BigInt(returnInfo.returnAmount) : 0n;
+    sr.updatedAt = Date.now();
+  }
+
+  async deleteStakesAbove(height) {
+    for (const [key, sr] of this._stakes) {
+      if (sr.stakeHeight !== null && sr.stakeHeight > height) {
+        if (sr.changeOutputKey) this._stakeOutputKeys.delete(sr.changeOutputKey);
+        this._stakes.delete(key);
+      } else if (sr.returnHeight !== null && sr.returnHeight > height) {
+        // Undo the return, keep the stake
+        sr.status = 'locked';
+        sr.returnTxHash = null;
+        sr.returnHeight = null;
+        sr.returnTimestamp = null;
+        sr.returnAmount = 0n;
+        sr.updatedAt = Date.now();
+      }
+    }
   }
 
   // Transaction operations
@@ -596,10 +732,11 @@ export class MemoryStorage extends WalletStorage {
    */
   dump() {
     return {
-      version: 1,
+      version: 2,
       syncHeight: this._syncHeight,
       outputs: Array.from(this._outputs.values()).map(o => o.toJSON()),
       transactions: Array.from(this._transactions.values()).map(t => t.toJSON()),
+      stakes: Array.from(this._stakes.values()).map(s => s.toJSON()),
       spentKeyImages: Array.from(this._spentKeyImages),
       blockHashes: Object.fromEntries(this._blockHashes),
       state: Object.fromEntries(this._state)
@@ -613,7 +750,7 @@ export class MemoryStorage extends WalletStorage {
    */
   dumpJSON() {
     const parts = [];
-    parts.push('{"version":1');
+    parts.push('{"version":2');
     parts.push(`,"syncHeight":${this._syncHeight}`);
 
     // Outputs - stringify one at a time
@@ -632,6 +769,16 @@ export class MemoryStorage extends WalletStorage {
     for (const t of this._transactions.values()) {
       if (!first) parts.push(',');
       parts.push(JSON.stringify(t.toJSON()));
+      first = false;
+    }
+    parts.push(']');
+
+    // Stakes - stringify one at a time
+    parts.push(',"stakes":[');
+    first = true;
+    for (const s of this._stakes.values()) {
+      if (!first) parts.push(',');
+      parts.push(JSON.stringify(s.toJSON()));
       first = false;
     }
     parts.push(']');
@@ -657,7 +804,7 @@ export class MemoryStorage extends WalletStorage {
    * @param {Object} data - Previously dumped state
    */
   load(data) {
-    if (!data || data.version !== 1) return;
+    if (!data || (data.version !== 1 && data.version !== 2)) return;
 
     this._syncHeight = data.syncHeight || 0;
 
@@ -692,6 +839,16 @@ export class MemoryStorage extends WalletStorage {
       }
     }
 
+    if (data.stakes) {
+      for (const s of data.stakes) {
+        const sr = StakeRecord.fromJSON(s);
+        this._stakes.set(sr.stakeTxHash, sr);
+        if (sr.changeOutputKey) {
+          this._stakeOutputKeys.set(sr.changeOutputKey, sr.stakeTxHash);
+        }
+      }
+    }
+
     if (data.blockHashes) {
       // Only load the most recent block hashes (prune old ones on load)
       const entries = Object.entries(data.blockHashes).map(([h, hash]) => [parseInt(h), hash]);
@@ -719,7 +876,7 @@ export class IndexedDBStorage extends WalletStorage {
   constructor(options = {}) {
     super();
     this._dbName = options.dbName || 'salvium-wallet';
-    this._version = options.version || 1;
+    this._version = options.version || 2;
     this._db = null;
   }
 
@@ -771,6 +928,13 @@ export class IndexedDBStorage extends WalletStorage {
         if (!db.objectStoreNames.contains('blockHashes')) {
           db.createObjectStore('blockHashes', { keyPath: 'height' });
         }
+
+        // Stakes store (stake lifecycle tracking)
+        if (!db.objectStoreNames.contains('stakes')) {
+          const stakeStore = db.createObjectStore('stakes', { keyPath: 'stakeTxHash' });
+          stakeStore.createIndex('status', 'status', { unique: false });
+          stakeStore.createIndex('changeOutputKey', 'changeOutputKey', { unique: true });
+        }
       };
     });
   }
@@ -785,6 +949,7 @@ export class IndexedDBStorage extends WalletStorage {
   async clear() {
     const stores = ['outputs', 'transactions', 'keyImages', 'state'];
     if (this._db.objectStoreNames.contains('blockHashes')) stores.push('blockHashes');
+    if (this._db.objectStoreNames.contains('stakes')) stores.push('stakes');
     const tx = this._db.transaction(stores, 'readwrite');
     for (const name of stores) tx.objectStore(name).clear();
     return new Promise((resolve, reject) => {
@@ -947,6 +1112,105 @@ export class IndexedDBStorage extends WalletStorage {
         }
       };
       request.onerror = () => reject(request.error);
+    });
+  }
+
+  // Stake operations
+  async putStake(record) {
+    const sr = record instanceof StakeRecord ? record : new StakeRecord(record);
+    sr.updatedAt = Date.now();
+    const data = sr.toJSON();
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('stakes', 'readwrite');
+      tx.objectStore('stakes').put(data);
+      tx.oncomplete = () => resolve(sr);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async getStake(stakeTxHash) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('stakes', 'readonly');
+      const request = tx.objectStore('stakes').get(stakeTxHash);
+      request.onsuccess = () => {
+        resolve(request.result ? StakeRecord.fromJSON(request.result) : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getStakes(query = {}) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('stakes', 'readonly');
+      const store = tx.objectStore('stakes');
+      const results = [];
+      const request = store.openCursor();
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+          const sr = StakeRecord.fromJSON(cursor.value);
+          let match = true;
+          if (query.status !== undefined && sr.status !== query.status) match = false;
+          if (query.assetType && sr.assetType !== query.assetType) match = false;
+          if (match) results.push(sr);
+          cursor.continue();
+        } else {
+          resolve(results);
+        }
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getStakeByOutputKey(changeOutputKey) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('stakes', 'readonly');
+      const index = tx.objectStore('stakes').index('changeOutputKey');
+      const request = index.get(changeOutputKey);
+      request.onsuccess = () => {
+        resolve(request.result ? StakeRecord.fromJSON(request.result) : null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async markStakeReturned(stakeTxHash, returnInfo) {
+    const sr = await this.getStake(stakeTxHash);
+    if (!sr) return;
+    sr.status = 'returned';
+    sr.returnTxHash = returnInfo.returnTxHash;
+    sr.returnHeight = returnInfo.returnHeight;
+    sr.returnTimestamp = returnInfo.returnTimestamp;
+    sr.returnAmount = returnInfo.returnAmount !== undefined ? BigInt(returnInfo.returnAmount) : 0n;
+    sr.updatedAt = Date.now();
+    await this.putStake(sr);
+  }
+
+  async deleteStakesAbove(height) {
+    return new Promise((resolve, reject) => {
+      const tx = this._db.transaction('stakes', 'readwrite');
+      const store = tx.objectStore('stakes');
+      const request = store.openCursor();
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+          const data = cursor.value;
+          if (data.stakeHeight !== null && data.stakeHeight > height) {
+            cursor.delete();
+          } else if (data.returnHeight !== null && data.returnHeight > height) {
+            data.status = 'locked';
+            data.returnTxHash = null;
+            data.returnHeight = null;
+            data.returnTimestamp = null;
+            data.returnAmount = '0';
+            data.updatedAt = Date.now();
+            cursor.update(data);
+          }
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
     });
   }
 
@@ -1145,6 +1409,7 @@ export default {
   WalletStorage,
   WalletOutput,
   WalletTransaction,
+  StakeRecord,
   MemoryStorage,
   IndexedDBStorage,
   createStorage

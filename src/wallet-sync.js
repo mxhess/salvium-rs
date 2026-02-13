@@ -10,7 +10,7 @@
  * @module wallet-sync
  */
 
-import { WalletOutput, WalletTransaction } from './wallet-store.js';
+import { WalletOutput, WalletTransaction, StakeRecord } from './wallet-store.js';
 import { cnSubaddressSecretKey, carrotIndexExtensionGenerator, carrotSubaddressScalar } from './subaddress.js';
 import { scanCarrotOutput, scanCarrotInternalOutput, computeReturnAddress, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage, carrotEcdhKeyExchange, testCarrotViewTag } from './carrot-scanning.js';
 import { parseTransaction, parseBlock, extractTxPubKey, extractPaymentId, extractAdditionalPubKeys, serializeTxPrefix } from './transaction.js';
@@ -393,6 +393,9 @@ export class WalletSync {
     await this.storage.deleteTransactionsAbove(commonHeight);
     await this.storage.unspendOutputsAbove(commonHeight);
     await this.storage.deleteBlockHashesAbove(commonHeight);
+    if (typeof this.storage.deleteStakesAbove === 'function') {
+      await this.storage.deleteStakesAbove(commonHeight);
+    }
 
     // Reset sync height to rescan from common ancestor
     this.startHeight = commonHeight + 1;
@@ -865,6 +868,9 @@ export class WalletSync {
 
       await this.storage.putTransaction(walletTx);
 
+      // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
+
       if (ownedOutputs.length > 0) {
         this._emit('outputReceived', {
           txHash, outputs: ownedOutputs, blockHeight: header.height
@@ -966,6 +972,9 @@ export class WalletSync {
       });
 
       await this.storage.putTransaction(walletTx);
+
+      // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
 
       // Emit events
       if (ownedOutputs.length > 0) {
@@ -1303,6 +1312,9 @@ export class WalletSync {
 
       await this.storage.putTransaction(walletTx);
 
+      // Record stake lifecycle (STAKE creation / PROTOCOL return matching)
+      await this._recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx);
+
       // Emit events
       if (ownedOutputs.length > 0) {
         this._emit('outputReceived', {
@@ -1540,7 +1552,9 @@ export class WalletSync {
           carrotEphemeralPubkey: scanResult.carrotEphemeralPubkey || null,
           carrotSharedSecret: scanResult.carrotSharedSecret || null,
           carrotEnoteType: scanResult.enoteType ?? null,
-          assetType: output.assetType || 'SAL'
+          assetType: output.assetType || 'SAL',
+          isReturn: scanResult.isReturn || false,
+          returnOriginKey: scanResult.returnOriginKey || null
         });
 
         await this.storage.putOutput(walletOutput);
@@ -1897,6 +1911,23 @@ export class WalletSync {
         : BigInt(output.amount || 0);
     }
 
+    // Resolve returnOriginKey: the STAKE change output Ko that this return matches
+    let returnOriginKey = null;
+    if (isReturnOutput) {
+      const outputKey = this._extractOutputPubKey(output);
+      if (outputKey) {
+        const koHex = bytesToHex(outputKey);
+        const mapEntry = this._returnOutputMap.get(koHex);
+        if (mapEntry?.originalKo) {
+          returnOriginKey = bytesToHex(
+            mapEntry.originalKo instanceof Uint8Array
+              ? mapEntry.originalKo
+              : hexToBytes(mapEntry.originalKo)
+          );
+        }
+      }
+    }
+
     return {
       amount,
       mask: result.mask,
@@ -1905,6 +1936,8 @@ export class WalletSync {
       subaddressIndex: result.subaddressIndex,
       keyImage,
       isCarrot: true,
+      isReturn: isReturnOutput,
+      returnOriginKey,
       // CARROT-specific data needed for spending
       carrotEphemeralPubkey: enoteEphemeralPubkey ? bytesToHex(enoteEphemeralPubkey) : null,
       carrotSharedSecret: result.sharedSecret  // Already hex from scanCarrotOutput
@@ -2088,6 +2121,50 @@ export class WalletSync {
         : output.publicKey;
     }
     return null;
+  }
+
+  /**
+   * Record stake lifecycle events (STAKE creation + PROTOCOL return matching)
+   * @private
+   * @param {number} txType - TX_TYPE value
+   * @param {boolean} isProtocolTx - Whether this is a protocol transaction
+   * @param {string} txHash - Transaction hash
+   * @param {Object} header - Block header { height, timestamp }
+   * @param {Array} ownedOutputs - WalletOutput instances we own in this tx
+   * @param {Array} spentOutputs - Outputs spent by this tx
+   * @param {WalletTransaction} walletTx - The wallet transaction record
+   */
+  async _recordStakeLifecycle(txType, isProtocolTx, txHash, header, ownedOutputs, spentOutputs, walletTx) {
+    // Record new STAKE
+    if (txType === TX_TYPE.STAKE && spentOutputs.length > 0) {
+      const changeOutput = ownedOutputs.find(o => o);
+      await this.storage.putStake(new StakeRecord({
+        stakeTxHash: txHash,
+        stakeHeight: header.height,
+        stakeTimestamp: header.timestamp,
+        amountStaked: walletTx.amountBurnt,
+        fee: walletTx.fee,
+        assetType: changeOutput?.assetType || 'SAL',
+        changeOutputKey: changeOutput?.publicKey || null
+      }));
+    }
+
+    // Match PROTOCOL returns to their originating STAKE
+    if (isProtocolTx && ownedOutputs.length > 0) {
+      for (const output of ownedOutputs) {
+        if (output.returnOriginKey) {
+          const stake = await this.storage.getStakeByOutputKey(output.returnOriginKey);
+          if (stake) {
+            await this.storage.markStakeReturned(stake.stakeTxHash, {
+              returnTxHash: txHash,
+              returnHeight: header.height,
+              returnTimestamp: header.timestamp,
+              returnAmount: output.amount
+            });
+          }
+        }
+      }
+    }
   }
 
   /**

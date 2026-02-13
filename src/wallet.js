@@ -954,11 +954,13 @@ export class Wallet {
         balance += amount;
         if (output.isUnlocked(this._syncHeight)) unlockedBalance += amount;
       }
-      // Sum staked amounts from STAKE transactions (type 6)
+      // Sum staked amounts from StakeRecords (only currently locked stakes)
       let stakedBalance = 0n;
-      for (const tx of this._storage._transactions.values()) {
-        if (tx.txType === TX_TYPE.STAKE && tx.isOutgoing) {
-          stakedBalance += typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0);
+      if (this._storage._stakes) {
+        for (const sr of this._storage._stakes.values()) {
+          if (sr.status === 'locked') {
+            stakedBalance += typeof sr.amountStaked === 'bigint' ? sr.amountStaked : BigInt(sr.amountStaked || 0);
+          }
         }
       }
       return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
@@ -1990,16 +1992,39 @@ export class Wallet {
    */
   async getStakeHistory() {
     if (!this._storage) return [];
+    // Prefer StakeRecord-based history (full lifecycle with return info)
+    if (typeof this._storage.getStakes === 'function') {
+      const stakes = await this._storage.getStakes({});
+      return stakes.map(s => ({
+        stakeTxHash: s.stakeTxHash,
+        stakeHeight: s.stakeHeight,
+        stakeTimestamp: s.stakeTimestamp,
+        amountStaked: s.amountStaked,
+        fee: s.fee,
+        assetType: s.assetType,
+        status: s.status,
+        returnTxHash: s.returnTxHash,
+        returnHeight: s.returnHeight,
+        returnTimestamp: s.returnTimestamp,
+        returnAmount: s.returnAmount,
+        yieldEarned: s.status === 'returned' ? s.returnAmount - s.amountStaked : 0n
+      }));
+    }
+    // Fallback: tx-based history (no return info)
     const stakeTxs = await this._storage.getTransactions({ txType: TX_TYPE.STAKE });
     return stakeTxs.map(tx => ({
-      txHash: tx.txHash,
-      blockHeight: tx.blockHeight,
-      blockTimestamp: tx.blockTimestamp,
+      stakeTxHash: tx.txHash,
+      stakeHeight: tx.blockHeight,
+      stakeTimestamp: tx.blockTimestamp,
       amountStaked: typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0),
       fee: typeof tx.fee === 'bigint' ? tx.fee : BigInt(tx.fee || 0),
-      changeAmount: typeof tx.changeAmount === 'bigint' ? tx.changeAmount : BigInt(tx.changeAmount || 0),
-      isOutgoing: tx.isOutgoing,
-      isIncoming: tx.isIncoming
+      assetType: 'SAL',
+      status: 'locked',
+      returnTxHash: null,
+      returnHeight: null,
+      returnTimestamp: null,
+      returnAmount: 0n,
+      yieldEarned: 0n
     }));
   }
 
@@ -2191,11 +2216,13 @@ export class Wallet {
       balance += o.amount;
       if (o.isSpendable(this._syncHeight)) unlockedBalance += o.amount;
     }
-    // Sum staked amounts from STAKE transactions (type 6)
-    const stakeTxs = await this._storage.getTransactions({ txType: TX_TYPE.STAKE, isOutgoing: true });
+    // Sum staked amounts from StakeRecords (only currently locked stakes)
     let stakedBalance = 0n;
-    for (const tx of stakeTxs) {
-      stakedBalance += typeof tx.amountBurnt === 'bigint' ? tx.amountBurnt : BigInt(tx.amountBurnt || 0);
+    if (typeof this._storage.getStakes === 'function') {
+      const lockedStakes = await this._storage.getStakes({ status: 'locked' });
+      for (const s of lockedStakes) {
+        stakedBalance += typeof s.amountStaked === 'bigint' ? s.amountStaked : BigInt(s.amountStaked || 0);
+      }
     }
     return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
   }
