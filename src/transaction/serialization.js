@@ -496,20 +496,49 @@ export function serializeGenInput(height) {
 /**
  * Serialize transaction extra field
  *
+ * Matches C++ store_carrot_ephemeral_pubkeys_to_extra() tag selection:
+ * - 1 output (or no additionalPubKeys): shared D_e in tag 0x01
+ * - 2 outputs with identical D_e: shared D_e in tag 0x01
+ * - 2+ outputs with different D_e (or 3+): per-output in tag 0x04 only, NO tag 0x01
+ *
  * @param {Object} extra - Extra field data
- * @param {Uint8Array} extra.txPubKey - Transaction public key (32 bytes)
+ * @param {Uint8Array|string} [extra.txPubKey] - Shared transaction public key (32 bytes)
  * @param {Uint8Array} [extra.paymentId] - Optional encrypted payment ID (8 bytes)
- * @param {Array<Uint8Array>} [extra.additionalPubKeys] - Additional tx public keys
+ * @param {Array<Uint8Array|string>} [extra.additionalPubKeys] - Per-output tx public keys
  * @returns {Uint8Array} Serialized extra field
  */
 export function serializeTxExtra(extra) {
   const chunks = [];
+  const additionalKeys = extra.additionalPubKeys || [];
 
-  // TX_EXTRA_TAG_PUBKEY = 0x01
-  if (extra.txPubKey) {
-    const pk = typeof extra.txPubKey === 'string' ? hexToBytes(extra.txPubKey) : extra.txPubKey;
-    chunks.push(new Uint8Array([0x01]));
-    chunks.push(pk);
+  // C++ logic (format_utils.cpp:61):
+  //   use_shared = nouts == 1 || (nouts == 2 && first_D_e == last_D_e)
+  // When shared: tag 0x01 only. When per-output: tag 0x04 only (no 0x01).
+  let useSharedPubkey = true;
+  if (additionalKeys.length >= 3) {
+    useSharedPubkey = false;
+  } else if (additionalKeys.length === 2) {
+    const a = typeof additionalKeys[0] === 'string' ? additionalKeys[0] : bytesToHex(additionalKeys[0]);
+    const b = typeof additionalKeys[1] === 'string' ? additionalKeys[1] : bytesToHex(additionalKeys[1]);
+    useSharedPubkey = (a === b);
+  }
+
+  if (useSharedPubkey) {
+    // TX_EXTRA_TAG_PUBKEY = 0x01 — shared ephemeral pubkey
+    const pubkey = extra.txPubKey || (additionalKeys.length > 0 ? additionalKeys[0] : null);
+    if (pubkey) {
+      const pk = typeof pubkey === 'string' ? hexToBytes(pubkey) : pubkey;
+      chunks.push(new Uint8Array([0x01]));
+      chunks.push(pk);
+    }
+  } else {
+    // TX_EXTRA_TAG_ADDITIONAL_PUBKEYS = 0x04 — per-output ephemeral pubkeys (no tag 0x01)
+    chunks.push(new Uint8Array([0x04]));
+    chunks.push(encodeVarint(additionalKeys.length));
+    for (const pk of additionalKeys) {
+      const pkBytes = typeof pk === 'string' ? hexToBytes(pk) : pk;
+      chunks.push(pkBytes);
+    }
   }
 
   // TX_EXTRA_NONCE = 0x02 with encrypted payment ID
@@ -518,16 +547,6 @@ export function serializeTxExtra(extra) {
     // 0x02 (nonce tag) + length (9) + 0x01 (encrypted payment ID tag) + 8 bytes
     chunks.push(new Uint8Array([0x02, 9, 0x01]));
     chunks.push(pid);
-  }
-
-  // TX_EXTRA_TAG_ADDITIONAL_PUBKEYS = 0x04
-  if (extra.additionalPubKeys && extra.additionalPubKeys.length > 0) {
-    chunks.push(new Uint8Array([0x04]));
-    chunks.push(encodeVarint(extra.additionalPubKeys.length));
-    for (const pk of extra.additionalPubKeys) {
-      const pkBytes = typeof pk === 'string' ? hexToBytes(pk) : pk;
-      chunks.push(pkBytes);
-    }
   }
 
   return concatBytes(chunks);
