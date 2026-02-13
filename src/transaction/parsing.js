@@ -357,12 +357,42 @@ export function parseExtra(extraBytes) {
         extra.push({ type: 0x04, tag: 'additional_pubkeys', keys: additionalPubkeys });
         break;
 
-      default:
-        // Unknown tag - try to skip using varint length
-        // This is a best-effort attempt
-        extra.push({ type: tag, tag: 'unknown', offset: offset - 1 });
-        // Skip remaining bytes as we don't know the format
-        offset = extraBytes.length;
+      case 0xDE: { // TX_EXTRA_MYSTERIOUS_MINERGATE_TAG — varint size + data
+        if (offset < extraBytes.length) {
+          const { value: fieldLen, bytesRead: lenBytes } = decodeVarint(extraBytes, offset);
+          const skipLen = Number(fieldLen);
+          if (offset + lenBytes + skipLen <= extraBytes.length) {
+            extra.push({ type: 0xDE, tag: 'minergate', data: extraBytes.slice(offset + lenBytes, offset + lenBytes + skipLen) });
+            offset += lenBytes + skipLen;
+          } else {
+            offset = extraBytes.length;
+          }
+        }
+        break;
+      }
+
+      default: {
+        // Unknown tag — try varint-length skip (CryptoNote convention)
+        let skipped = false;
+        if (offset < extraBytes.length) {
+          try {
+            const { value: fieldLen, bytesRead: lenBytes } = decodeVarint(extraBytes, offset);
+            const skipLen = Number(fieldLen);
+            if (skipLen >= 0 && offset + lenBytes + skipLen <= extraBytes.length) {
+              extra.push({ type: tag, tag: 'unknown', data: extraBytes.slice(offset + lenBytes, offset + lenBytes + skipLen) });
+              offset += lenBytes + skipLen;
+              skipped = true;
+            }
+          } catch (_e) {
+            // Varint decode failed
+          }
+        }
+        if (!skipped) {
+          extra.push({ type: tag, tag: 'unknown', offset: offset - 1 });
+          offset = extraBytes.length;
+        }
+        break;
+      }
     }
   }
 

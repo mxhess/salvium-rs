@@ -12,7 +12,7 @@
 
 import { WalletOutput, WalletTransaction } from './wallet-store.js';
 import { cnSubaddressSecretKey, carrotIndexExtensionGenerator, carrotSubaddressScalar } from './subaddress.js';
-import { scanCarrotOutput, scanCarrotInternalOutput, computeReturnAddress, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage } from './carrot-scanning.js';
+import { scanCarrotOutput, scanCarrotInternalOutput, computeReturnAddress, makeInputContext, makeInputContextCoinbase, generateCarrotKeyImage, carrotEcdhKeyExchange, testCarrotViewTag } from './carrot-scanning.js';
 import { parseTransaction, parseBlock, extractTxPubKey, extractPaymentId, extractAdditionalPubKeys, serializeTxPrefix } from './transaction.js';
 import { bytesToHex, hexToBytes } from './address.js';
 import { TX_TYPE } from './wallet.js';
@@ -1183,9 +1183,23 @@ export class WalletSync {
           offset += 32;
         }
         parsed.push({ type: 0x04, keys });
+      } else if (tag === 0xDE) {
+        // TX_EXTRA_MYSTERIOUS_MINERGATE_TAG — varint size + data
+        if (offset >= extraBytes.length) break;
+        let len = 0, lenBytes = 0;
+        let b = extraBytes[offset];
+        while (b & 0x80) { len |= (b & 0x7f) << (7 * lenBytes); lenBytes++; b = extraBytes[offset + lenBytes]; }
+        len |= b << (7 * lenBytes); lenBytes++;
+        offset += lenBytes + len;
       } else {
-        // Unknown tag, try to skip
-        break;
+        // Unknown tag — try varint-length skip
+        if (offset >= extraBytes.length) break;
+        const b0 = extraBytes[offset];
+        if (!(b0 & 0x80) && offset + 1 + b0 <= extraBytes.length) {
+          offset += 1 + b0; // single-byte varint length + data
+        } else {
+          break;
+        }
       }
     }
 
@@ -1332,6 +1346,76 @@ export class WalletSync {
       }
     }
 
+    // ── CARROT per-TX pre-computation ──────────────────────────────────────
+    // Pre-compute X25519 shared secret for early view tag rejection.
+    // Single-output CARROT txs: D_e is in txPubKey (tag 0x01) — one shared secret for all outputs.
+    // Multi-output CARROT txs: D_e[i] is in additional_pubkeys (tag 0x04) — per-output shared secret.
+    // With a 3-byte view tag (~1:16M false positive), virtually all non-owned
+    // outputs are rejected with just a cheap blake2b + X25519, never entering
+    // the expensive _scanCarrotOutput path.
+    let carrotPrecomputed = null;
+    let carrotPerOutputKeys = null;
+
+    if (this.carrotKeys?.viewIncomingKey) {
+      // Build inputContext (shared across all outputs, doesn't need txPubKey)
+      const inputs = tx.prefix?.vin || tx.inputs || [];
+      const firstKiRaw = inputs.length > 0 ? (inputs[0].keyImage || inputs[0].key?.k_image) : null;
+      let inputContext;
+      if (firstKiRaw) {
+        const kiBytes = typeof firstKiRaw === 'string' ? hexToBytes(firstKiRaw) : firstKiRaw;
+        inputContext = makeInputContext(kiBytes);
+      } else {
+        inputContext = makeInputContextCoinbase(header.height);
+      }
+
+      // Convert viewIncomingKey once (hex string → Uint8Array)
+      const viewIncomingKeyBytes = typeof this.carrotKeys.viewIncomingKey === 'string'
+        ? hexToBytes(this.carrotKeys.viewIncomingKey)
+        : this.carrotKeys.viewIncomingKey;
+
+      // Internal (self-send) view tag key: raw viewBalanceSecret bytes
+      let viewBalanceSecretBytes = null;
+      if (firstKiRaw && this.carrotKeys.viewBalanceSecret) {
+        viewBalanceSecretBytes = typeof this.carrotKeys.viewBalanceSecret === 'string'
+          ? hexToBytes(this.carrotKeys.viewBalanceSecret)
+          : this.carrotKeys.viewBalanceSecret;
+      }
+
+      if (txPubKey) {
+        // ── Single D_e path: pre-compute one shared secret for ALL outputs ──
+        const rctType = tx.rct?.type ?? 0;
+        const additionalPubKeys = rctType < 8 ? extractAdditionalPubKeys(tx) : null;
+        const deIsTxPubKey = rctType >= 8 || !additionalPubKeys || additionalPubKeys.length === 0;
+
+        if (deIsTxPubKey) {
+          const De = typeof txPubKey === 'string' ? hexToBytes(txPubKey) : txPubKey;
+          try {
+            const sharedSecretExternal = carrotEcdhKeyExchange(viewIncomingKeyBytes, De);
+            carrotPrecomputed = {
+              inputContext,
+              sharedSecretExternal,
+              sharedSecretInternal: viewBalanceSecretBytes,
+              hasKeyImages: !!firstKiRaw
+            };
+          } catch (_e) {
+            // Invalid D_e — fall through to per-output path
+          }
+        }
+      } else {
+        // ── Per-output D_e path: multi-output CARROT txs store D_e[i] in additional_pubkeys ──
+        const additionalPubKeys = extractAdditionalPubKeys(tx);
+        if (additionalPubKeys.length > 0) {
+          carrotPerOutputKeys = {
+            keys: additionalPubKeys,
+            viewIncomingKeyBytes,
+            viewBalanceSecretBytes,
+            inputContext,
+            hasKeyImages: !!firstKiRaw
+          };
+        }
+      }
+    }
+
     for (let i = 0; i < outputs.length; i++) {
       const output = outputs[i];
       const outputPubKey = this._extractOutputPubKey(output);
@@ -1345,7 +1429,63 @@ export class WalletSync {
       const isCarrotOutput = this._isCarrotOutput(output);
 
       if (isCarrotOutput && this.carrotKeys) {
-        // CARROT scanning - pass txPubKey (D_e) from tx_extra
+        // ── FAST PATH: early view tag rejection ──
+        // Check 3-byte CARROT view tag before entering the expensive _scanCarrotOutput.
+        if (output.viewTag instanceof Uint8Array) {
+          let viewTagMatch = false;
+
+          if (carrotPrecomputed) {
+            // Single D_e: use pre-computed shared secret (same for all outputs)
+            if (carrotPrecomputed.sharedSecretExternal) {
+              viewTagMatch = testCarrotViewTag(
+                carrotPrecomputed.sharedSecretExternal,
+                carrotPrecomputed.inputContext,
+                outputPubKey,
+                output.viewTag
+              );
+            }
+            if (!viewTagMatch && carrotPrecomputed.sharedSecretInternal) {
+              viewTagMatch = testCarrotViewTag(
+                carrotPrecomputed.sharedSecretInternal,
+                carrotPrecomputed.inputContext,
+                outputPubKey,
+                output.viewTag
+              );
+            }
+            if (!viewTagMatch && !carrotPrecomputed.hasKeyImages) {
+              const koHex = bytesToHex(outputPubKey);
+              if (this._returnOutputMap.has(koHex)) viewTagMatch = true;
+            }
+          } else if (carrotPerOutputKeys && carrotPerOutputKeys.keys[i]) {
+            // Per-output D_e: compute X25519 shared secret for this output's D_e
+            const perDe = carrotPerOutputKeys.keys[i];
+            const De = typeof perDe === 'string' ? hexToBytes(perDe) : perDe;
+            try {
+              const sharedSecret = carrotEcdhKeyExchange(carrotPerOutputKeys.viewIncomingKeyBytes, De);
+              viewTagMatch = testCarrotViewTag(
+                sharedSecret,
+                carrotPerOutputKeys.inputContext,
+                outputPubKey,
+                output.viewTag
+              );
+              // Internal (self-send) check
+              if (!viewTagMatch && carrotPerOutputKeys.viewBalanceSecretBytes) {
+                viewTagMatch = testCarrotViewTag(
+                  carrotPerOutputKeys.viewBalanceSecretBytes,
+                  carrotPerOutputKeys.inputContext,
+                  outputPubKey,
+                  output.viewTag
+                );
+              }
+            } catch (_e) {
+              viewTagMatch = true; // X25519 failed — don't reject, let full scan handle it
+            }
+          }
+
+          if ((carrotPrecomputed || carrotPerOutputKeys) && !viewTagMatch) continue;
+        }
+
+        // View tag matched (or pre-check unavailable) — full CARROT scan
         scanResult = await this._scanCarrotOutput(output, i, tx, txHash, txPubKey, header);
       } else if (cnDerivation) {
         // CryptoNote (legacy) scanning with pre-computed derivation
