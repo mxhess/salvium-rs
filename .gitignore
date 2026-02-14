@@ -1,6 +1,9 @@
 bun.lock
 node_modules/
+dist/
+prebuilt/
 build/
+crates/salvium-crypto/.cargo/
 TODO
 
 # Rust/WASM build artifacts

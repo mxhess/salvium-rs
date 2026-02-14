@@ -470,6 +470,7 @@ export async function transfer({ wallet, daemon, destinations, options = {} }) {
   return {
     txHash,
     fee: estimatedFee,
+    amount: totalSend,
     tx,
     serializedHex: txHex,
     inputCount: preparedInputs.length,

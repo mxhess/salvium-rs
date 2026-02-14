@@ -2186,6 +2186,28 @@ export class Wallet {
   }
 
   /**
+   * @private Save a pending (in-mempool) transaction record after broadcast.
+   * When the sync engine later processes the block containing this tx, the
+   * existing pending record gets overwritten with full confirmed data.
+   */
+  async _savePendingTx({ txHash, fee, amount, txType, assetType }) {
+    if (!this._storage || !txHash) return;
+    await this._storage.putTransaction({
+      txHash,
+      blockHeight: null,
+      blockTimestamp: null,
+      inPool: true,
+      isConfirmed: false,
+      isOutgoing: true,
+      isIncoming: false,
+      outgoingAmount: amount,
+      fee,
+      txType,
+      assetType: assetType || 'SAL',
+    });
+  }
+
+  /**
    * Sync wallet with blockchain using WalletSync engine.
    * Replaces the naive block-fetching sync with the full scanning pipeline.
    *
@@ -2245,7 +2267,16 @@ export class Wallet {
       destinations,
       options: { network: this.network, ...options },
     });
-    if (!options.dryRun) await this._markSpent(result);
+    if (!options.dryRun) {
+      await this._markSpent(result);
+      await this._savePendingTx({
+        txHash: result.txHash,
+        fee: result.fee,
+        amount: result.amount,
+        txType: TX_TYPE.TRANSFER,
+        assetType: options.assetType,
+      });
+    }
     return result;
   }
 
@@ -2266,7 +2297,16 @@ export class Wallet {
       address,
       options: { network: this.network, ...options },
     });
-    if (!options.dryRun) await this._markSpent(result);
+    if (!options.dryRun) {
+      await this._markSpent(result);
+      await this._savePendingTx({
+        txHash: result.txHash,
+        fee: result.fee,
+        amount: result.amount,
+        txType: TX_TYPE.TRANSFER,
+        assetType: options.assetType,
+      });
+    }
     return result;
   }
 
@@ -2287,7 +2327,16 @@ export class Wallet {
       amount,
       options: { network: this.network, ...options },
     });
-    if (!options.dryRun) await this._markSpent(result);
+    if (!options.dryRun) {
+      await this._markSpent(result);
+      await this._savePendingTx({
+        txHash: result.txHash,
+        fee: result.fee,
+        amount: result.stakeAmount,
+        txType: TX_TYPE.STAKE,
+        assetType: options.assetType,
+      });
+    }
     return result;
   }
 
