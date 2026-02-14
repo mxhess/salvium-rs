@@ -853,9 +853,18 @@ function parseRctSigPrunable(data, startOffset, type, inputCount, outputCount, m
         L.push(readBytes(32, `bulletproofPlus[${i}].L[${j}]`));
       }
 
-      // R array (same size as L)
+      // R array (has its own varint count, same as L in practice)
+      const Rcount = readVarint(`bulletproofPlus[${i}].R count`);
+      if (Rcount > 64) {
+        throw new ParseError('Invalid R array count in bulletproofPlus', {
+          field: `bulletproofPlus[${i}].R count`,
+          offset,
+          expected: '<=64',
+          actual: Rcount
+        });
+      }
       const R = [];
-      for (let j = 0; j < Lcount; j++) {
+      for (let j = 0; j < Rcount; j++) {
         R.push(readBytes(32, `bulletproofPlus[${i}].R[${j}]`));
       }
 
