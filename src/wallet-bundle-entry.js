@@ -65,23 +65,6 @@ export {
   TRANSFER_TYPE
 } from './rpc/index.js';
 
-// Ed25519 operations
-export {
-  scalarMultBase,
-  scalarMultPoint,
-  pointAddCompressed,
-  pointSubCompressed,
-  pointNegate,
-  randomScalar as ed25519RandomScalar,
-  randomPoint,
-  isValidPoint,
-  getGeneratorG,
-  getGeneratorT,
-  computeCarrotSpendPubkey,
-  computeCarrotAccountViewPubkey,
-  computeCarrotMainAddressViewPubkey
-} from './ed25519.js';
-
 // Crypto backend
 export { setCryptoBackend, getCryptoBackend, getCurrentBackendType } from './crypto/index.js';
 
