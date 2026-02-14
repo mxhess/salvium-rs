@@ -143,28 +143,13 @@ export {
   pointSubCompressed,
   pointNegate,
   randomScalar as ed25519RandomScalar,
-  randomPoint,
   isValidPoint,
   getGeneratorG,
   getGeneratorT,
   computeCarrotSpendPubkey,
   computeCarrotAccountViewPubkey,
-  computeCarrotMainAddressViewPubkey,
-  testDouble,
-  getBasePoint,
-  test2G,
-  testIdentity,
-  get2GAffine,
-  isOnCurve,
-  checkG,
-  check2G,
-  compare2GMethods,
-  decodeExpected2G,
-  testFieldOps,
-  debugCurveEquation,
-  verifyDConstant,
-  computeXFromY
-} from './ed25519.js';
+  computeCarrotMainAddressViewPubkey
+} from './crypto/index.js';
 
 // Import named exports for combined API object
 import {
@@ -236,14 +221,13 @@ import {
   pointSubCompressed,
   pointNegate,
   randomScalar as ed25519RandomScalar,
-  randomPoint,
   isValidPoint,
   getGeneratorG,
   getGeneratorT,
   computeCarrotSpendPubkey,
   computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey
-} from './ed25519.js';
+} from './crypto/index.js';
 
 import {
   WORD_LIST,
@@ -776,7 +760,6 @@ const salvium = {
   pointSubCompressed,
   pointNegate,
   ed25519RandomScalar,
-  randomPoint,
   isValidPoint,
   getGeneratorG,
   getGeneratorT,

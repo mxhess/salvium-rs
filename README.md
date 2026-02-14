@@ -1403,7 +1403,7 @@ CRYPTO_BACKEND=ffi bun test/wallet-store-ffi.test.js
 STORAGE_BACKEND=ffi STORAGE_PATH=./test-wallet.db bun test/integration-sync.test.js
 
 # Full testnet validation — mines through all 10 hard forks with WASM probes
-bun test/full-testnet.js --daemon http://web.whiskymine.io:29081
+bun test/full-testnet.js --daemon http://node12.whiskymine.io:29081
 
 # Resume testnet validation from a specific hard fork
 bun test/full-testnet.js --resume-from 6

@@ -10,7 +10,7 @@ import { MemoryStorage } from '../src/wallet-store.js';
 import { transfer } from '../src/wallet/transfer.js';
 import { hexToBytes } from '../src/address.js';
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const WALLET_FILE = process.env.WALLET_FILE || `${process.env.HOME}/testnet-wallet/wallet.json`;
 const NETWORK = 'testnet';
 

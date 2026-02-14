@@ -8,7 +8,7 @@ import { estimateTransactionFee } from '../src/transaction.js';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const raw = JSON.parse(await Bun.file(process.env.HOME + '/testnet-wallet/wallet-a.json').text());
 const keys = {
   viewSecretKey: raw.viewSecretKey,

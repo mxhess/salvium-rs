@@ -23,7 +23,7 @@ export {
   // Point ops
   scalarMultBase, scalarMultPoint, pointAddCompressed,
   pointSubCompressed, pointNegate, doubleScalarMultBase,
-  isIdentity,
+  isIdentity, isValidPoint,
   // Constants
   getGeneratorG, getGeneratorT,
   // Random

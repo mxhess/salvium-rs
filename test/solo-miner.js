@@ -14,7 +14,7 @@
  *   --mode, -m      light|full (default: light)
  *   --blocks, -n    Number of blocks to mine (default: 5)
  *   --address, -a   Wallet address for mining rewards (required)
- *   --daemon, -d    Daemon URL (default: http://web.whiskymine.io:29081)
+ *   --daemon, -d    Daemon URL (default: http://node12.whiskymine.io:29081)
  *   --threads, -t   Number of mining threads (default: 4, max: 4)
  */
 
@@ -40,7 +40,7 @@ function parseArgs() {
     mode: 'light',
     blocks: 5,
     address: '',
-    daemon: 'http://web.whiskymine.io:29081',
+    daemon: 'http://node12.whiskymine.io:29081',
     threads: 4,
   };
 

@@ -16,17 +16,12 @@
 
 import { keccak256 } from './keccak.js';
 import { hexToBytes, bytesToHex } from './address.js';
-import { Point as NoblePoint } from '@noble/ed25519';
 import {
   scalarMultBase,
   scalarMultPoint,
-  pointFromBytes,
-  pointToBytes,
-  pointAddCompressed
-} from './ed25519.js';
-
-// Group order L for scalar reduction
-const L = (1n << 252n) + 27742317777372353535851937790883648493n;
+  pointAddCompressed,
+  scReduce32, scAdd as scalarAddBackend
+} from './crypto/index.js';
 
 // ============================================================================
 // Utility Functions
@@ -48,46 +43,8 @@ function encodeVarint(n) {
   return new Uint8Array(bytes);
 }
 
-/**
- * Reduce a 32-byte value modulo L (curve order)
- * @param {Uint8Array} bytes - 32 bytes to reduce
- * @returns {Uint8Array} 32-byte scalar
- */
-function scReduce32(bytes) {
-  let n = 0n;
-  for (let i = 31; i >= 0; i--) {
-    n = (n << 8n) | BigInt(bytes[i]);
-  }
-  n = n % L;
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-  return result;
-}
-
-/**
- * Scalar addition: a + b mod L
- * @param {Uint8Array} a - 32-byte scalar
- * @param {Uint8Array} b - 32-byte scalar
- * @returns {Uint8Array} 32-byte result
- */
-function scalarAdd(a, b) {
-  let aVal = 0n;
-  let bVal = 0n;
-  for (let i = 31; i >= 0; i--) {
-    aVal = (aVal << 8n) | BigInt(a[i]);
-    bVal = (bVal << 8n) | BigInt(b[i]);
-  }
-  let result = (aVal + bVal) % L;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    out[i] = Number(result & 0xffn);
-    result = result >> 8n;
-  }
-  return out;
-}
+// scReduce32 and scalarAdd delegated to Rust backend via crypto/index.js
+function scalarAdd(a, b) { return scalarAddBackend(a, b); }
 
 /**
  * XOR two byte arrays of equal length

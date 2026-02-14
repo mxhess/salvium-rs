@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: process.env.DAEMON_URL || 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081' });
 const info = await daemon.getInfo();
 const height = info.result?.height;
 const hf = getHfVersionForHeight(height, 1);

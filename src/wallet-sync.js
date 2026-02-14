@@ -1972,6 +1972,30 @@ export class WalletSync {
       return null;
     }
 
+    // Try consolidated native scan (1 FFI call instead of 5-12)
+    const backend = getCryptoBackend();
+    if (typeof backend.scanCnOutput === 'function') {
+      const rctType = tx.rct?.type ?? 0;
+      const clearTextAmount = rctType === 0
+        ? (typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount || 0))
+        : undefined;
+      const ecdhEncAmount = rctType !== 0 ? tx.rct?.ecdhInfo?.[outputIndex]?.amount : undefined;
+      const ecdhBytes = ecdhEncAmount
+        ? (typeof ecdhEncAmount === 'string' ? hexToBytes(ecdhEncAmount) : ecdhEncAmount)
+        : undefined;
+
+      const result = backend.scanCnOutput(
+        outputPubKey, derivation, outputIndex, output.viewTag,
+        rctType, clearTextAmount, ecdhBytes,
+        this.keys.spendSecretKey, this.keys.viewSecretKey,
+        this.subaddresses
+      );
+      if (result) return result;  // { amount, mask, subaddressIndex, keyImage, isCarrot: false }
+      return null;  // Not owned
+    }
+
+    // JS fallback (WASM/JS backends without native scan)
+
     // Check view tag FIRST (if available) for fast rejection
     if (output.viewTag !== undefined) {
       const expectedViewTag = deriveViewTag(derivation, outputIndex);

@@ -143,6 +143,18 @@ export class JsiCryptoBackend {
     return this.native.makeInputContextCoinbase(blockHeight);
   }
 
+  // ─── CryptoNote Output Scanning ──────────────────────────────────────────
+
+  scanCnOutput(outputPubkey, derivation, outputIndex, viewTag,
+      rctType, clearTextAmount, ecdhEncAmount,
+      spendSecretKey, viewSecretKey, subaddressMap) {
+    return this.native.cnScanOutput(
+      outputPubkey, derivation, outputIndex, viewTag,
+      rctType, clearTextAmount, ecdhEncAmount,
+      spendSecretKey, viewSecretKey, subaddressMap
+    );
+  }
+
   // ─── Transaction Extra Parsing & Serialization ────────────────────────────
 
   parseExtra(extraBytes) {
@@ -193,6 +205,20 @@ export class JsiCryptoBackend {
   async verifySignature(message, signature, pubkeyDer) {
     // Native module returns 1 for valid, 0 for invalid
     return this.native.verifySignature(message, signature, pubkeyDer) === 1;
+  }
+
+  // ─── RCT Batch Signature Verification ──────────────────────────────────
+
+  verifyRctSignatures(rctType, inputCount, ringSize, txPrefixHash,
+      rctBaseBytes, bpComponents, keyImagesFlat, pseudoOutsFlat,
+      sigsFlat, ringPubkeysFlat, ringCommitmentsFlat) {
+    const result = this.native.verifyRctSignatures(
+      rctType, inputCount, ringSize,
+      txPrefixHash, rctBaseBytes, bpComponents,
+      keyImagesFlat, pseudoOutsFlat, sigsFlat,
+      ringPubkeysFlat, ringCommitmentsFlat
+    );
+    return result;
   }
 
   // ─── CLSAG Ring Signatures ──────────────────────────────────────────────

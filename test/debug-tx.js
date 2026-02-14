@@ -7,7 +7,7 @@ import { readFileSync } from 'fs';
 import { randomScalar, scalarMultBase } from '../src/crypto/index.js';
 import { createAddress } from '../src/address.js';
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const walletAJson = JSON.parse(readFileSync('/home/mxhess/testnet-wallet/wallet-a.json', 'utf-8'));
 const keysA = {
   viewSecretKey: walletAJson.viewSecretKey,
@@ -72,7 +72,7 @@ const result = await transfer({
   options: { priority: 'default', network: 'testnet', dryRun: false }
 });
 console.log('TX hex length:', result.serializedHex.length / 2, 'bytes');
-const resp = await fetch('http://web.whiskymine.io:29081/sendrawtransaction', {
+const resp = await fetch('http://node12.whiskymine.io:29081/sendrawtransaction', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ tx_as_hex: result.serializedHex, do_not_relay: true })

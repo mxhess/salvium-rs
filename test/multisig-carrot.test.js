@@ -15,7 +15,7 @@ import {
   generateMultisigCarrotKeyImage
 } from '../src/multisig-carrot.js';
 import { bytesToHex } from '../src/address.js';
-import { randomScalar } from '../src/ed25519.js';
+import { randomScalar } from '../src/crypto/index.js';
 
 // Helper: create a MultisigCarrotAccount with simulated KEX completion
 function createCompletedAccount() {

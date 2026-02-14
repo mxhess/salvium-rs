@@ -44,7 +44,7 @@ await setCryptoBackend('wasm');
 
 // Configuration
 const CONFIG = {
-  daemonUrl: process.env.DAEMON_URL || 'http://web.whiskymine.io:29081',
+  daemonUrl: process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081',
   network: 'testnet',
   walletAPath: process.env.HOME + '/testnet-wallet/wallet-a.json',
   walletBPath: process.env.HOME + '/testnet-wallet/wallet-b-new.json',

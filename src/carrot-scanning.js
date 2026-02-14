@@ -19,13 +19,11 @@ import { hexToBytes, bytesToHex } from './address.js';
 import {
   blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint,
   commit as pedersenCommit, x25519ScalarMult,
+  scReduce64, scAdd, scMul,
   computeCarrotViewTagRust, decryptCarrotAmountRust,
   deriveCarrotCommitmentMaskRust, recoverCarrotAddressSpendPubkeyRust,
   makeInputContextRctRust, makeInputContextCoinbaseRust,
 } from './crypto/index.js';
-
-// Group order L for scalar reduction
-const L = (1n << 252n) + 27742317777372353535851937790883648493n;
 
 // ============================================================================
 // X25519 Implementation (Montgomery Curve)
@@ -312,30 +310,8 @@ function makeTranscript(domain, ...args) {
   return transcript;
 }
 
-/**
- * sc_reduce: reduce a 64-byte value modulo L to 32 bytes
- * This matches crypto-ops.c sc_reduce
- * @param {Uint8Array} input - 64-byte input
- * @returns {Uint8Array} 32-byte reduced scalar
- */
-function scReduce(input) {
-  // Read 64-byte input as little-endian BigInt
-  let n = 0n;
-  for (let i = 63; i >= 0; i--) {
-    n = (n << 8n) | BigInt(input[i]);
-  }
-
-  // Reduce mod L
-  n = n % L;
-
-  // Convert back to 32-byte little-endian
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-  return result;
-}
+// sc_reduce delegated to Rust backend (scReduce64 for 64-byte inputs)
+function scReduce(input) { return scReduce64(input); }
 
 /**
  * derive_scalar: H_n with 64-byte hash then sc_reduce
@@ -812,55 +788,9 @@ export function computeReturnAddress(viewBalanceSecret, inputContext, onetimeAdd
 }
 
 // ============================================================================
-// Import additional ed25519 functions
-// ============================================================================
-
-// Group order L for scalar reduction (also defined at top for clarity)
-const L_ORDER = (1n << 252n) + 27742317777372353535851937790883648493n;
-
-/**
- * Scalar addition: a + b mod L
- * @param {Uint8Array} a - 32-byte scalar
- * @param {Uint8Array} b - 32-byte scalar
- * @returns {Uint8Array} 32-byte result
- */
-function scalarAdd(a, b) {
-  let aVal = 0n;
-  let bVal = 0n;
-  for (let i = 0; i < 32; i++) {
-    aVal |= BigInt(a[i]) << (8n * BigInt(i));
-    bVal |= BigInt(b[i]) << (8n * BigInt(i));
-  }
-  let result = (aVal + bVal) % L_ORDER;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    out[i] = Number(result & 0xffn);
-    result = result >> 8n;
-  }
-  return out;
-}
-
-/**
- * Scalar multiplication: a * b mod L
- * @param {Uint8Array} a - 32-byte scalar
- * @param {Uint8Array} b - 32-byte scalar
- * @returns {Uint8Array} 32-byte result
- */
-function scalarMul(a, b) {
-  let aVal = 0n;
-  let bVal = 0n;
-  for (let i = 0; i < 32; i++) {
-    aVal |= BigInt(a[i]) << (8n * BigInt(i));
-    bVal |= BigInt(b[i]) << (8n * BigInt(i));
-  }
-  let result = (aVal * bVal) % L_ORDER;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    out[i] = Number(result & 0xffn);
-    result = result >> 8n;
-  }
-  return out;
-}
+// Scalar ops delegated to Rust backend via crypto/index.js
+function scalarAdd(a, b) { return scAdd(a, b); }
+function scalarMul(a, b) { return scMul(a, b); }
 
 /**
  * Generate CARROT key image

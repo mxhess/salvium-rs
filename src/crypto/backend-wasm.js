@@ -263,6 +263,20 @@ export class WasmCryptoBackend {
     );
   }
 
+  // ─── RCT Batch Signature Verification ──────────────────────────────────
+
+  verifyRctSignatures(rctType, inputCount, ringSize, txPrefixHash,
+      rctBaseBytes, bpComponents, keyImagesFlat, pseudoOutsFlat,
+      sigsFlat, ringPubkeysFlat, ringCommitmentsFlat) {
+    const result = this.wasm.verify_rct_signatures_wasm(
+      rctType, inputCount, ringSize,
+      txPrefixHash, rctBaseBytes, bpComponents,
+      keyImagesFlat, pseudoOutsFlat, sigsFlat,
+      ringPubkeysFlat, ringCommitmentsFlat
+    );
+    return new Uint8Array(result);
+  }
+
   // ─── Bulletproofs+ Range Proofs ────────────────────────────────────────
 
   bulletproofPlusProve(amounts, masks) {

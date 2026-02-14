@@ -18,7 +18,7 @@ function bytesToHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const txHash = 'd2ad187cc0dde491ae6134c8ad2df9188646859ecf2974271375f5257a51ada2';
 
 // Get TX both as hex and as JSON

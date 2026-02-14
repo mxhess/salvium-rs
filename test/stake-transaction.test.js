@@ -13,7 +13,7 @@ import {
   TX_TYPE,
   scRandom
 } from '../src/transaction.js';
-import { scalarMultBase } from '../src/ed25519.js';
+import { scalarMultBase } from '../src/crypto/index.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
 import { MAINNET_CONFIG, TESTNET_CONFIG } from '../src/consensus.js';
 

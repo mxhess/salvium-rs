@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-DAEMON_URL="${DAEMON_URL:-http://web.whiskymine.io:29081}"
+DAEMON_URL="${DAEMON_URL:-http://node12.whiskymine.io:29081}"
 
 echo "=========================================="
 echo "  salvium-js Integration Tests"

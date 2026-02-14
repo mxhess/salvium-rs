@@ -6,39 +6,13 @@
  */
 
 import {
-  keccak256, blake2b,
+  keccak256, blake2b, scReduce32,
   scalarMultBase, scalarMultPoint, pointAddCompressed,
   cnSubaddressMapBatch as _cnBatch,
   carrotSubaddressMapBatch as _carrotBatch,
 } from './crypto/index.js';
 
-// Group order L for scalar reduction
-const L = (1n << 252n) + 27742317777372353535851937790883648493n;
-
-/**
- * Reduce a 32-byte hash to a scalar mod L
- * @param {Uint8Array} bytes - 32 bytes
- * @returns {Uint8Array} 32-byte scalar
- */
-function scReduce32(bytes) {
-  // Convert to BigInt (little-endian)
-  let n = 0n;
-  for (let i = 31; i >= 0; i--) {
-    n = (n << 8n) | BigInt(bytes[i]);
-  }
-
-  // Reduce mod L
-  n = n % L;
-
-  // Convert back to bytes (little-endian)
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-
-  return result;
-}
+// scReduce32 delegated to Rust backend via crypto/index.js
 
 /**
  * Hash to scalar using Keccak256

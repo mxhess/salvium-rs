@@ -13,7 +13,7 @@
  */
 
 import { keccak256 } from '../keccak.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed } from '../ed25519.js';
+import { scalarMultBase, scalarMultPoint, pointAddCompressed } from '../crypto/index.js';
 import { bytesToHex, hexToBytes } from '../address.js';
 // NOTE: provider.js is a safe import here despite the circular path through backend-js.js.
 // ESM handles circular deps via live bindings — getCryptoBackend/getCurrentBackendType are
@@ -398,17 +398,20 @@ export function serializeTxOutput(output) {
   // Amount (varint, usually 0 for RingCT)
   chunks.push(encodeVarint(output.amount || 0n));
 
+  // Accept both parsed format (key) and construction format (target)
+  const outKey = output.key || output.target;
+
   if (output.type === TXOUT_TYPE.ToCarrotV1) {
     // CARROT v1 output (HF10+)
     chunks.push(new Uint8Array([TXOUT_TYPE.ToCarrotV1]));
     // key (32 bytes)
-    chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    chunks.push(typeof outKey === 'string' ? hexToBytes(outKey) : outKey);
     // asset_type (length-prefixed string)
     const assetBytes = new TextEncoder().encode(output.assetType || 'SAL1');
     chunks.push(encodeVarint(assetBytes.length));
     chunks.push(assetBytes);
-    // view_tag (3 bytes)
-    const vt = output.carrotViewTag || new Uint8Array(3);
+    // view_tag (3 bytes) — parser uses viewTag, constructor may use carrotViewTag
+    const vt = output.carrotViewTag || output.viewTag || new Uint8Array(3);
     chunks.push(typeof vt === 'string' ? hexToBytes(vt) : vt);
     // encrypted_janus_anchor (16 bytes)
     const anchor = output.encryptedJanusAnchor || new Uint8Array(16);
@@ -416,7 +419,7 @@ export function serializeTxOutput(output) {
   } else if (output.viewTag !== undefined) {
     // Tagged key output (post-view-tag era)
     chunks.push(new Uint8Array([TXOUT_TYPE.ToTaggedKey]));
-    chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    chunks.push(typeof outKey === 'string' ? hexToBytes(outKey) : outKey);
     // asset_type (length-prefixed string)
     const assetBytes = new TextEncoder().encode(output.assetType || 'SAL');
     chunks.push(encodeVarint(assetBytes.length));
@@ -428,7 +431,7 @@ export function serializeTxOutput(output) {
   } else {
     // Regular key output (txout_to_key)
     chunks.push(new Uint8Array([TXOUT_TYPE.ToKey]));
-    chunks.push(typeof output.target === 'string' ? hexToBytes(output.target) : output.target);
+    chunks.push(typeof outKey === 'string' ? hexToBytes(outKey) : outKey);
     // asset_type (length-prefixed string)
     const assetBytes = new TextEncoder().encode(output.assetType || 'SAL');
     chunks.push(encodeVarint(assetBytes.length));
@@ -888,8 +891,8 @@ export function serializeRctBase(rct) {
     return concatBytes(chunks);
   }
 
-  // Fee (varint)
-  chunks.push(encodeVarint(rct.fee || 0n));
+  // Fee (varint) — parser uses txnFee, builder uses fee
+  chunks.push(encodeVarint(rct.fee || rct.txnFee || 0n));
 
   // ecdhInfo (8 bytes per output — compact format for BP+ types)
   if (rct.ecdhInfo) {
@@ -933,7 +936,9 @@ export function serializeRctBase(rct) {
 export function serializeEcdhInfo(encryptedAmounts) {
   const chunks = [];
   for (const ea of encryptedAmounts) {
-    const bytes = typeof ea === 'string' ? hexToBytes(ea) : ea;
+    // Handle both parsed format ({amount: hex/bytes}) and raw format (Uint8Array/hex)
+    const raw = ea && typeof ea === 'object' && !ArrayBuffer.isView(ea) ? ea.amount : ea;
+    const bytes = typeof raw === 'string' ? hexToBytes(raw) : raw;
     // V2+ compact format: just 8 bytes
     chunks.push(bytes.slice(0, 8));
   }

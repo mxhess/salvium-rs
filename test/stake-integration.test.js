@@ -34,7 +34,7 @@ await setCryptoBackend('wasm');
 // Configuration
 // =============================================================================
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const NETWORK = 'testnet';
 const CARROT_FORK_HEIGHT = 1100;
 const SPENDABLE_AGE = 10;

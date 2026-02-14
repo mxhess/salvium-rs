@@ -14,7 +14,7 @@ import { getHeight, fmt, loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const DRY_RUN = process.env.DRY_RUN !== '0';
 
 const h = await getHeight(daemon);

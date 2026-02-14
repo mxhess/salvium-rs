@@ -11,7 +11,7 @@ import { getHeight, fmt, loadWalletFromFile } from './test-helpers.js';
 
 await setCryptoBackend('wasm');
 
-const DAEMON_URL = 'http://web.whiskymine.io:29081';
+const DAEMON_URL = 'http://node12.whiskymine.io:29081';
 const WALLET_B_PATH = process.env.HOME + '/testnet-wallet/wallet-b.json';
 const SYNC_CACHE_B = WALLET_B_PATH.replace(/\.json$/, '-sync.json');
 

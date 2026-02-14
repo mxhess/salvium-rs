@@ -10,7 +10,7 @@
  */
 
 import { x25519ScalarMult, edwardsToMontgomeryU } from '../src/carrot-scanning.js';
-import { scalarMultBase, scalarMultPoint } from '../src/ed25519.js';
+import { scalarMultBase, scalarMultPoint } from '../src/crypto/index.js';
 import { hexToBytes, bytesToHex } from '../src/address.js';
 
 // X25519 basepoint u=9 (corresponds to Ed25519 generator G)

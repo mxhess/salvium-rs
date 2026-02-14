@@ -29,7 +29,7 @@ import {
   bytesToHex,
   hexToBytes
 } from '../src/index.js';
-import { scalarMultBase, scalarMultPoint } from '../src/ed25519.js';
+import { scalarMultBase, scalarMultPoint } from '../src/crypto/index.js';
 import { initCrypto } from '../src/crypto/index.js';
 
 await initCrypto();

@@ -171,6 +171,12 @@ const FFI_SYMBOLS = {
   salvium_tclsag_sign:   { args: [ptr, ptr, u32, ptr, ptr, ptr, ptr, ptr, u32, ptr], returns: i32 },
   salvium_tclsag_verify: { args: [ptr, ptr, usize, ptr, u32, ptr, ptr], returns: i32 },
 
+  // RCT batch verification
+  salvium_verify_rct_signatures: {
+    args: [FFIType.u8, u32, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32, ptr, u32],
+    returns: i32,
+  },
+
   // BP+
   salvium_bulletproof_plus_prove:  { args: [ptr, ptr, u32, ptr, usize, ptr], returns: i32 },
   salvium_bulletproof_plus_verify: { args: [ptr, usize, ptr, u32], returns: i32 },
@@ -203,6 +209,9 @@ const FFI_SYMBOLS = {
   // CARROT scanning
   salvium_carrot_scan_output:   { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
   salvium_carrot_scan_internal: { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
+
+  // CryptoNote scanning
+  salvium_cn_scan_output: { args: [ptr, ptr, u32, i32, FFIType.u8, FFIType.u64, ptr, ptr, ptr, ptr, u32, ptr, ptr], returns: i32 },
 
   // Buffer management
   salvium_storage_free_buf: { args: [ptr, usize], returns: FFIType.void },
@@ -478,6 +487,37 @@ export class FfiCryptoBackend {
     );
     if (rc !== 0) throw new Error('argon2id failed');
     return new Uint8Array(out);
+  }
+
+  // ─── RCT Batch Signature Verification ──────────────────────────────────
+
+  verifyRctSignatures(rctType, inputCount, ringSize, txPrefixHash,
+      rctBaseBytes, bpComponents, keyImagesFlat, pseudoOutsFlat,
+      sigsFlat, ringPubkeysFlat, ringCommitmentsFlat) {
+    const bPfx = ensureBuffer(txPrefixHash);
+    const bBase = ensureBuffer(rctBaseBytes);
+    const bBp = ensureBuffer(bpComponents);
+    const bKi = ensureBuffer(keyImagesFlat);
+    const bPo = ensureBuffer(pseudoOutsFlat);
+    const bSig = ensureBuffer(sigsFlat);
+    const bRpk = ensureBuffer(ringPubkeysFlat);
+    const bRcm = ensureBuffer(ringCommitmentsFlat);
+    const resultBuf = Buffer.alloc(5);
+
+    const rc = this.lib.symbols.salvium_verify_rct_signatures(
+      rctType, inputCount, ringSize,
+      bPfx, bPfx.length,
+      bBase, bBase.length,
+      bBp, bBp.length,
+      bKi, bKi.length,
+      bPo, bPo.length,
+      bSig, bSig.length,
+      bRpk, bRpk.length,
+      bRcm, bRcm.length,
+      resultBuf, 5
+    );
+    if (rc < 0) return null;
+    return new Uint8Array(resultBuf.slice(0, rc));
   }
 
   // ─── CLSAG Ring Signatures ────────────────────────────────────────────
@@ -885,6 +925,85 @@ export class FfiCryptoBackend {
       viewBalanceSecret, accountSpendPubkey, inputContext,
       subaddressMap, clearTextAmount
     );
+  }
+
+  // ─── CryptoNote Output Scanning ──────────────────────────────────────────
+
+  /**
+   * Scan a CryptoNote (pre-CARROT) output using the native Rust pipeline (single FFI call).
+   * Returns scan result object or null if not owned.
+   */
+  scanCnOutput(outputPubkey, derivation, outputIndex, viewTag,
+      rctType, clearTextAmount, ecdhEncAmount,
+      spendSecretKey, viewSecretKey, subaddressMap) {
+    const bKo = ensureBuffer(outputPubkey);
+    const bDeriv = ensureBuffer(derivation);
+
+    // view_tag: -1 = no view tag, 0-255 = expected tag
+    const vtInt = (viewTag !== undefined && viewTag !== null) ? viewTag : -1;
+
+    // clear_text_amount: u64::MAX = not provided
+    const ctAmount = (clearTextAmount !== undefined && clearTextAmount !== null)
+      ? BigInt(clearTextAmount)
+      : 0xFFFFFFFFFFFFFFFFn;
+
+    const bEncAmt = ensureBuffer(ecdhEncAmount || new Uint8Array(8));
+
+    // spend_secret_key: nullable (view-only)
+    const bSpend = (spendSecretKey) ? ensureBuffer(spendSecretKey) : null;
+    const bView = ensureBuffer(viewSecretKey);
+
+    // Marshal subaddress map: each entry = 32-byte key + 4-byte major LE + 4-byte minor LE
+    let subBuf, nSub;
+    if (subaddressMap && subaddressMap.size > 0) {
+      nSub = subaddressMap.size;
+      subBuf = Buffer.alloc(nSub * 40);
+      let offset = 0;
+      for (const [hexKey, { major, minor }] of subaddressMap) {
+        const keyBytes = hexToBytes(hexKey);
+        subBuf.set(keyBytes, offset); offset += 32;
+        subBuf.writeUInt32LE(major, offset); offset += 4;
+        subBuf.writeUInt32LE(minor, offset); offset += 4;
+      }
+    } else {
+      nSub = 0;
+      subBuf = Buffer.alloc(0);
+    }
+
+    // Rust-allocated output pointers
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+
+    const rc = this.lib.symbols.salvium_cn_scan_output(
+      bKo, bDeriv, outputIndex,
+      vtInt, rctType, ctAmount,
+      bEncAmt,
+      bSpend,      // nullable
+      bView,
+      subBuf, nSub,
+      outPtrBuf, outLenBuf
+    );
+
+    if (rc === 0) return null;  // Not owned
+    if (rc < 0) throw new Error('salvium_cn_scan_output failed');
+
+    // Read JSON from Rust-allocated buffer
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    const jsonStr = new CString(resultPtr, 0, resultLen).toString();
+
+    // Free Rust-allocated buffer
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+
+    const result = JSON.parse(jsonStr);
+
+    return {
+      amount: BigInt(result.amount),
+      mask: result.mask ? hexToBytes(result.mask) : null,
+      subaddressIndex: { major: result.subaddress_major, minor: result.subaddress_minor },
+      keyImage: result.key_image || null,
+      isCarrot: false,
+    };
   }
 
   /** @private Shared implementation for both scan paths. */

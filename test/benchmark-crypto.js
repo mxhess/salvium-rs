@@ -8,7 +8,7 @@
 
 import { setCryptoBackend } from '../src/crypto/index.js';
 import { clsagSign, clsagVerify, tclsagSign, tclsagVerify, scSub } from '../src/transaction.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../src/ed25519.js';
+import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../src/crypto/index.js';
 import { scRandom, commit, bytesToBigInt } from '../src/transaction/serialization.js';
 import { keccak256 } from '../src/keccak.js';
 import { bulletproofPlusProve, serializeProof, verifyRangeProof } from '../src/bulletproofs_plus.js';

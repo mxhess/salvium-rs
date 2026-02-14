@@ -762,6 +762,67 @@ pub unsafe extern "C" fn salvium_tclsag_verify(
     })
 }
 
+// ─── RCT Batch Signature Verification ───────────────────────────────────────
+
+/// Verify all RCT signatures in a transaction in a single call.
+///
+/// Sig flat format (no I field — key images passed separately):
+/// - TCLSAG (type 9), per input: [sx_0..sx_{n-1}][sy_0..sy_{n-1}][c1][D] (each 32B)
+/// - CLSAG (types 5-8), per input: [s_0..s_{n-1}][c1][D] (each 32B)
+///
+/// result_buf receives:
+///   [0x01]                  if valid
+///   [0x00, idx_u32_le]      if invalid at index idx
+///   [0xFF]                  if error
+///
+/// Returns bytes written to result_buf (1 or 5), or -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_verify_rct_signatures(
+    rct_type: u8,
+    input_count: u32,
+    ring_size: u32,
+    tx_prefix_hash: *const u8,
+    tx_prefix_hash_len: u32,
+    rct_base: *const u8,
+    rct_base_len: u32,
+    bp_components: *const u8,
+    bp_components_len: u32,
+    key_images: *const u8,
+    key_images_len: u32,
+    pseudo_outs: *const u8,
+    pseudo_outs_len: u32,
+    sigs: *const u8,
+    sigs_len: u32,
+    ring_pubkeys: *const u8,
+    ring_pubkeys_len: u32,
+    ring_commitments: *const u8,
+    ring_commitments_len: u32,
+    result_buf: *mut u8,
+    result_buf_len: u32,
+) -> i32 {
+    if result_buf_len < 5 { return -1; }
+
+    catch_ffi(move || {
+        let pfx = slice::from_raw_parts(tx_prefix_hash, tx_prefix_hash_len as usize);
+        let rct_b = slice::from_raw_parts(rct_base, rct_base_len as usize);
+        let bp = slice::from_raw_parts(bp_components, bp_components_len as usize);
+        let ki = slice::from_raw_parts(key_images, key_images_len as usize);
+        let po = slice::from_raw_parts(pseudo_outs, pseudo_outs_len as usize);
+        let sig = slice::from_raw_parts(sigs, sigs_len as usize);
+        let rpk = slice::from_raw_parts(ring_pubkeys, ring_pubkeys_len as usize);
+        let rcm = slice::from_raw_parts(ring_commitments, ring_commitments_len as usize);
+
+        let result = crate::rct_verify::verify_rct_signatures_wasm(
+            rct_type, input_count, ring_size,
+            pfx, rct_b, bp, ki, po, sig, rpk, rcm,
+        );
+
+        let len = result.len().min(result_buf_len as usize);
+        ptr::copy_nonoverlapping(result.as_ptr(), result_buf, len);
+        len as i32
+    })
+}
+
 // ─── Bulletproofs+ Range Proofs ─────────────────────────────────────────────
 
 /// Bulletproof+ prove.
@@ -1006,6 +1067,106 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
         match crate::carrot_scan::scan_carrot_internal_output(
             &ko_arr, &vt, &d_e_arr, &enc_amt, commit_opt.as_ref(),
             &vbs_arr, &ks_arr, ic, &subaddrs, ct_amount,
+        ) {
+            Some(result) => {
+                let json = result.to_json();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                1
+            }
+            None => 0,
+        }
+    })
+}
+
+// ─── CryptoNote Output Scanning ─────────────────────────────────────────────
+
+/// CryptoNote (pre-CARROT) output scan — single native call replacing 5-12 FFI round-trips.
+///
+/// Fixed-size inputs:
+///   output_pubkey: 32, derivation: 32, output_index: u32,
+///   view_tag: i32 (-1 = no view tag, 0-255 = expected tag),
+///   rct_type: u8 (0 = coinbase, else RCT),
+///   clear_text_amount: u64 (u64::MAX = not provided),
+///   ecdh_encrypted_amount: 8 bytes,
+///   spend_secret_key: 32 bytes (nullable for view-only),
+///   view_secret_key: 32 bytes
+/// Variable inputs:
+///   subaddr_data: n_sub * 40 bytes (32-byte key + u32 major LE + u32 minor LE)
+/// Output:
+///   JSON result via Rust-allocated buffer (freed with salvium_storage_free_buf).
+///
+/// Returns: 1 = owned, 0 = not owned, -1 = error
+#[no_mangle]
+pub unsafe extern "C" fn salvium_cn_scan_output(
+    output_pubkey: *const u8,       // 32 bytes
+    derivation: *const u8,          // 32 bytes
+    output_index: u32,
+    view_tag: i32,                  // -1 = no view tag, 0-255 = expected tag
+    rct_type: u8,
+    clear_text_amount: u64,         // u64::MAX = not provided
+    ecdh_encrypted_amount: *const u8, // 8 bytes
+    spend_secret_key: *const u8,    // 32 bytes, nullable (view-only)
+    view_secret_key: *const u8,     // 32 bytes
+    subaddr_data: *const u8,        // n * 40 bytes
+    n_sub: u32,
+    out_ptr: *mut *mut u8,          // Rust-allocated JSON result
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ko_arr = crate::to32(slice::from_raw_parts(output_pubkey, 32));
+        let deriv_arr = crate::to32(slice::from_raw_parts(derivation, 32));
+
+        let vt_opt = if view_tag < 0 { None } else { Some(view_tag as u8) };
+
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+
+        let enc_amt: [u8; 8] = {
+            let s = slice::from_raw_parts(ecdh_encrypted_amount, 8);
+            let mut a = [0u8; 8];
+            a.copy_from_slice(s);
+            a
+        };
+
+        let spend_key_opt = if spend_secret_key.is_null() {
+            None
+        } else {
+            Some(crate::to32(slice::from_raw_parts(spend_secret_key, 32)))
+        };
+
+        let view_key_arr = crate::to32(slice::from_raw_parts(view_secret_key, 32));
+
+        // Parse subaddress map
+        let n = n_sub as usize;
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
+            let base = i * 40;
+            let key = crate::to32(&sub_slice[base..base + 32]);
+            let major = u32::from_le_bytes([
+                sub_slice[base + 32], sub_slice[base + 33],
+                sub_slice[base + 34], sub_slice[base + 35],
+            ]);
+            let minor = u32::from_le_bytes([
+                sub_slice[base + 36], sub_slice[base + 37],
+                sub_slice[base + 38], sub_slice[base + 39],
+            ]);
+            (key, major, minor)
+        }).collect();
+
+        match crate::cn_scan::scan_cryptonote_output(
+            &ko_arr,
+            &deriv_arr,
+            output_index,
+            vt_opt,
+            rct_type,
+            ct_amount,
+            &enc_amt,
+            spend_key_opt.as_ref(),
+            &view_key_arr,
+            &subaddrs,
         ) {
             Some(result) => {
                 let json = result.to_json();

@@ -1036,6 +1036,33 @@ export function tclsagVerify(message, sig, ring, commitments, pseudoOutputCommit
 // =============================================================================
 
 /**
+ * Expand a parsed transaction by copying key images from prefix inputs
+ * into the ring signature structs (TCLSAG/CLSAG).
+ *
+ * In C++ (blockchain.cpp:3894 expand_transaction_2), key images from
+ * vin[n].k_image are copied into the sig structs before verification.
+ * The key image is NOT serialized in the signature itself.
+ *
+ * @param {Object} tx - Parsed transaction with prefix and rct
+ * @returns {Object} The same tx object, mutated with I fields populated
+ */
+export function expandTransaction(tx) {
+  const { prefix, rct } = tx;
+  if (!prefix?.vin || !rct) return tx;
+  if (rct.TCLSAGs) {
+    for (let i = 0; i < rct.TCLSAGs.length && i < prefix.vin.length; i++) {
+      if (prefix.vin[i].keyImage) rct.TCLSAGs[i].I = prefix.vin[i].keyImage;
+    }
+  }
+  if (rct.CLSAGs) {
+    for (let i = 0; i < rct.CLSAGs.length && i < prefix.vin.length; i++) {
+      if (prefix.vin[i].keyImage) rct.CLSAGs[i].I = prefix.vin[i].keyImage;
+    }
+  }
+  return tx;
+}
+
+/**
  * Compute the pre-MLSAG/CLSAG hash (message to sign)
  * Matches C++ get_pre_mlsag_hash: H(message || H(rctSigBase) || H(bp_components))
  *

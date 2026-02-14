@@ -5,7 +5,7 @@
  */
 
 import { tclsagSign, tclsagVerify, clsagSign, clsagVerify } from '../src/transaction.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../src/ed25519.js';
+import { scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT } from '../src/crypto/index.js';
 import { scRandom, scAdd, scMul, commit, bytesToBigInt } from '../src/transaction/serialization.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
 

@@ -8,6 +8,7 @@ use sha2::{Sha256, Digest};
 
 mod x25519;
 pub mod carrot_scan;
+pub mod cn_scan;
 pub mod subaddress;
 pub mod carrot_keys;
 pub mod tx_format;
@@ -16,6 +17,7 @@ pub(crate) mod elligator2;
 pub mod clsag;
 pub mod tclsag;
 pub mod bulletproofs_plus;
+pub mod rct_verify;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod storage;

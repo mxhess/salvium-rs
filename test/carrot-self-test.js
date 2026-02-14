@@ -13,7 +13,7 @@ import { blake2b } from '../src/blake2b.js';
 import { hexToBytes, bytesToHex } from '../src/address.js';
 import { mnemonicToSeed } from '../src/mnemonic.js';
 import { deriveKeys, deriveCarrotKeys } from '../src/carrot.js';
-import { scalarMultBase } from '../src/ed25519.js';
+import { scalarMultBase } from '../src/crypto/index.js';
 import {
   x25519ScalarMult,
   edwardsToMontgomeryU,

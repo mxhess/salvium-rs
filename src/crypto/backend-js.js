@@ -69,6 +69,9 @@ export class JsCryptoBackend {
   zeroCommit() { throw new Error(RUST_REQUIRED); }
   genCommitmentMask() { throw new Error(RUST_REQUIRED); }
 
+  // RCT batch verification — returns null (JS fallback handled in validation.js)
+  verifyRctSignatures() { return null; }
+
   // CLSAG/TCLSAG/BP+ — require Rust backend
   clsagSign() { throw new Error(RUST_REQUIRED); }
   clsagVerify() { throw new Error(RUST_REQUIRED); }

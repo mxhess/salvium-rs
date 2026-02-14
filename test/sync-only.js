@@ -8,9 +8,11 @@ import { DaemonRPC } from '../src/rpc/daemon.js';
 import { hexToBytes, bytesToHex } from '../src/address.js';
 import { loadWalletFromFile } from './test-helpers.js';
 
-await setCryptoBackend('wasm');
+const CRYPTO_BACKEND = process.env.CRYPTO_BACKEND || 'wasm';
+await setCryptoBackend(CRYPTO_BACKEND);
+console.log(`Crypto backend: ${CRYPTO_BACKEND}`);
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const WALLET_FILE = `${process.env.HOME}/testnet-wallet/wallet-a.json`;
 const CACHE_FILE = WALLET_FILE.replace(/\.json$/, '-sync.json');
 

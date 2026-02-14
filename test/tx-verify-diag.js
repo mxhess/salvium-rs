@@ -14,11 +14,11 @@ import {
   commit, zeroCommit, scAdd, scSub, bytesToBigInt, bigIntToBytes
 } from '../src/transaction.js';
 import { verifyBulletproofPlus } from '../src/bulletproofs_plus.js';
-import { pointAddCompressed, scalarMultBase, scalarMultPoint } from '../src/ed25519.js';
+import { pointAddCompressed, scalarMultBase, scalarMultPoint } from '../src/crypto/index.js';
 
 await setCryptoBackend('wasm');
 
-const DAEMON_URL = 'http://web.whiskymine.io:29081';
+const DAEMON_URL = 'http://node12.whiskymine.io:29081';
 const WALLET_A_FILE = `${process.env.HOME}/testnet-wallet/wallet-a.json`;
 const SYNC_CACHE_A = WALLET_A_FILE.replace(/\.json$/, '-sync.json');
 const daemon = new DaemonRPC({ url: DAEMON_URL });

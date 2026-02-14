@@ -5,14 +5,11 @@
 
 import { hexToBytes, bytesToHex } from './address.js';
 import {
-  blake2b, keccak256, scalarMultBase,
+  blake2b, keccak256, scalarMultBase, scReduce32, scReduce64,
   computeCarrotSpendPubkey, computeCarrotMainAddressViewPubkey, computeCarrotAccountViewPubkey,
   deriveCarrotKeysBatch as _deriveKeysBatch,
   deriveCarrotViewOnlyKeysBatch as _deriveViewOnlyBatch,
 } from './crypto/index.js';
-
-// Group order L for scalar reduction
-const L = (1n << 252n) + 27742317777372353535851937790883648493n;
 
 // Create length-prefixed domain separator (matches Salvium SpFixedTranscript format)
 function makeDomainSep(str) {
@@ -33,57 +30,10 @@ const DOMAIN_SEP = {
   GENERATE_ADDRESS_SECRET: makeDomainSep("Carrot generate-address secret")
 };
 
-/**
- * Reduce a 64-byte value modulo L (curve order)
- * This is sc_reduce from ref10
- * @param {Uint8Array} bytes - 64 bytes to reduce
- * @returns {Uint8Array} 32-byte scalar
- */
-function scReduce(bytes) {
-  // Convert 64 bytes to BigInt (little-endian)
-  let n = 0n;
-  for (let i = 63; i >= 0; i--) {
-    n = (n << 8n) | BigInt(bytes[i]);
-  }
+// sc_reduce delegated to Rust backend (scReduce64 for 64-byte inputs)
+function scReduce(bytes) { return scReduce64(bytes); }
 
-  // Reduce mod L
-  n = n % L;
-
-  // Convert back to 32 bytes (little-endian)
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-
-  return result;
-}
-
-/**
- * Reduce a 32-byte value modulo L (curve order)
- * This is sc_reduce32 from ref10
- * @param {Uint8Array} bytes - 32 bytes to reduce
- * @returns {Uint8Array} 32-byte scalar
- */
-function scReduce32(bytes) {
-  // Convert 32 bytes to BigInt (little-endian)
-  let n = 0n;
-  for (let i = 31; i >= 0; i--) {
-    n = (n << 8n) | BigInt(bytes[i]);
-  }
-
-  // Reduce mod L
-  n = n % L;
-
-  // Convert back to 32 bytes (little-endian)
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-
-  return result;
-}
+// scReduce32 delegated to Rust backend via crypto/index.js
 
 // ============================================================================
 // Seed Generation

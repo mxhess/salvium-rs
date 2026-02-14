@@ -31,7 +31,7 @@ import { dirname } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WALLET_DIR = join(homedir(), 'testnet-wallet');
 const LOG_PATH = join(WALLET_DIR, 'full-testnet-log.json');
-const DEFAULT_DAEMON = 'http://web.whiskymine.io:29081';
+const DEFAULT_DAEMON = 'http://node12.whiskymine.io:29081';
 
 // ─── Fork table ──────────────────────────────────────────────────────────────
 
@@ -144,9 +144,22 @@ async function mineTo(daemon, targetHeight, address, daemonUrl, backend = 'rust'
   const blocksNeeded = targetHeight - currentHeight;
   console.log(`  Mining ${blocksNeeded} blocks (${currentHeight} → ${targetHeight}) with ${backend}...`);
   const t0 = performance.now();
-  const code = await runMiner({ backend, blocks: blocksNeeded, address, daemon: daemonUrl });
+
+  // Retry miner up to 3 times for transient daemon errors
+  let code;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    code = await runMiner({ backend, blocks: blocksNeeded, address, daemon: daemonUrl });
+    if (code === 0) break;
+    const nowHeight = await getDaemonHeight(daemon);
+    if (nowHeight >= targetHeight) { code = 0; break; }  // Partial progress reached target
+    if (attempt < 3) {
+      console.log(`  Miner exited with code ${code} (attempt ${attempt}/3), retrying in 3s...`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+
   const elapsed = (performance.now() - t0) / 1000;
-  if (code !== 0) throw new Error(`Miner exited with code ${code}`);
+  if (code !== 0) throw new Error(`Miner exited with code ${code} after 3 attempts (address: ${address.slice(0, 30)}...)`);
   const finalHeight = await getDaemonHeight(daemon);
   console.log(`  Reached height ${finalHeight} in ${fmtDuration(elapsed)}`);
   log.mining({ backend, blocksNeeded, elapsed, fromHeight: currentHeight, toHeight: finalHeight });

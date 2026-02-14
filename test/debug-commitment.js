@@ -27,7 +27,7 @@ function bytesToHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const walletAJson = JSON.parse(readFileSync('/home/mxhess/testnet-wallet/wallet-a.json', 'utf-8'));
 const keysA = {
   viewSecretKey: walletAJson.viewSecretKey,

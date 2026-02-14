@@ -179,6 +179,20 @@ export function isIdentity(p) {
   return true;
 }
 
+export function isValidPoint(p) {
+  if (!p || p.length !== 32) return false;
+  if (isIdentity(p)) return false;
+  // Verify point decodes on curve via backend scalar mult
+  try {
+    const one = new Uint8Array(32);
+    one[0] = 1;
+    const result = getCryptoBackend().scalarMultPoint(one, p);
+    return result && result.length === 32;
+  } catch (_e) {
+    return false;
+  }
+}
+
 // Random scalar: generate 64 random bytes, reduce mod L
 export function randomScalar() {
   const bytes64 = new Uint8Array(64);

@@ -74,25 +74,57 @@ fn main() {
     eprintln!("Mode:    {}", if args.light { "light (256MB/thread)" } else { "full (2GB shared dataset)" });
     eprintln!();
 
-    // Connect to daemon
+    // Connect to daemon (retry up to 5 times)
     let client = DaemonClient::new(&args.daemon);
 
-    let info = match client.get_info() {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("Cannot connect to daemon: {}", e);
-            std::process::exit(1);
+    let info = {
+        let mut last_err = String::new();
+        let mut result = None;
+        for attempt in 1..=5 {
+            match client.get_info() {
+                Ok(i) => { result = Some(i); break; }
+                Err(e) => {
+                    last_err = e;
+                    if attempt < 5 {
+                        eprintln!("Cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
+                }
+            }
+        }
+        match result {
+            Some(i) => i,
+            None => {
+                eprintln!("Cannot connect to daemon after 5 attempts: {}", last_err);
+                std::process::exit(1);
+            }
         }
     };
 
     eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
 
-    // Get initial block template
-    let template = match client.get_block_template(&args.wallet, 8) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Failed to get block template: {}", e);
-            std::process::exit(1);
+    // Get initial block template (retry up to 5 times for transient daemon errors)
+    let template = {
+        let mut last_err = String::new();
+        let mut tmpl = None;
+        for attempt in 1..=5 {
+            match client.get_block_template(&args.wallet, 8) {
+                Ok(t) => { tmpl = Some(t); break; }
+                Err(e) => {
+                    last_err = e;
+                    if attempt < 5 {
+                        eprintln!("Failed to get block template (attempt {}/5): {}", attempt, last_err);
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
+                }
+            }
+        }
+        match tmpl {
+            Some(t) => t,
+            None => {
+                eprintln!("Failed to get block template after 5 attempts: {}", last_err);
+                std::process::exit(1);
+            }
         }
     };
 

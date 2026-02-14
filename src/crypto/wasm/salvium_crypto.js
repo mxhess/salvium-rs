@@ -812,6 +812,57 @@ export function tclsag_verify_wasm(message, sig_bytes, ring_flat, commitments_fl
 }
 
 /**
+ * Batch-verify all RCT signatures in a transaction.
+ *
+ * All data is passed as flat byte arrays to minimize JS↔WASM boundary crossings.
+ *
+ * Sig flat format (no I field — key images passed separately):
+ * - TCLSAG (type 9), per input: `[sx_0..sx_{n-1} (32B)][sy_0..sy_{n-1} (32B)][c1 (32B)][D (32B)]`
+ *   Size per input: `ring_size * 64 + 64`
+ * - CLSAG (types 5-8), per input: `[s_0..s_{n-1} (32B)][c1 (32B)][D (32B)]`
+ *   Size per input: `ring_size * 32 + 64`
+ *
+ * Returns:
+ * - `[0x01]` if all signatures valid
+ * - `[0x00, idx_u32_le]` if signature at index `idx` is invalid
+ * - `[0xFF]` if input data is malformed
+ * @param {number} rct_type
+ * @param {number} input_count
+ * @param {number} ring_size
+ * @param {Uint8Array} tx_prefix_hash
+ * @param {Uint8Array} rct_base_bytes
+ * @param {Uint8Array} bp_components
+ * @param {Uint8Array} key_images_flat
+ * @param {Uint8Array} pseudo_outs_flat
+ * @param {Uint8Array} sigs_flat
+ * @param {Uint8Array} ring_pubkeys_flat
+ * @param {Uint8Array} ring_commitments_flat
+ * @returns {Uint8Array}
+ */
+export function verify_rct_signatures_wasm(rct_type, input_count, ring_size, tx_prefix_hash, rct_base_bytes, bp_components, key_images_flat, pseudo_outs_flat, sigs_flat, ring_pubkeys_flat, ring_commitments_flat) {
+    const ptr0 = passArray8ToWasm0(tx_prefix_hash, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(rct_base_bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(bp_components, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray8ToWasm0(key_images_flat, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passArray8ToWasm0(pseudo_outs_flat, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ptr5 = passArray8ToWasm0(sigs_flat, wasm.__wbindgen_malloc);
+    const len5 = WASM_VECTOR_LEN;
+    const ptr6 = passArray8ToWasm0(ring_pubkeys_flat, wasm.__wbindgen_malloc);
+    const len6 = WASM_VECTOR_LEN;
+    const ptr7 = passArray8ToWasm0(ring_commitments_flat, wasm.__wbindgen_malloc);
+    const len7 = WASM_VECTOR_LEN;
+    const ret = wasm.verify_rct_signatures_wasm(rct_type, input_count, ring_size, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7);
+    var v9 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v9;
+}
+
+/**
  * X25519 scalar multiplication with Salvium's non-standard clamping.
  *
  * Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).

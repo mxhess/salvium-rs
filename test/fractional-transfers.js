@@ -16,7 +16,7 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const DRY_RUN = process.env.DRY_RUN !== '0';
 const NUM_TRANSFERS = parseInt(process.env.NUM || '10');
 

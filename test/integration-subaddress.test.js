@@ -11,7 +11,7 @@
  *   - Edge cases (dust, exact amounts, many inputs)
  *
  * Env vars:
- *   DAEMON_URL     - RPC endpoint (default: http://web.whiskymine.io:29081)
+ *   DAEMON_URL     - RPC endpoint (default: http://node12.whiskymine.io:29081)
  *   WALLET_FILE    - Path to wallet A JSON (default: ~/testnet-wallet/wallet.json)
  *   WALLET_B_FILE  - Path to wallet B JSON (created if missing)
  *   NETWORK        - mainnet|testnet|stagenet (default: testnet)
@@ -38,7 +38,7 @@ import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 // Initialize WASM backend
 await setCryptoBackend('wasm');
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const WALLET_FILE = process.env.WALLET_FILE || `${process.env.HOME}/testnet-wallet/wallet.json`;
 const WALLET_B_FILE = process.env.WALLET_B_FILE || `${process.env.HOME}/testnet-wallet/wallet-b.json`;
 const NETWORK = process.env.NETWORK || 'testnet';

@@ -19,7 +19,7 @@ use crate::{to32, keccak256_internal};
 
 /// CryptoNote subaddress secret key:
 ///   m = H_s("SubAddr\0" || view_key || major_LE || minor_LE)
-fn cn_subaddress_secret_key(view_secret_key: &[u8; 32], major: u32, minor: u32) -> Scalar {
+pub(crate) fn cn_subaddress_secret_key(view_secret_key: &[u8; 32], major: u32, minor: u32) -> Scalar {
     let mut data = Vec::with_capacity(8 + 32 + 4 + 4);
     // "SubAddr\0" (8 bytes including null terminator)
     data.extend_from_slice(b"SubAddr\0");

@@ -5,7 +5,7 @@ import { createWalletSync } from '../src/wallet-sync.js';
 import { MemoryStorage } from '../src/wallet-store.js';
 import { readFileSync } from 'fs';
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const walletAJson = JSON.parse(readFileSync('/home/mxhess/testnet-wallet/wallet-a.json', 'utf-8'));
 const keysA = {
   viewSecretKey: walletAJson.viewSecretKey,

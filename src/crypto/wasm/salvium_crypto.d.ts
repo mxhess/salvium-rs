@@ -185,6 +185,24 @@ export function tclsag_sign_wasm(message: Uint8Array, ring_flat: Uint8Array, sec
 export function tclsag_verify_wasm(message: Uint8Array, sig_bytes: Uint8Array, ring_flat: Uint8Array, commitments_flat: Uint8Array, pseudo_output: Uint8Array): boolean;
 
 /**
+ * Batch-verify all RCT signatures in a transaction.
+ *
+ * All data is passed as flat byte arrays to minimize JS↔WASM boundary crossings.
+ *
+ * Sig flat format (no I field — key images passed separately):
+ * - TCLSAG (type 9), per input: `[sx_0..sx_{n-1} (32B)][sy_0..sy_{n-1} (32B)][c1 (32B)][D (32B)]`
+ *   Size per input: `ring_size * 64 + 64`
+ * - CLSAG (types 5-8), per input: `[s_0..s_{n-1} (32B)][c1 (32B)][D (32B)]`
+ *   Size per input: `ring_size * 32 + 64`
+ *
+ * Returns:
+ * - `[0x01]` if all signatures valid
+ * - `[0x00, idx_u32_le]` if signature at index `idx` is invalid
+ * - `[0xFF]` if input data is malformed
+ */
+export function verify_rct_signatures_wasm(rct_type: number, input_count: number, ring_size: number, tx_prefix_hash: Uint8Array, rct_base_bytes: Uint8Array, bp_components: Uint8Array, key_images_flat: Uint8Array, pseudo_outs_flat: Uint8Array, sigs_flat: Uint8Array, ring_pubkeys_flat: Uint8Array, ring_commitments_flat: Uint8Array): Uint8Array;
+
+/**
  * X25519 scalar multiplication with Salvium's non-standard clamping.
  *
  * Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).
@@ -253,6 +271,7 @@ export interface InitOutput {
     readonly sha256: (a: number, b: number) => [number, number];
     readonly tclsag_sign_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number];
     readonly tclsag_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+    readonly verify_rct_signatures_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number];
     readonly x25519_scalar_mult: (a: number, b: number, c: number, d: number) => [number, number];
     readonly zero_commit: (a: number, b: number) => [number, number];
     readonly __wbindgen_exn_store: (a: number) => void;

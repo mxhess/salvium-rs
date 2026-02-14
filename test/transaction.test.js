@@ -62,7 +62,7 @@ import {
   scalarMultPoint,
   pointAddCompressed,
   getGeneratorG
-} from '../src/ed25519.js';
+} from '../src/crypto/index.js';
 
 import { hashToPoint, generateKeyImage } from '../src/keyimage.js';
 import { deriveKeys } from '../src/carrot.js';

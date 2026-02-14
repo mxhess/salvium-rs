@@ -28,7 +28,7 @@ import {
   bytesToHex,
   hexToBytes
 } from '../src/index.js';
-import { scalarMultBase } from '../src/ed25519.js';
+import { scalarMultBase } from '../src/crypto/index.js';
 import { initCrypto } from '../src/crypto/index.js';
 
 await initCrypto();

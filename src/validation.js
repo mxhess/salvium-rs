@@ -33,7 +33,9 @@ import {
   TRANSACTION_VERSION_CARROT
 } from './consensus.js';
 
-import { TX_TYPE, RCT_TYPE } from './transaction.js';
+import { TX_TYPE, RCT_TYPE,
+  getTxPrefixHash, serializeRctBase } from './transaction.js';
+import { getCryptoBackend } from './crypto/provider.js';
 import { hexToBytes } from './address.js';
 
 // =============================================================================
@@ -870,6 +872,218 @@ export function getStakeLockPeriod(network = 'mainnet') {
 // =============================================================================
 // COMPREHENSIVE TRANSACTION VALIDATION
 // =============================================================================
+// RCT SIGNATURE VERIFICATION
+// =============================================================================
+
+/**
+ * Ensure value is Uint8Array (convert from hex string if needed)
+ * @param {Uint8Array|string} v
+ * @returns {Uint8Array}
+ */
+function ensureBytes(v) {
+  if (typeof v === 'string') return hexToBytes(v);
+  return v;
+}
+
+/**
+ * Flatten an array of 32-byte keys into a single flat Uint8Array
+ * @param {Array<Uint8Array|string>} arr
+ * @returns {Uint8Array}
+ */
+function flattenArrayOf32(arr) {
+  const flat = new Uint8Array(arr.length * 32);
+  for (let i = 0; i < arr.length; i++) {
+    flat.set(ensureBytes(arr[i]), i * 32);
+  }
+  return flat;
+}
+
+/**
+ * Flatten key images from transaction prefix inputs
+ * @param {Array} vin - Transaction inputs
+ * @returns {Uint8Array}
+ */
+function flattenKeyImages(vin) {
+  const flat = new Uint8Array(vin.length * 32);
+  for (let i = 0; i < vin.length; i++) {
+    flat.set(ensureBytes(vin[i].keyImage), i * 32);
+  }
+  return flat;
+}
+
+/**
+ * Pack TCLSAG signatures into flat byte array (without I field).
+ * Format per input: [sx_0..sx_{n-1}][sy_0..sy_{n-1}][c1][D]
+ * Size per input: ringSize * 64 + 64
+ *
+ * @param {Array} sigs - Array of TCLSAG signature objects { sx, sy, c1, D }
+ * @param {number} ringSize - Ring size
+ * @returns {Uint8Array}
+ */
+function packTclsagSigsFlat(sigs, ringSize) {
+  const perInput = ringSize * 64 + 64;
+  const flat = new Uint8Array(sigs.length * perInput);
+  for (let i = 0; i < sigs.length; i++) {
+    const sig = sigs[i];
+    let offset = i * perInput;
+    for (let j = 0; j < ringSize; j++) {
+      flat.set(ensureBytes(sig.sx[j]), offset);
+      offset += 32;
+    }
+    for (let j = 0; j < ringSize; j++) {
+      flat.set(ensureBytes(sig.sy[j]), offset);
+      offset += 32;
+    }
+    flat.set(ensureBytes(sig.c1), offset);
+    offset += 32;
+    flat.set(ensureBytes(sig.D), offset);
+  }
+  return flat;
+}
+
+/**
+ * Pack CLSAG signatures into flat byte array (without I field).
+ * Format per input: [s_0..s_{n-1}][c1][D]
+ * Size per input: ringSize * 32 + 64
+ *
+ * @param {Array} sigs - Array of CLSAG signature objects { s, c1, D }
+ * @param {number} ringSize - Ring size
+ * @returns {Uint8Array}
+ */
+function packClsagSigsFlat(sigs, ringSize) {
+  const perInput = ringSize * 32 + 64;
+  const flat = new Uint8Array(sigs.length * perInput);
+  for (let i = 0; i < sigs.length; i++) {
+    const sig = sigs[i];
+    let offset = i * perInput;
+    for (let j = 0; j < ringSize; j++) {
+      flat.set(ensureBytes(sig.s[j]), offset);
+      offset += 32;
+    }
+    flat.set(ensureBytes(sig.c1), offset);
+    offset += 32;
+    flat.set(ensureBytes(sig.D), offset);
+  }
+  return flat;
+}
+
+/**
+ * Pack Bulletproof+ components into flat byte array for hashing.
+ * Concatenates A, A1, B, r1, s1, d1, L[], R[] for all proofs.
+ *
+ * @param {Array} bpPlus - Array of BP+ proof objects
+ * @returns {Uint8Array}
+ */
+function packBpComponents(bpPlus) {
+  const chunks = [];
+  for (const bp of bpPlus) {
+    chunks.push(ensureBytes(bp.A));
+    chunks.push(ensureBytes(bp.A1));
+    chunks.push(ensureBytes(bp.B));
+    chunks.push(ensureBytes(bp.r1));
+    chunks.push(ensureBytes(bp.s1));
+    chunks.push(ensureBytes(bp.d1));
+    for (const l of bp.L) chunks.push(ensureBytes(l));
+    for (const r of bp.R) chunks.push(ensureBytes(r));
+  }
+  let totalLen = 0;
+  for (const c of chunks) totalLen += c.length;
+  const flat = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) { flat.set(c, offset); offset += c.length; }
+  return flat;
+}
+
+/**
+ * Pack mix ring into separate flat pubkey and commitment arrays.
+ * Mix ring format: mixRing[inputIdx][ringMemberIdx] = { dest, mask }
+ *
+ * @param {Array<Array<{dest: Uint8Array|string, mask: Uint8Array|string}>>} mixRing
+ * @returns {{ pubkeysFlat: Uint8Array, commitmentsFlat: Uint8Array }}
+ */
+function packMixRing(mixRing) {
+  const inputCount = mixRing.length;
+  const ringSize = mixRing[0]?.length || 0;
+  const total = inputCount * ringSize;
+  const pubkeysFlat = new Uint8Array(total * 32);
+  const commitmentsFlat = new Uint8Array(total * 32);
+  for (let i = 0; i < inputCount; i++) {
+    for (let j = 0; j < ringSize; j++) {
+      const idx = (i * ringSize + j) * 32;
+      pubkeysFlat.set(ensureBytes(mixRing[i][j].dest), idx);
+      commitmentsFlat.set(ensureBytes(mixRing[i][j].mask), idx);
+    }
+  }
+  return { pubkeysFlat, commitmentsFlat };
+}
+
+/**
+ * Verify all RCT ring signatures in a transaction.
+ *
+ * Attempts batch verification via the Rust backend (one WASM/FFI/JSI call).
+ * Falls back to per-input JS verification if the backend returns null or errors.
+ *
+ * Reference: C++ check_tx_inputs / expand_transaction_2 in blockchain.cpp
+ *
+ * @param {Object} tx - Parsed transaction with prefix and rct
+ * @param {Array<Array<{dest: Uint8Array|string, mask: Uint8Array|string}>>} mixRing
+ *   Mix ring data: [inputIdx][ringMemberIdx] = { dest, mask }
+ * @param {Uint8Array} [rawBytes] - Original raw TX bytes (for correct prefix hash
+ *   from daemon-fetched transactions where re-serialization may diverge)
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+export function verifyRctSignatures(tx, mixRing, rawBytes) {
+  const errors = [];
+  const { prefix, rct } = tx;
+  const inputCount = prefix.vin.length;
+  const ringSize = mixRing[0]?.length || 0;
+  const rctType = rct.type;
+
+  // Compute prefix hash — prefer raw bytes when available for correctness
+  const txPrefixHash = (rawBytes && tx._prefixEndOffset)
+    ? getTxPrefixHash(rawBytes.slice(0, tx._prefixEndOffset))
+    : getTxPrefixHash(prefix);
+
+  // Rust/WASM batch verification (one boundary crossing, no hairpinning)
+  const backend = getCryptoBackend();
+  if (typeof backend.verifyRctSignatures !== 'function') {
+    errors.push('RCT signature verification requires WASM or FFI backend');
+    return { valid: false, errors };
+  }
+
+  const rctBaseBytes = serializeRctBase(rct);
+  const bpComponents = packBpComponents(rct.bulletproofPlus || []);
+  const keyImagesFlat = flattenKeyImages(prefix.vin);
+  const pseudoOutsFlat = flattenArrayOf32(rct.pseudoOuts);
+  const sigsFlat = rctType === 9
+    ? packTclsagSigsFlat(rct.TCLSAGs, ringSize)
+    : packClsagSigsFlat(rct.CLSAGs, ringSize);
+  const { pubkeysFlat, commitmentsFlat } = packMixRing(mixRing);
+
+  const result = backend.verifyRctSignatures(
+    rctType, inputCount, ringSize,
+    txPrefixHash, rctBaseBytes, bpComponents,
+    keyImagesFlat, pseudoOutsFlat, sigsFlat,
+    pubkeysFlat, commitmentsFlat
+  );
+
+  if (result && result[0] === 0x01) return { valid: true, errors: [] };
+  if (result && result[0] === 0x00) {
+    const failedIdx = result.length >= 5
+      ? new DataView(result.buffer, result.byteOffset + 1, 4).getUint32(0, true)
+      : 0;
+    errors.push(`RCT signature verification failed for input ${failedIdx}`);
+    return { valid: false, errors };
+  }
+  if (result && result[0] === 0xFF) {
+    errors.push('RCT signature verification error: invalid input data');
+    return { valid: false, errors };
+  }
+  errors.push('RCT signature verification returned unexpected result');
+  return { valid: false, errors };
+}
+
+// =============================================================================
 
 /**
  * Perform comprehensive transaction validation
@@ -880,6 +1094,8 @@ export function getStakeLockPeriod(network = 'mainnet') {
  * @param {number} context.height - Current block height
  * @param {bigint} context.baseReward - Current base reward
  * @param {number} context.medianWeight - Median block weight
+ * @param {Array} [context.mixRing] - Mix ring data for RCT signature verification
+ * @param {Uint8Array} [context.rawBytes] - Raw TX bytes for correct prefix hash
  * @returns {{valid: boolean, errors: string[]}}
  */
 export function validateTransactionFull(tx, context) {
@@ -926,6 +1142,14 @@ export function validateTransactionFull(tx, context) {
   const inputResult = validateInputs(tx, hfVersion);
   if (!inputResult.valid) {
     errors.push(inputResult.error);
+  }
+
+  // 8. Verify RCT signatures (requires mix ring data from blockchain)
+  if (context.mixRing) {
+    const sigResult = verifyRctSignatures(tx, context.mixRing, context.rawBytes);
+    if (!sigResult.valid) {
+      errors.push(...sigResult.errors);
+    }
   }
 
   return {
@@ -984,6 +1208,9 @@ export default {
   // Yield calculation
   calculateYieldPayout,
   getStakeLockPeriod,
+
+  // RCT signature verification
+  verifyRctSignatures,
 
   // Comprehensive validation
   validateTransactionFull

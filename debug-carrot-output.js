@@ -8,7 +8,7 @@ import { commit as pedersonCommit } from './src/crypto/index.js';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const wj = JSON.parse(readFileSync(process.env.HOME + '/testnet-wallet/wallet.json'));
 const wallet = Wallet.fromJSON({ ...wj, network: 'testnet' });
 

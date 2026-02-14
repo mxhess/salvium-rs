@@ -10,7 +10,7 @@ import {
   pointAddCompressed,
   getGeneratorG,
   getGeneratorT
-} from '../src/ed25519.js';
+} from '../src/crypto/index.js';
 
 // Get generator points
 const G = getGeneratorG();

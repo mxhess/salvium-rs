@@ -7,7 +7,7 @@ import { readFileSync } from 'fs';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const info = await daemon.getInfo();
 const height = info.result?.height || info.data?.height;
 console.log('Height:', height);

@@ -13,7 +13,7 @@ import { TX_TYPE } from '../src/transaction/constants.js';
 
 await setCryptoBackend('wasm');
 
-const daemon = new DaemonRPC({ url: 'http://web.whiskymine.io:29081' });
+const daemon = new DaemonRPC({ url: 'http://node12.whiskymine.io:29081' });
 const info = await daemon.getInfo();
 const h = info.result.height;
 console.log('Height:', h);

@@ -27,7 +27,7 @@ import { hexToBytes, bytesToHex } from './src/address.js';
 // Configuration
 // ============================================================================
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const WALLET_FILE = process.env.WALLET_FILE || `${process.env.HOME}/testnet-wallet/wallet.json`;
 const MODE = process.argv[2] || 'full';
 const TEMPLATE_REFRESH_MS = 5000;

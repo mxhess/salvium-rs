@@ -239,6 +239,30 @@ int32_t salvium_tclsag_verify(
     const uint8_t *commitments /* ring_count * 32 */,
     const uint8_t *pseudo_output /* 32 */);
 
+/* ─── RCT Batch Signature Verification ──────────────────────────────────── */
+
+/**
+ * Verify all RCT signatures in a transaction in one call.
+ * Sig flat format (no I field — key images passed separately):
+ *   TCLSAG (type 9): [sx_0..sx_n][sy_0..sy_n][c1][D] per input
+ *   CLSAG (types 5-8): [s_0..s_n][c1][D] per input
+ *
+ * result_buf receives: [0x01] valid, [0x00,idx_LE] invalid, [0xFF] error.
+ * result_buf must be at least 5 bytes.
+ * Returns bytes written to result_buf, or -1 on error.
+ */
+int32_t salvium_verify_rct_signatures(
+    uint8_t rct_type, uint32_t input_count, uint32_t ring_size,
+    const uint8_t *tx_prefix_hash, uint32_t tx_prefix_hash_len,
+    const uint8_t *rct_base, uint32_t rct_base_len,
+    const uint8_t *bp_components, uint32_t bp_components_len,
+    const uint8_t *key_images, uint32_t key_images_len,
+    const uint8_t *pseudo_outs, uint32_t pseudo_outs_len,
+    const uint8_t *sigs, uint32_t sigs_len,
+    const uint8_t *ring_pubkeys, uint32_t ring_pubkeys_len,
+    const uint8_t *ring_commitments, uint32_t ring_commitments_len,
+    uint8_t *result_buf, uint32_t result_buf_len);
+
 /* ─── Bulletproofs+ Range Proofs ─────────────────────────────────────────── */
 
 /**
@@ -415,6 +439,33 @@ int32_t salvium_storage_get_balance(uint32_t handle,
     const uint8_t *asset_type, size_t at_len,
     int32_t account_index,
     uint8_t **out_ptr, size_t *out_len);
+
+/* ─── CryptoNote Output Scanning ─────────────────────────────────────────── */
+
+/**
+ * CryptoNote (pre-CARROT) output scan — single native call.
+ * view_tag: -1 = no view tag, 0-255 = expected tag.
+ * rct_type: 0 = coinbase, else RCT.
+ * clear_text_amount: UINT64_MAX = not provided.
+ * spend_secret_key: nullable (view-only wallet).
+ * subaddr_data: n_sub * 40 bytes (32-byte key + u32 major LE + u32 minor LE).
+ * out_ptr/out_len: Rust-allocated JSON result buffer.
+ * Returns: 1 = owned, 0 = not owned, -1 = error.
+ */
+int32_t salvium_cn_scan_output(
+    const uint8_t *output_pubkey /* 32 */,
+    const uint8_t *derivation /* 32 */,
+    uint32_t output_index,
+    int32_t view_tag,
+    uint8_t rct_type,
+    uint64_t clear_text_amount,
+    const uint8_t *ecdh_encrypted_amount /* 8 */,
+    const uint8_t *spend_secret_key /* 32, nullable */,
+    const uint8_t *view_secret_key /* 32 */,
+    const uint8_t *subaddr_data,
+    uint32_t n_sub,
+    uint8_t **out_ptr,
+    size_t *out_len);
 
 /** Free Rust-allocated result buffer. */
 void salvium_storage_free_buf(uint8_t *ptr, size_t len);

@@ -5,7 +5,7 @@
  * Tests the full transaction lifecycle between two wallets.
  *
  * Env vars:
- *   DAEMON_URL    - RPC endpoint (default: http://web.whiskymine.io:29081)
+ *   DAEMON_URL    - RPC endpoint (default: http://node12.whiskymine.io:29081)
  *   WALLET_FILE   - Path to wallet JSON (default: ~/testnet-wallet/wallet.json)
  *   NETWORK       - mainnet|testnet|stagenet (default: testnet)
  *   DRY_RUN       - 1 = build but don't broadcast (default: 1)
@@ -23,7 +23,7 @@ import { getHeight, waitForHeight, fmt, loadWalletFromFile } from './test-helper
 
 await setCryptoBackend('wasm');
 
-const DAEMON_URL = process.env.DAEMON_URL || 'http://web.whiskymine.io:29081';
+const DAEMON_URL = process.env.DAEMON_URL || 'http://node12.whiskymine.io:29081';
 const WALLET_FILE = process.env.WALLET_FILE || `${process.env.HOME}/testnet-wallet/wallet-a.json`;
 const NETWORK = process.env.NETWORK || 'testnet';
 const DRY_RUN = process.env.DRY_RUN !== '0';
