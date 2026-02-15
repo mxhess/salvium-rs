@@ -6,7 +6,7 @@
  */
 
 import {
-  keccak256, blake2b, scReduce32,
+  keccak256, blake2b, scReduce32, scReduce64,
   scalarMultBase, scalarMultPoint, pointAddCompressed,
   cnSubaddressMapBatch as _cnBatch,
   carrotSubaddressMapBatch as _carrotBatch,
@@ -161,19 +161,8 @@ function deriveBytes32(domainSep, key) {
  */
 function deriveScalar(domainSep, key) {
   const hash64 = blake2b(domainSep, 64, key);
-  // Reduce 64 bytes mod L
-  let n = 0n;
-  for (let i = 63; i >= 0; i--) {
-    n = (n << 8n) | BigInt(hash64[i]);
-  }
-  n = n % L;
-
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(n & 0xffn);
-    n = n >> 8n;
-  }
-  return result;
+  // Reduce 64 bytes mod L via backend (Rust or JS)
+  return scReduce64(hash64);
 }
 
 /**

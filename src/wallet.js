@@ -963,7 +963,7 @@ export class Wallet {
           }
         }
       }
-      return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
+      return { balance: balance + stakedBalance, unlockedBalance, lockedBalance: balance + stakedBalance - unlockedBalance, stakedBalance };
     }
 
     // Legacy path (populated by sync())
@@ -998,9 +998,9 @@ export class Wallet {
     }
 
     return {
-      balance,
+      balance: balance + stakedBalance,
       unlockedBalance,
-      lockedBalance: balance - unlockedBalance,
+      lockedBalance: balance + stakedBalance - unlockedBalance,
       stakedBalance
     };
   }
@@ -2246,7 +2246,7 @@ export class Wallet {
         stakedBalance += typeof s.amountStaked === 'bigint' ? s.amountStaked : BigInt(s.amountStaked || 0);
       }
     }
-    return { balance, unlockedBalance, lockedBalance: balance - unlockedBalance, stakedBalance };
+    return { balance: balance + stakedBalance, unlockedBalance, lockedBalance: balance + stakedBalance - unlockedBalance, stakedBalance };
   }
 
   /**

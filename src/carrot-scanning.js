@@ -18,7 +18,7 @@
 import { hexToBytes, bytesToHex } from './address.js';
 import {
   blake2b, keccak256, scalarMultBase, scalarMultPoint, pointAddCompressed, hashToPoint,
-  commit as pedersenCommit, x25519ScalarMult,
+  commit as pedersenCommit, x25519ScalarMult, edwardsToMontgomeryU,
   scReduce64, scAdd, scMul,
   computeCarrotViewTagRust, decryptCarrotAmountRust,
   deriveCarrotCommitmentMaskRust, recoverCarrotAddressSpendPubkeyRust,
@@ -29,67 +29,10 @@ import {
 // X25519 Implementation (Montgomery Curve)
 // ============================================================================
 
-/**
- * Convert ed25519 point (compressed) to X25519 (Montgomery u-coordinate)
- * The Montgomery u-coordinate is: u = (1 + y) / (1 - y) mod p
- * where y is the ed25519 y-coordinate
- *
- * @param {Uint8Array} edPoint - 32-byte ed25519 compressed point
- * @returns {Uint8Array} 32-byte X25519 u-coordinate
- */
-export function edwardsToMontgomeryU(edPoint) {
-  // Ed25519 compressed format: sign bit in MSB of last byte, y-coordinate in rest
-  // Extract y-coordinate
-  const p = 2n ** 255n - 19n;
-
-  let y = 0n;
-  for (let i = 0; i < 32; i++) {
-    y |= BigInt(edPoint[i]) << (8n * BigInt(i));
-  }
-  // Clear the sign bit
-  y &= (1n << 255n) - 1n;
-
-  // u = (1 + y) / (1 - y) mod p
-  const one = 1n;
-  const numerator = (one + y) % p;
-  const denominator = (p + one - y) % p;
-
-  // Compute modular inverse of denominator using Fermat's little theorem
-  // p is prime, so denominator^(p-2) = denominator^(-1) mod p
-  const invDenom = modPow(denominator, p - 2n, p);
-  const u = (numerator * invDenom) % p;
-
-  // Convert to bytes (little-endian)
-  const result = new Uint8Array(32);
-  let val = u;
-  for (let i = 0; i < 32; i++) {
-    result[i] = Number(val & 0xffn);
-    val >>= 8n;
-  }
-
-  return result;
-}
-
-/**
- * Modular exponentiation: base^exp mod mod
- */
-function modPow(base, exp, mod) {
-  let result = 1n;
-  base = base % mod;
-  while (exp > 0n) {
-    if (exp % 2n === 1n) {
-      result = (result * base) % mod;
-    }
-    exp = exp >> 1n;
-    base = (base * base) % mod;
-  }
-  return result;
-}
-
-// x25519ScalarMult is now imported from ./crypto/index.js (routed through the crypto provider).
+// edwardsToMontgomeryU and x25519ScalarMult are imported from ./crypto/index.js (routed through the crypto provider).
 // The JS backend has a pure-JS BigInt fallback; WASM/FFI backends use native Rust.
 // Re-export for consumers that import from this module.
-export { x25519ScalarMult };
+export { x25519ScalarMult, edwardsToMontgomeryU };
 
 /**
  * Perform X25519 ECDH key exchange for CARROT scanning

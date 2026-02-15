@@ -9,7 +9,7 @@ import { clsagSign, clsagVerify, scSub } from '../src/transaction.js';
 import { scalarMultBase, scalarMultPoint } from '../src/crypto/index.js';
 import { keccak256 } from '../src/keccak.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
-import { generateKeyImage } from '../src/keyimage.js';
+import { generateKeyImage } from '../src/crypto/index.js';
 
 // Generate a random 32-byte scalar (reduced mod L)
 function randomScalar() {

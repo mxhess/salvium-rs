@@ -48,6 +48,7 @@ export class JsCryptoBackend {
 
   // X25519 — requires Rust backend
   x25519ScalarMult() { throw new Error(RUST_REQUIRED); }
+  edwardsToMontgomeryU() { throw new Error(RUST_REQUIRED); }
 
   // Point ops — require Rust backend
   scalarMultBase() { throw new Error(RUST_REQUIRED); }
@@ -71,6 +72,11 @@ export class JsCryptoBackend {
 
   // RCT batch verification — returns null (JS fallback handled in validation.js)
   verifyRctSignatures() { return null; }
+
+  // Full TX parsing/serialization — returns null (signals JS fallback)
+  parseTransaction() { return null; }
+  serializeTransaction() { return null; }
+  parseBlock() { return null; }
 
   // CLSAG/TCLSAG/BP+ — require Rust backend
   clsagSign() { throw new Error(RUST_REQUIRED); }

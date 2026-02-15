@@ -23,10 +23,8 @@ import {
   TXOUT_TYPE
 } from '../src/transaction.js';
 
-import { scalarMultBase } from '../src/crypto/index.js';
+import { scalarMultBase, generateKeyImage, initCrypto } from '../src/crypto/index.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
-import { generateKeyImage } from '../src/keyimage.js';
-import { initCrypto } from '../src/crypto/index.js';
 
 await initCrypto();
 

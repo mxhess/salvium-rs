@@ -14,7 +14,6 @@ export * from './carrot.js';
 export * from './subaddress.js';
 export * from './mnemonic.js';
 export * from './scanning.js';
-export * from './keyimage.js';
 export * from './transaction.js';
 export * from './bulletproofs_plus.js';
 export * from './wallet.js';

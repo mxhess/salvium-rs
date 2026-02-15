@@ -30,14 +30,82 @@ import { getCryptoBackend, getCurrentBackendType } from '../crypto/provider.js';
 // =============================================================================
 
 /**
+ * Convert hex string fields in a Rust-parsed result back to Uint8Array
+ * for JS API compatibility.
+ */
+function convertHexFieldsToUint8Array(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+
+  // Recursively process arrays
+  if (Array.isArray(obj)) {
+    return obj.map(convertHexFieldsToUint8Array);
+  }
+
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || value === undefined) {
+      result[key] = value;
+    } else if (Array.isArray(value)) {
+      result[key] = value.map(convertHexFieldsToUint8Array);
+    } else if (typeof value === 'object') {
+      result[key] = convertHexFieldsToUint8Array(value);
+    } else if (typeof value === 'string') {
+      // Convert fields that should be Uint8Array (32-byte keys, key images, etc.)
+      // Fields that are hex-encoded binary data (not amounts/strings)
+      if (['key', 'keyImage', 'return_address', 'return_pubkey',
+           'viewTag', 'encryptedJanusAnchor', 'p_r',
+           'R', 'z1', 'z2', 'c1', 'D', 'A', 'A1', 'B',
+           'r1', 's1', 'd1', 'spend_pubkey', 'aR', 'aR_stake',
+           'return_address_change_mask',
+           'return_view_tag', 'return_anchor_enc'].includes(key)) {
+        result[key] = hexToBytes(value);
+      } else if (key === 'amount' && value.length === 16 && /^[0-9a-f]+$/i.test(value)) {
+        // ecdhInfo amount is 8-byte hex, not a decimal string
+        result[key] = hexToBytes(value);
+      } else if (['amount_burnt', 'amount_slippage_limit', 'txnFee'].includes(key)) {
+        // These are decimal strings — convert to BigInt
+        result[key] = BigInt(value);
+      } else if (key === 'amount' && /^\d+$/.test(value)) {
+        // Regular amounts are decimal strings from Rust
+        result[key] = BigInt(value);
+      } else {
+        result[key] = value;
+      }
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Parse a Salvium transaction from binary data
  *
  * @param {Uint8Array|string} data - Raw transaction data (binary or hex)
  * @returns {Object} Parsed transaction object
  */
-export function parseTransaction(data) {
+export function parseTransaction(data, { useNative = false } = {}) {
   if (typeof data === 'string') {
     data = hexToBytes(data);
+  }
+
+  // Rust backend: opt-in only (the JSON→hex→Uint8Array marshalling overhead
+  // makes it slower than the direct JS parser for hot-path sync).
+  if (useNative) {
+    const bt = getCurrentBackendType();
+    if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
+      try {
+        const backend = getCryptoBackend();
+        if (backend.parseTransaction) {
+          const result = backend.parseTransaction(data);
+          if (result && !result.error) {
+            return convertHexFieldsToUint8Array(result);
+          }
+        }
+      } catch (_e) {
+        // Fall through to JS implementation
+      }
+    }
   }
 
   let offset = 0;
@@ -1168,7 +1236,24 @@ export function parsePricingRecord(data, startOffset = 0) {
  * @param {Uint8Array} data - Raw binary block data
  * @returns {Object} Parsed block
  */
-export function parseBlock(data) {
+export function parseBlock(data, { useNative = false } = {}) {
+  // Rust backend: opt-in only (same marshalling overhead as parseTransaction)
+  if (useNative) {
+    const bt = getCurrentBackendType();
+    if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
+      try {
+        const backend = getCryptoBackend();
+        if (backend.parseBlock) {
+          const result = backend.parseBlock(data);
+          if (result && !result.error) {
+            return convertHexFieldsToUint8Array(result);
+          }
+        }
+      } catch (_e) {
+        // Fall through to JS implementation
+      }
+    }
+  }
   let offset = 0;
 
   const readBytes = (count) => {

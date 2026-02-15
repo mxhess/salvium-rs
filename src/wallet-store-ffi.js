@@ -59,6 +59,14 @@ const STORAGE_SYMBOLS = {
   salvium_storage_get_balance:    { args: [u32, i64, ptr, usize, i32, ptr, ptr], returns: i32 },
   salvium_storage_get_all_balances: { args: [u32, i64, i32, ptr, ptr], returns: i32 },
 
+  // Stake operations
+  salvium_storage_put_stake:      { args: [u32, ptr, usize], returns: i32 },
+  salvium_storage_get_stake:      { args: [u32, ptr, usize, ptr, ptr], returns: i32 },
+  salvium_storage_get_stakes:     { args: [u32, ptr, usize, ptr, ptr], returns: i32 },
+  salvium_storage_get_stake_by_output_key: { args: [u32, ptr, usize, ptr, ptr], returns: i32 },
+  salvium_storage_mark_stake_returned: { args: [u32, ptr, usize], returns: i32 },
+  salvium_storage_delete_stakes_above: { args: [u32, i64], returns: i32 },
+
   salvium_storage_free_buf:       { args: [ptr, usize], returns: FFIType.void },
 };
 
@@ -275,6 +283,17 @@ export class FfiStorage extends WalletStorage {
     if (rc !== 0) throw new Error('putBlockHash failed');
   }
 
+  async putBlockHashBatch(entries) {
+    const lib = getLib();
+    for (const { height, hash } of entries) {
+      const hashBuf = Buffer.from(hash, 'utf-8');
+      const rc = lib.symbols.salvium_storage_put_block_hash(
+        this._handle, height, hashBuf, hashBuf.length
+      );
+      if (rc !== 0) throw new Error(`putBlockHash failed at height ${height}`);
+    }
+  }
+
   async getBlockHash(height) {
     const outPtrBuf = Buffer.alloc(8);
     const outLenBuf = Buffer.alloc(8);
@@ -400,6 +419,98 @@ export class FfiStorage extends WalletStorage {
       };
     }
     return result;
+  }
+
+  // ── Stake Operations ─────────────────────────────────────────────────
+
+  async putStake(record) {
+    const data = record.toJSON ? record.toJSON() : { ...record };
+    // Convert BigInt values to strings for JSON serialization
+    if (typeof data.amountStaked === 'bigint') data.amountStaked = data.amountStaked.toString();
+    if (typeof data.fee === 'bigint') data.fee = data.fee.toString();
+    if (typeof data.returnAmount === 'bigint') data.returnAmount = data.returnAmount.toString();
+    const json = JSON.stringify(data);
+    const buf = Buffer.from(json, 'utf-8');
+    const rc = getLib().symbols.salvium_storage_put_stake(this._handle, buf, buf.length);
+    if (rc !== 0) throw new Error('putStake failed');
+    return record;
+  }
+
+  async getStake(stakeTxHash) {
+    if (!stakeTxHash) return null;
+    const kBuf = Buffer.from(stakeTxHash, 'utf-8');
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = getLib().symbols.salvium_storage_get_stake(
+      this._handle, kBuf, kBuf.length, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) return null;
+    const jsonStr = readAndFree(outPtrBuf, outLenBuf);
+    if (!jsonStr) return null;
+    const data = JSON.parse(jsonStr);
+    // Convert amount strings to BigInt for consistency with MemoryStorage
+    data.amountStaked = BigInt(data.amountStaked || '0');
+    data.fee = BigInt(data.fee || '0');
+    data.returnAmount = BigInt(data.returnAmount || '0');
+    return data;
+  }
+
+  async getStakes(query = {}) {
+    const queryJson = JSON.stringify(query);
+    const qBuf = Buffer.from(queryJson, 'utf-8');
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = getLib().symbols.salvium_storage_get_stakes(
+      this._handle, qBuf, qBuf.length, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) return [];
+    const jsonStr = readAndFree(outPtrBuf, outLenBuf);
+    if (!jsonStr) return [];
+    const rows = JSON.parse(jsonStr);
+    return rows.map(r => ({
+      ...r,
+      amountStaked: BigInt(r.amountStaked || '0'),
+      fee: BigInt(r.fee || '0'),
+      returnAmount: BigInt(r.returnAmount || '0'),
+    }));
+  }
+
+  async getStakeByOutputKey(changeOutputKey) {
+    if (!changeOutputKey) return null;
+    const kBuf = Buffer.from(changeOutputKey, 'utf-8');
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = getLib().symbols.salvium_storage_get_stake_by_output_key(
+      this._handle, kBuf, kBuf.length, outPtrBuf, outLenBuf
+    );
+    if (rc !== 0) return null;
+    const jsonStr = readAndFree(outPtrBuf, outLenBuf);
+    if (!jsonStr) return null;
+    const data = JSON.parse(jsonStr);
+    data.amountStaked = BigInt(data.amountStaked || '0');
+    data.fee = BigInt(data.fee || '0');
+    data.returnAmount = BigInt(data.returnAmount || '0');
+    return data;
+  }
+
+  async markStakeReturned(stakeTxHash, returnInfo) {
+    const data = {
+      stakeTxHash,
+      returnTxHash: returnInfo.returnTxHash,
+      returnHeight: returnInfo.returnHeight,
+      returnTimestamp: returnInfo.returnTimestamp,
+      returnAmount: (returnInfo.returnAmount !== undefined
+        ? returnInfo.returnAmount.toString() : '0'),
+    };
+    const json = JSON.stringify(data);
+    const buf = Buffer.from(json, 'utf-8');
+    const rc = getLib().symbols.salvium_storage_mark_stake_returned(this._handle, buf, buf.length);
+    if (rc !== 0) throw new Error('markStakeReturned failed');
+  }
+
+  async deleteStakesAbove(height) {
+    const rc = getLib().symbols.salvium_storage_delete_stakes_above(this._handle, height);
+    if (rc !== 0) throw new Error('deleteStakesAbove failed');
   }
 }
 

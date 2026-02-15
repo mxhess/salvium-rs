@@ -14,7 +14,7 @@
 
 /// Decode a varint (LEB128) from bytes at offset.
 /// Returns (value, bytes_read). Max 10 bytes / 70 bits.
-fn decode_varint(data: &[u8], offset: usize) -> Option<(u64, usize)> {
+pub(crate) fn decode_varint(data: &[u8], offset: usize) -> Option<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
     let mut i = 0;
@@ -37,7 +37,7 @@ fn decode_varint(data: &[u8], offset: usize) -> Option<(u64, usize)> {
 }
 
 /// Encode a u64 value as varint (LEB128).
-fn encode_varint(mut value: u64) -> Vec<u8> {
+pub(crate) fn encode_varint(mut value: u64) -> Vec<u8> {
     let mut buf = Vec::with_capacity(10);
     loop {
         let byte = (value & 0x7F) as u8;

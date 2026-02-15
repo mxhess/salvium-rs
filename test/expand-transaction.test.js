@@ -27,8 +27,8 @@ import {
 import { verifyRctSignatures, validateTransactionFull } from '../src/validation.js';
 import {
   scalarMultBase, scalarMultPoint, pointAddCompressed, getGeneratorT,
+  generateKeyImage,
 } from '../src/crypto/index.js';
-import { generateKeyImage } from '../src/keyimage.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';
 
 await initCrypto();

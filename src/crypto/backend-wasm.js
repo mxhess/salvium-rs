@@ -158,8 +158,25 @@ export class WasmCryptoBackend {
     return this.wasm.compute_tx_prefix_hash(data);
   }
 
+  // Full transaction parsing & serialization
+  parseTransaction(data) {
+    const json = this.wasm.parse_transaction_bytes(data);
+    if (!json || json.startsWith('{"error"')) return null;
+    return JSON.parse(json);
+  }
+  serializeTransaction(txObj) {
+    const result = this.wasm.serialize_transaction_json(JSON.stringify(txObj));
+    return (result && result.length > 0) ? result : null;
+  }
+  parseBlock(data) {
+    const json = this.wasm.parse_block_bytes(data);
+    if (!json || json.startsWith('{"error"')) return null;
+    return JSON.parse(json);
+  }
+
   // X25519
   x25519ScalarMult(scalar, uCoord) { return this.wasm.x25519_scalar_mult(scalar, uCoord); }
+  edwardsToMontgomeryU(point) { return this.wasm.edwards_to_montgomery_u(point); }
 
   // Hash-to-point & key derivation
   hashToPoint(data) { return this.wasm.hash_to_point(data); }

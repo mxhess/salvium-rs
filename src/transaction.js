@@ -118,11 +118,17 @@ import {
   getFeeMultiplier as _getFeeMultiplier
 } from './transaction/constants.js';
 
+// Scalar ops from crypto backend (Rust-backed)
+import {
+  scReduce32 as _scReduce32, scInvert as _scInvert,
+  scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scMulAdd as _scMulAdd,
+  randomScalar as _scRandom,
+  commit as _commit, genCommitmentMask as _genCommitmentMask,
+} from './crypto/index.js';
+
+// Serialization utilities (remain in serialization.js)
 import {
   bytesToBigInt as _bytesToBigInt, bigIntToBytes as _bigIntToBytes,
-  scReduce32 as _scReduce32, scInvert as _scInvert,
-  scAdd as _scAdd, scSub as _scSub, scMul as _scMul, scMulAdd as _scMulAdd, scRandom as _scRandom,
-  commit as _commit, genCommitmentMask as _genCommitmentMask,
   serializeTxPrefix as _serializeTxPrefix, getTxPrefixHash as _getTxPrefixHash,
   serializeRctBase as _serializeRctBase,
   serializeCLSAG as _serializeCLSAG, serializeTCLSAG as _serializeTCLSAG,

@@ -25,7 +25,6 @@
     "./bulletproofs": "./src/bulletproofs_plus.js",
     "./transaction": "./src/transaction.js",
     "./scanning": "./src/scanning.js",
-    "./keyimage": "./src/keyimage.js",
     "./mining": "./src/mining.js",
     "./stratum": "./src/stratum/index.js",
     "./wallet": "./src/wallet.js",

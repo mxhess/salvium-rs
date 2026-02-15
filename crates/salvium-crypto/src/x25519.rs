@@ -299,6 +299,22 @@ impl Fe {
     }
 }
 
+/// Convert Ed25519 compressed point to X25519 u-coordinate.
+/// u = (1 + y) / (1 - y) mod p, where y is the Ed25519 y-coordinate.
+pub(crate) fn edwards_to_montgomery_u(ed_point: &[u8; 32]) -> [u8; 32] {
+    // Extract y-coordinate (clear the sign bit in the high byte)
+    let mut y_bytes = *ed_point;
+    y_bytes[31] &= 0x7F;
+    let y = Fe::from_bytes(&y_bytes);
+
+    // u = (1 + y) / (1 - y)
+    let numerator = Fe::add(&Fe::ONE, &y).carry_reduce();
+    let denominator = Fe::sub(&Fe::ONE, &y).carry_reduce();
+    let inv_denom = Fe::invert(&denominator);
+    let u = Fe::mul(&numerator, &inv_denom);
+    u.to_bytes()
+}
+
 /// Montgomery ladder: compute scalar * u_point on Curve25519 (Montgomery form).
 ///
 /// scalar: 32-byte little-endian scalar (already clamped by caller).

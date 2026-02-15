@@ -12,6 +12,9 @@ pub mod cn_scan;
 pub mod subaddress;
 pub mod carrot_keys;
 pub mod tx_format;
+pub mod tx_constants;
+pub mod tx_parse;
+pub mod tx_serialize;
 
 pub(crate) mod elligator2;
 pub mod clsag;
@@ -512,6 +515,13 @@ pub fn x25519_scalar_mult(scalar: &[u8], u_coord: &[u8]) -> Vec<u8> {
     x25519::montgomery_ladder(&s, &to32(u_coord)).to_vec()
 }
 
+/// Convert Ed25519 compressed point to X25519 u-coordinate.
+/// u = (1 + y) / (1 - y) mod p
+#[wasm_bindgen]
+pub fn edwards_to_montgomery_u(point: &[u8]) -> Vec<u8> {
+    x25519::edwards_to_montgomery_u(&to32(point)).to_vec()
+}
+
 // ─── Batch Subaddress Map Generation ────────────────────────────────────────
 
 /// Generate CryptoNote subaddress map in a single call.
@@ -652,4 +662,32 @@ pub fn serialize_tx_extra(json_str: &str) -> Vec<u8> {
 #[wasm_bindgen]
 pub fn compute_tx_prefix_hash(data: &[u8]) -> Vec<u8> {
     tx_format::compute_tx_prefix_hash(data).to_vec()
+}
+
+// ─── Transaction Parsing & Serialization ─────────────────────────────────────
+
+/// Parse a complete transaction from raw bytes to JSON string.
+/// Returns JSON with hex-encoded binary fields and decimal string amounts.
+#[wasm_bindgen]
+pub fn parse_transaction_bytes(data: &[u8]) -> String {
+    match tx_parse::parse_transaction(data) {
+        Ok(json) => json,
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.replace('"', "\\\"")),
+    }
+}
+
+/// Serialize a transaction from JSON string to raw bytes.
+/// Returns empty Vec on error.
+#[wasm_bindgen]
+pub fn serialize_transaction_json(json: &str) -> Vec<u8> {
+    tx_serialize::serialize_transaction(json).unwrap_or_default()
+}
+
+/// Parse a complete block from raw bytes to JSON string.
+#[wasm_bindgen]
+pub fn parse_block_bytes(data: &[u8]) -> String {
+    match tx_parse::parse_block(data) {
+        Ok(json) => json,
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.replace('"', "\\\"")),
+    }
 }

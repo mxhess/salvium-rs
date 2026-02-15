@@ -5,7 +5,7 @@ import { createDaemonRPC } from '../src/rpc/index.js';
 import { MemoryStorage, WalletOutput, WalletTransaction } from '../src/wallet-store.js';
 import { parseTransaction, extractTxPubKey, extractPaymentId } from '../src/transaction.js';
 import { generateKeyDerivation, derivePublicKey, deriveViewTag, computeSharedSecret, ecdhDecodeFull } from '../src/scanning.js';
-import { generateKeyImage } from '../src/keyimage.js';
+import { generateKeyImage } from '../src/crypto/index.js';
 import { mnemonicToSeed } from '../src/mnemonic.js';
 import { deriveKeys } from '../src/carrot.js';
 import { hexToBytes, bytesToHex } from '../src/address.js';

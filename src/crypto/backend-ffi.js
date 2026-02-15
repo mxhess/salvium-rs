@@ -144,6 +144,7 @@ const FFI_SYMBOLS = {
 
   // X25519
   salvium_x25519_scalar_mult: { args: [ptr, ptr, ptr], returns: i32 },
+  salvium_edwards_to_montgomery_u: { args: [ptr, ptr], returns: i32 },
 
   // Hash-to-point & key derivation
   salvium_hash_to_point:           { args: [ptr, usize, ptr], returns: i32 },
@@ -206,6 +207,11 @@ const FFI_SYMBOLS = {
   salvium_serialize_tx_extra:      { args: [ptr, usize, ptr, ptr], returns: i32 },
   salvium_compute_tx_prefix_hash:  { args: [ptr, usize, ptr], returns: i32 },
 
+  // Full transaction parsing & serialization
+  salvium_parse_transaction:       { args: [ptr, usize, ptr, ptr], returns: i32 },
+  salvium_serialize_transaction:   { args: [ptr, usize, ptr, ptr], returns: i32 },
+  salvium_parse_block:             { args: [ptr, usize, ptr, ptr], returns: i32 },
+
   // CARROT scanning
   salvium_carrot_scan_output:   { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
   salvium_carrot_scan_internal: { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
@@ -223,11 +229,52 @@ export class FfiCryptoBackend {
   constructor() {
     this.name = 'ffi';
     this.lib = null;
+    // Cached serialized subaddress maps to avoid re-marshaling on every scan call
+    this._cachedSubBuf = null;
+    this._cachedSubN = 0;
+    this._cachedSubMapRef = null;  // WeakRef to detect map identity
+    this._cachedCarrotSubBuf = null;
+    this._cachedCarrotSubN = 0;
+    this._cachedCarrotSubMapRef = null;
   }
 
   async init() {
     const libPath = resolveLibPath();
     this.lib = dlopen(libPath, FFI_SYMBOLS);
+  }
+
+  /**
+   * Serialize a subaddress map to a flat buffer for FFI.
+   * Caches the result so repeated calls with the same Map skip serialization.
+   * Each entry: 32-byte key + 4-byte major LE + 4-byte minor LE = 40 bytes.
+   * @private
+   */
+  _marshalSubaddressMap(subaddressMap, cacheSlot) {
+    if (!subaddressMap || subaddressMap.size === 0) {
+      return { buf: Buffer.alloc(0), n: 0 };
+    }
+    // Check cache: same Map object reference → reuse buffer
+    const refField = cacheSlot + 'Ref';
+    const bufField = cacheSlot + 'Buf';
+    const nField = cacheSlot + 'N';
+    if (this[refField] === subaddressMap && this[bufField]) {
+      return { buf: this[bufField], n: this[nField] };
+    }
+    // Serialize
+    const n = subaddressMap.size;
+    const buf = Buffer.alloc(n * 40);
+    let offset = 0;
+    for (const [hexKey, { major, minor }] of subaddressMap) {
+      const keyBytes = hexToBytes(hexKey);
+      buf.set(keyBytes, offset); offset += 32;
+      buf.writeUInt32LE(major, offset); offset += 4;
+      buf.writeUInt32LE(minor, offset); offset += 4;
+    }
+    // Cache
+    this[refField] = subaddressMap;
+    this[bufField] = buf;
+    this[nField] = n;
+    return { buf, n };
   }
 
   // ─── Hashing ──────────────────────────────────────────────────────────
@@ -376,6 +423,13 @@ export class FfiCryptoBackend {
     const bs = ensureBuffer(scalar), bu = ensureBuffer(uCoord), out = Buffer.alloc(32);
     const rc = this.lib.symbols.salvium_x25519_scalar_mult(bs, bu, out);
     if (rc !== 0) throw new Error('x25519_scalar_mult failed');
+    return new Uint8Array(out);
+  }
+
+  edwardsToMontgomeryU(point) {
+    const bp = ensureBuffer(point), out = Buffer.alloc(32);
+    const rc = this.lib.symbols.salvium_edwards_to_montgomery_u(bp, out);
+    if (rc !== 0) throw new Error('edwards_to_montgomery_u failed');
     return new Uint8Array(out);
   }
 
@@ -899,6 +953,59 @@ export class FfiCryptoBackend {
     return new Uint8Array(out);
   }
 
+  // ─── Full Transaction Parsing & Serialization ──────────────────────────────
+
+  /**
+   * Parse a complete transaction from raw bytes. Returns parsed JSON object or null.
+   */
+  parseTransaction(data) {
+    const bData = ensureBuffer(data);
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = this.lib.symbols.salvium_parse_transaction(bData, bData.length, outPtrBuf, outLenBuf);
+    if (rc !== 0) return null;
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    if (!resultPtr || !resultLen) return null;
+    const resultBuf = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+    return JSON.parse(new TextDecoder().decode(resultBuf));
+  }
+
+  /**
+   * Serialize a transaction from JS object to raw bytes. Returns Uint8Array or null.
+   */
+  serializeTransaction(txObj) {
+    const bJson = Buffer.from(JSON.stringify(txObj), 'utf8');
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = this.lib.symbols.salvium_serialize_transaction(bJson, bJson.length, outPtrBuf, outLenBuf);
+    if (rc !== 0) return null;
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    if (!resultPtr) return new Uint8Array(0);
+    const result = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+    return result;
+  }
+
+  /**
+   * Parse a complete block from raw bytes. Returns parsed JSON object or null.
+   */
+  parseBlock(data) {
+    const bData = ensureBuffer(data);
+    const outPtrBuf = Buffer.alloc(8);
+    const outLenBuf = Buffer.alloc(8);
+    const rc = this.lib.symbols.salvium_parse_block(bData, bData.length, outPtrBuf, outLenBuf);
+    if (rc !== 0) return null;
+    const resultPtr = Number(outPtrBuf.readBigUInt64LE(0));
+    const resultLen = Number(outLenBuf.readBigUInt64LE(0));
+    if (!resultPtr || !resultLen) return null;
+    const resultBuf = new Uint8Array(toArrayBuffer(resultPtr, 0, resultLen)).slice();
+    this.lib.symbols.salvium_storage_free_buf(resultPtr, resultLen);
+    return JSON.parse(new TextDecoder().decode(resultBuf));
+  }
+
   // ─── CARROT Output Scanning ──────────────────────────────────────────────
 
   /**
@@ -953,22 +1060,8 @@ export class FfiCryptoBackend {
     const bSpend = (spendSecretKey) ? ensureBuffer(spendSecretKey) : null;
     const bView = ensureBuffer(viewSecretKey);
 
-    // Marshal subaddress map: each entry = 32-byte key + 4-byte major LE + 4-byte minor LE
-    let subBuf, nSub;
-    if (subaddressMap && subaddressMap.size > 0) {
-      nSub = subaddressMap.size;
-      subBuf = Buffer.alloc(nSub * 40);
-      let offset = 0;
-      for (const [hexKey, { major, minor }] of subaddressMap) {
-        const keyBytes = hexToBytes(hexKey);
-        subBuf.set(keyBytes, offset); offset += 32;
-        subBuf.writeUInt32LE(major, offset); offset += 4;
-        subBuf.writeUInt32LE(minor, offset); offset += 4;
-      }
-    } else {
-      nSub = 0;
-      subBuf = Buffer.alloc(0);
-    }
+    // Use cached subaddress map serialization
+    const { buf: subBuf, n: nSub } = this._marshalSubaddressMap(subaddressMap, '_cachedSub');
 
     // Rust-allocated output pointers
     const outPtrBuf = Buffer.alloc(8);
@@ -1022,22 +1115,8 @@ export class FfiCryptoBackend {
       ? BigInt(clearTextAmount)
       : 0xFFFFFFFFFFFFFFFFn;
 
-    // Marshal subaddress map: each entry = 32-byte key + 4-byte major LE + 4-byte minor LE
-    let subBuf, nSub;
-    if (subaddressMap && subaddressMap.size > 0) {
-      nSub = subaddressMap.size;
-      subBuf = Buffer.alloc(nSub * 40);
-      let offset = 0;
-      for (const [hexKey, { major, minor }] of subaddressMap) {
-        const keyBytes = hexToBytes(hexKey);
-        subBuf.set(keyBytes, offset); offset += 32;
-        subBuf.writeUInt32LE(major, offset); offset += 4;
-        subBuf.writeUInt32LE(minor, offset); offset += 4;
-      }
-    } else {
-      nSub = 0;
-      subBuf = Buffer.alloc(0);
-    }
+    // Use cached CARROT subaddress map serialization
+    const { buf: subBuf, n: nSub } = this._marshalSubaddressMap(subaddressMap, '_cachedCarrotSub');
 
     // Rust-allocated output pointers
     const outPtrBuf = Buffer.alloc(8); // *mut u8

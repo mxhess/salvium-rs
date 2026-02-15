@@ -97,6 +97,25 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS stakes (
+  stake_tx_hash     TEXT PRIMARY KEY,
+  stake_height      INTEGER,
+  stake_timestamp   INTEGER,
+  amount_staked     TEXT NOT NULL DEFAULT '0',
+  fee               TEXT NOT NULL DEFAULT '0',
+  asset_type        TEXT NOT NULL DEFAULT 'SAL',
+  change_output_key TEXT,
+  status            TEXT NOT NULL DEFAULT 'locked',
+  return_tx_hash    TEXT,
+  return_height     INTEGER,
+  return_timestamp  INTEGER,
+  return_amount     TEXT NOT NULL DEFAULT '0',
+  created_at        INTEGER,
+  updated_at        INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_stakes_status ON stakes(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stakes_output_key ON stakes(change_output_key) WHERE change_output_key IS NOT NULL;
 ";
 
 // ─── Data Models ────────────────────────────────────────────────────────────
@@ -228,9 +247,34 @@ pub struct BalanceResult {
     pub locked_balance: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StakeRow {
+    pub stake_tx_hash: String,
+    pub stake_height: Option<i64>,
+    pub stake_timestamp: Option<i64>,
+    #[serde(default = "default_zero_str")]
+    pub amount_staked: String,
+    #[serde(default = "default_zero_str")]
+    pub fee: String,
+    #[serde(default = "default_sal")]
+    pub asset_type: String,
+    pub change_output_key: Option<String>,
+    #[serde(default = "default_locked")]
+    pub status: String,
+    pub return_tx_hash: Option<String>,
+    pub return_height: Option<i64>,
+    pub return_timestamp: Option<i64>,
+    #[serde(default = "default_zero_str")]
+    pub return_amount: String,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
 fn default_zero_str() -> String { "0".to_string() }
 fn default_sal() -> String { "SAL".to_string() }
 fn default_tx_type() -> i64 { 3 }
+fn default_locked() -> String { "locked".to_string() }
 
 /// Deserialize tx_type from either an integer or a string name.
 /// Accepts: 0-8 (integers), "miner", "protocol", "transfer", "convert", "burn", "stake", "return", "audit"
@@ -735,6 +779,167 @@ impl WalletDb {
             });
         }
         Ok(result)
+    }
+
+    // ── Stake Operations ────────────────────────────────────────────────
+
+    pub fn put_stake(&self, row: &StakeRow) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO stakes (
+                stake_tx_hash, stake_height, stake_timestamp,
+                amount_staked, fee, asset_type, change_output_key,
+                status, return_tx_hash, return_height, return_timestamp,
+                return_amount, created_at, updated_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+            )",
+            params![
+                row.stake_tx_hash, row.stake_height, row.stake_timestamp,
+                row.amount_staked, row.fee, row.asset_type, row.change_output_key,
+                row.status, row.return_tx_hash, row.return_height, row.return_timestamp,
+                row.return_amount, row.created_at.unwrap_or(now), now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_stake(&self, stake_tx_hash: &str) -> Result<Option<StakeRow>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT stake_tx_hash, stake_height, stake_timestamp,
+                    amount_staked, fee, asset_type, change_output_key,
+                    status, return_tx_hash, return_height, return_timestamp,
+                    return_amount, created_at, updated_at
+             FROM stakes WHERE stake_tx_hash = ?1",
+            params![stake_tx_hash],
+            |r| Ok(StakeRow {
+                stake_tx_hash: r.get(0)?,
+                stake_height: r.get(1)?,
+                stake_timestamp: r.get(2)?,
+                amount_staked: r.get(3)?,
+                fee: r.get(4)?,
+                asset_type: r.get(5)?,
+                change_output_key: r.get(6)?,
+                status: r.get(7)?,
+                return_tx_hash: r.get(8)?,
+                return_height: r.get(9)?,
+                return_timestamp: r.get(10)?,
+                return_amount: r.get(11)?,
+                created_at: r.get(12)?,
+                updated_at: r.get(13)?,
+            }),
+        ).optional()
+    }
+
+    pub fn get_stakes(&self, status: Option<&str>, asset_type: Option<&str>) -> Result<Vec<StakeRow>, rusqlite::Error> {
+        let mut sql = String::from(
+            "SELECT stake_tx_hash, stake_height, stake_timestamp,
+                    amount_staked, fee, asset_type, change_output_key,
+                    status, return_tx_hash, return_height, return_timestamp,
+                    return_amount, created_at, updated_at
+             FROM stakes WHERE 1=1"
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(s) = status {
+            sql.push_str(&format!(" AND status = ?{}", param_values.len() + 1));
+            param_values.push(Box::new(s.to_string()));
+        }
+        if let Some(at) = asset_type {
+            sql.push_str(&format!(" AND asset_type = ?{}", param_values.len() + 1));
+            param_values.push(Box::new(at.to_string()));
+        }
+
+        sql.push_str(" ORDER BY stake_height ASC");
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_ref.as_slice(), |r| {
+            Ok(StakeRow {
+                stake_tx_hash: r.get(0)?,
+                stake_height: r.get(1)?,
+                stake_timestamp: r.get(2)?,
+                amount_staked: r.get(3)?,
+                fee: r.get(4)?,
+                asset_type: r.get(5)?,
+                change_output_key: r.get(6)?,
+                status: r.get(7)?,
+                return_tx_hash: r.get(8)?,
+                return_height: r.get(9)?,
+                return_timestamp: r.get(10)?,
+                return_amount: r.get(11)?,
+                created_at: r.get(12)?,
+                updated_at: r.get(13)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    pub fn get_stake_by_output_key(&self, change_output_key: &str) -> Result<Option<StakeRow>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT stake_tx_hash, stake_height, stake_timestamp,
+                    amount_staked, fee, asset_type, change_output_key,
+                    status, return_tx_hash, return_height, return_timestamp,
+                    return_amount, created_at, updated_at
+             FROM stakes WHERE change_output_key = ?1",
+            params![change_output_key],
+            |r| Ok(StakeRow {
+                stake_tx_hash: r.get(0)?,
+                stake_height: r.get(1)?,
+                stake_timestamp: r.get(2)?,
+                amount_staked: r.get(3)?,
+                fee: r.get(4)?,
+                asset_type: r.get(5)?,
+                change_output_key: r.get(6)?,
+                status: r.get(7)?,
+                return_tx_hash: r.get(8)?,
+                return_height: r.get(9)?,
+                return_timestamp: r.get(10)?,
+                return_amount: r.get(11)?,
+                created_at: r.get(12)?,
+                updated_at: r.get(13)?,
+            }),
+        ).optional()
+    }
+
+    pub fn mark_stake_returned(
+        &self,
+        stake_tx_hash: &str,
+        return_tx_hash: &str,
+        return_height: i64,
+        return_timestamp: i64,
+        return_amount: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "UPDATE stakes SET status = 'returned', return_tx_hash = ?1, return_height = ?2,
+             return_timestamp = ?3, return_amount = ?4, updated_at = ?5
+             WHERE stake_tx_hash = ?6",
+            params![return_tx_hash, return_height, return_timestamp, return_amount, now, stake_tx_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_stakes_above(&self, height: i64) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        // Delete stakes created above the height
+        self.conn.execute(
+            "DELETE FROM stakes WHERE stake_height > ?1",
+            params![height],
+        )?;
+        // Undo returns above the height (revert to 'locked')
+        self.conn.execute(
+            "UPDATE stakes SET status = 'locked', return_tx_hash = NULL, return_height = NULL,
+             return_timestamp = NULL, return_amount = '0', updated_at = ?1
+             WHERE return_height > ?2",
+            params![now, height],
+        )?;
+        Ok(())
     }
 }
 

@@ -88,6 +88,12 @@ export function derive_secret_key(derivation: Uint8Array, output_index: number, 
 export function double_scalar_mult_base(a: Uint8Array, p: Uint8Array, b: Uint8Array): Uint8Array;
 
 /**
+ * Convert Ed25519 compressed point to X25519 u-coordinate.
+ * u = (1 + y) / (1 - y) mod p
+ */
+export function edwards_to_montgomery_u(point: Uint8Array): Uint8Array;
+
+/**
  * Generate commitment mask from shared secret
  * mask = scReduce32(keccak256("commitment_mask" || sharedSecret))
  */
@@ -126,9 +132,20 @@ export function make_input_context_coinbase(block_height: bigint): Uint8Array;
 export function make_input_context_rct(first_key_image: Uint8Array): Uint8Array;
 
 /**
+ * Parse a complete block from raw bytes to JSON string.
+ */
+export function parse_block_bytes(data: Uint8Array): string;
+
+/**
  * Parse tx_extra binary into JSON string.
  */
 export function parse_extra(extra_bytes: Uint8Array): string;
+
+/**
+ * Parse a complete transaction from raw bytes to JSON string.
+ * Returns JSON with hex-encoded binary fields and decimal string amounts.
+ */
+export function parse_transaction_bytes(data: Uint8Array): string;
 
 /**
  * Pedersen commitment: C = mask*G + amount*H
@@ -169,6 +186,12 @@ export function sc_sub(a: Uint8Array, b: Uint8Array): Uint8Array;
 export function scalar_mult_base(s: Uint8Array): Uint8Array;
 
 export function scalar_mult_point(s: Uint8Array, p: Uint8Array): Uint8Array;
+
+/**
+ * Serialize a transaction from JSON string to raw bytes.
+ * Returns empty Vec on error.
+ */
+export function serialize_transaction_json(json: string): Uint8Array;
 
 /**
  * Serialize tx_extra from JSON to binary. Returns empty on error.
@@ -242,6 +265,7 @@ export interface InitOutput {
     readonly derive_public_key: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly derive_secret_key: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly double_scalar_mult_base: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly edwards_to_montgomery_u: (a: number, b: number) => [number, number];
     readonly gen_commitment_mask: (a: number, b: number) => [number, number];
     readonly generate_key_derivation: (a: number, b: number, c: number, d: number) => [number, number];
     readonly generate_key_image: (a: number, b: number, c: number, d: number) => [number, number];
@@ -249,7 +273,9 @@ export interface InitOutput {
     readonly keccak256: (a: number, b: number) => [number, number];
     readonly make_input_context_coinbase: (a: bigint) => [number, number];
     readonly make_input_context_rct: (a: number, b: number) => [number, number];
+    readonly parse_block_bytes: (a: number, b: number) => [number, number];
     readonly parse_extra: (a: number, b: number) => [number, number];
+    readonly parse_transaction_bytes: (a: number, b: number) => [number, number];
     readonly pedersen_commit: (a: number, b: number, c: number, d: number) => [number, number];
     readonly point_add_compressed: (a: number, b: number, c: number, d: number) => [number, number];
     readonly point_negate: (a: number, b: number) => [number, number];
@@ -267,6 +293,7 @@ export interface InitOutput {
     readonly sc_sub: (a: number, b: number, c: number, d: number) => [number, number];
     readonly scalar_mult_base: (a: number, b: number) => [number, number];
     readonly scalar_mult_point: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly serialize_transaction_json: (a: number, b: number) => [number, number];
     readonly serialize_tx_extra: (a: number, b: number) => [number, number];
     readonly sha256: (a: number, b: number) => [number, number];
     readonly tclsag_sign_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number];

@@ -42,7 +42,13 @@ export const MIN_BATCH_SIZE = 2;
 /**
  * Maximum batch size (ceiling) - prevent memory/timeout issues
  */
-export const MAX_BATCH_SIZE = 1000;
+export const MAX_BATCH_SIZE = 5000;
+
+/**
+ * Target batch processing time in milliseconds.
+ * Batch size is adjusted to converge toward this target.
+ */
+export const TARGET_BATCH_TIME = 5000;
 
 /**
  * Maximum concurrent RPC calls for parallel block fetching
@@ -426,6 +432,7 @@ export class WalletSync {
     );
 
     // ── Phase 1: Fetch block headers in bulk (1 RPC) ──────────────────────
+    const t0 = Date.now();
     const headersResponse = await this.daemon.getBlockHeadersRange(
       this.currentHeight,
       endHeight - 1
@@ -437,6 +444,7 @@ export class WalletSync {
 
     const headers = headersResponse.result.headers || [];
     if (headers.length === 0) return;
+    const tHeaders = Date.now();
 
     // ── Phase 2: Try binary bulk fetch (1 RPC for all blocks) ─────────────
     const heights = headers.map(h => h.height);
@@ -446,8 +454,16 @@ export class WalletSync {
       try {
         const binResp = await this.daemon.getBlocksByHeight(heights);
         if (binResp.success && binResp.result.blocks?.length === headers.length) {
+          const tFetch = Date.now();
           await this._processBinaryBatch(headers, binResp.result.blocks);
           usedBinaryPath = true;
+          const tProcess = Date.now();
+          this._lastBatchTiming = {
+            path: 'binary',
+            headerMs: tHeaders - t0,
+            fetchMs: tFetch - tHeaders,
+            processMs: tProcess - tFetch
+          };
         }
       } catch (e) {
         // Binary endpoint failed — fall through to JSON path
@@ -456,7 +472,14 @@ export class WalletSync {
 
     // ── Phase 2b: Fallback — parallel JSON fetch ──────────────────────────
     if (!usedBinaryPath) {
+      const tFallback = Date.now();
       await this._syncBatchJsonFallback(headers);
+      this._lastBatchTiming = {
+        path: 'json-fallback',
+        headerMs: tHeaders - t0,
+        fetchMs: 0,
+        processMs: Date.now() - tFallback
+      };
     }
 
     // Save sync height
@@ -475,6 +498,12 @@ export class WalletSync {
    * @private
    */
   async _processBinaryBatch(headers, binaryBlocks) {
+    // Collect block hashes to flush in a single batch at the end
+    const pendingBlockHashes = [];
+
+    // Fine-grained timing accumulators
+    let tParse = 0, tHash = 0, tMiner = 0, tProto = 0, tRegular = 0, nRegularTxs = 0;
+
     for (let idx = 0; idx < headers.length; idx++) {
       if (this._stopRequested) break;
       const header = headers[idx];
@@ -482,42 +511,49 @@ export class WalletSync {
 
       try {
         // Parse the block blob → { minerTx, protocolTx, txHashes, header: {...} }
+        let t1 = Date.now();
         const blockBlob = binBlock.block instanceof Uint8Array
           ? binBlock.block
           : new Uint8Array(binBlock.block);
         const parsed = parseBlock(blockBlob);
+        tParse += Date.now() - t1;
 
         // Use tx hashes from block header (reliable) instead of computing from blob
-        // (Salvium v3 tx hashing differs from Monero v2 — blob-based hash is wrong)
+        t1 = Date.now();
         const minerTxHash = header.miner_tx_hash
           || this._computeTxHashFromBlob(blockBlob, parsed.minerTx);
         const protocolTxHash = header.protocol_tx_hash
           || this._computeTxHashFromBlob(blockBlob, parsed.protocolTx);
+        tHash += Date.now() - t1;
 
         // Process miner_tx (coinbase)
         if (parsed.minerTx && minerTxHash) {
+          t1 = Date.now();
           await this._processParsedTransaction(
             parsed.minerTx, minerTxHash, header,
             { isMinerTx: true, isProtocolTx: false }
           );
+          tMiner += Date.now() - t1;
         }
 
         // Process protocol_tx
         if (parsed.protocolTx && protocolTxHash) {
+          t1 = Date.now();
           await this._processParsedTransaction(
             parsed.protocolTx, protocolTxHash, header,
             { isMinerTx: false, isProtocolTx: true }
           );
+          tProto += Date.now() - t1;
         }
 
         // Process regular transactions (blobs included in binary response)
         const txBlobs = binBlock.txs || [];
         for (let ti = 0; ti < txBlobs.length; ti++) {
+          t1 = Date.now();
           const txBlobBytes = txBlobs[ti] instanceof Uint8Array
             ? txBlobs[ti]
             : new Uint8Array(txBlobs[ti]);
           const tx = parseTransaction(txBlobBytes);
-          // tx_hashes from the block tell us the hash for each regular tx
           const txHashBytes = parsed.txHashes[ti];
           const txHash = txHashBytes ? bytesToHex(txHashBytes) : null;
           if (tx && txHash) {
@@ -526,6 +562,8 @@ export class WalletSync {
               { isMinerTx: false, isProtocolTx: false }
             );
           }
+          tRegular += Date.now() - t1;
+          nRegularTxs++;
         }
 
         // Emit new block event
@@ -543,15 +581,32 @@ export class WalletSync {
         console.error(`Binary parse failed at height ${header.height}: ${e.message}`);
       }
 
-      await this.storage.putBlockHash(header.height, header.hash);
+      pendingBlockHashes.push({ height: header.height, hash: header.hash });
       this.currentHeight = header.height + 1;
-      this._emit('syncProgress', this.getProgress());
 
-      // Yield to event loop every 5 blocks to prevent UI freeze on mobile
-      if (idx % 5 === 4) {
+      // Emit progress + yield periodically (not per-block — reduces overhead on large batches)
+      if (idx % 50 === 49 || idx === headers.length - 1) {
+        this._emit('syncProgress', this.getProgress());
         await new Promise(r => setTimeout(r, 0));
       }
     }
+
+    // Flush block hashes in batch (avoids per-block FFI/disk overhead)
+    const tFlush0 = Date.now();
+    if (this.storage.putBlockHashBatch) {
+      await this.storage.putBlockHashBatch(pendingBlockHashes);
+    } else {
+      for (const { height, hash } of pendingBlockHashes) {
+        await this.storage.putBlockHash(height, hash);
+      }
+    }
+    const tFlush = Date.now() - tFlush0;
+
+    // Store fine-grained breakdown for batchComplete event
+    this._lastProcessBreakdown = {
+      parse: tParse, hash: tHash, miner: tMiner, proto: tProto,
+      regular: tRegular, nRegularTxs, flush: tFlush
+    };
   }
 
   /**
@@ -669,6 +724,7 @@ export class WalletSync {
     }
 
     // Process blocks sequentially with pre-fetched data
+    const pendingBlockHashes = [];
     for (let idx = 0; idx < headers.length; idx++) {
       if (this._stopRequested) break;
       const header = headers[idx];
@@ -679,25 +735,34 @@ export class WalletSync {
       }
 
       await this._processBlockPrefetched(header, parsed.block, parsed.blockJson, txDataMap);
-      await this.storage.putBlockHash(header.height, header.hash);
+      pendingBlockHashes.push({ height: header.height, hash: header.hash });
       this.currentHeight = header.height + 1;
-      this._emit('syncProgress', this.getProgress());
 
-      // Yield to event loop every 5 blocks to prevent UI freeze on mobile
-      if (idx % 5 === 4) {
+      // Emit progress + yield periodically
+      if (idx % 50 === 49 || idx === headers.length - 1) {
+        this._emit('syncProgress', this.getProgress());
         await new Promise(r => setTimeout(r, 0));
+      }
+    }
+
+    // Flush block hashes in batch
+    if (this.storage.putBlockHashBatch) {
+      await this.storage.putBlockHashBatch(pendingBlockHashes);
+    } else {
+      for (const { height, hash } of pendingBlockHashes) {
+        await this.storage.putBlockHash(height, hash);
       }
     }
   }
 
   /**
-   * Adjust batch size based on per-block throughput trend.
+   * Adjust batch size based on target batch time.
    *
-   * Tracks ms/block across batches:
-   * - If per-block time dropped (faster): scale up aggressively
-   * - If per-block time more than doubled (slower): scale back ~30%
-   * - If per-block time rose modestly: scale back gently
-   * - If roughly stable: nudge up slightly
+   * Computes the ideal batch size to hit TARGET_BATCH_TIME, then applies
+   * damping to prevent wild oscillation:
+   *   - Max 4x increase per step (for fast ramp-up on empty block ranges)
+   *   - Max 0.25x decrease per step (graceful backoff on heavy blocks)
+   *   - EMA smoothing on ms/block to avoid reacting to single-batch noise
    *
    * @private
    */
@@ -705,34 +770,22 @@ export class WalletSync {
     const elapsed = Date.now() - batchStartTime;
     const msPerBlock = blocksProcessed > 0 ? elapsed / blocksProcessed : elapsed;
 
-    const prev = this._lastMsPerBlock;
-    let newSize = this.batchSize;
-
-    if (prev > 0) {
-      const ratio = msPerBlock / prev;
-
-      if (ratio > 2.0) {
-        // Processing time more than doubled — scale back hard
-        newSize = Math.round(this.batchSize * 0.5);
-      } else if (ratio > 1.3) {
-        // Slowed down moderately — scale back gently
-        newSize = Math.round(this.batchSize * 0.75);
-      } else if (ratio < 0.5) {
-        // Processing time dropped by more than half — scale up aggressively
-        newSize = Math.round(this.batchSize * 2.0);
-      } else if (ratio < 0.8) {
-        // Getting faster — scale up
-        newSize = Math.round(this.batchSize * 1.5);
-      } else {
-        // Stable — nudge up 10%
-        newSize = Math.round(this.batchSize * 1.1);
-      }
+    // EMA-smoothed ms/block (α = 0.3 for responsiveness)
+    if (this._lastMsPerBlock > 0) {
+      this._smoothMsPerBlock = 0.3 * msPerBlock + 0.7 * (this._smoothMsPerBlock || this._lastMsPerBlock);
     } else {
-      // First batch — if it was fast, double; otherwise keep
-      if (msPerBlock < 50) {
-        newSize = Math.round(this.batchSize * 2.0);
-      }
+      this._smoothMsPerBlock = msPerBlock;
     }
+
+    // Target-time-based: compute ideal batch size to fill TARGET_BATCH_TIME
+    const idealSize = this._smoothMsPerBlock > 0
+      ? Math.round(TARGET_BATCH_TIME / this._smoothMsPerBlock)
+      : this.batchSize * 2;
+
+    // Damping: limit per-step change to 4x up / 0.25x down
+    let newSize = idealSize;
+    newSize = Math.min(newSize, this.batchSize * 4);
+    newSize = Math.max(newSize, Math.round(this.batchSize * 0.25));
 
     this.batchSize = Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, newSize));
     this._lastMsPerBlock = msPerBlock;
@@ -743,7 +796,9 @@ export class WalletSync {
       batchSize: this.batchSize,
       blocksProcessed,
       msPerBlock: Math.round(msPerBlock),
-      blocksPerSec: blocksProcessed / (elapsed / 1000)
+      blocksPerSec: blocksProcessed / (elapsed / 1000),
+      timing: this._lastBatchTiming || null,
+      breakdown: this._lastProcessBreakdown || null
     });
   }
 
@@ -1543,8 +1598,16 @@ export class WalletSync {
           commitment = bytesToHex(tx.rct.outPk[i]);
         }
 
+        // If key image generation failed, create a deterministic synthetic key image
+        // from txHash + outputIndex. This prevents SQLite from creating duplicate rows
+        // (NULL PRIMARY KEYs are treated as distinct in SQLite) and ensures the output
+        // can be uniquely identified. Synthetic key images start with "00" prefix
+        // (not a valid Ed25519 point) to distinguish them from real key images.
+        const keyImage = scanResult.keyImage
+          || ('00' + txHash + String(i).padStart(2, '0'));
+
         const walletOutput = new WalletOutput({
-          keyImage: scanResult.keyImage,
+          keyImage,
           publicKey: bytesToHex(outputPubKey),
           txHash,
           outputIndex: i,

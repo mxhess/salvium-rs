@@ -25,7 +25,6 @@ export * from './carrot.js';
 export * from './subaddress.js';
 export * from './mnemonic.js';
 export * from './scanning.js';
-export * from './keyimage.js';
 export * from './transaction.js';
 export * from './bulletproofs_plus.js';
 export * from './mining.js';
@@ -268,16 +267,65 @@ import {
   scanTransaction
 } from './scanning.js';
 
-import {
-  hashToPoint,
-  generateKeyImage,
-  deriveKeyImageGenerator,
-  isValidKeyImage,
-  keyImageToY,
-  keyImageFromY,
-  exportKeyImages,
-  importKeyImages
-} from './keyimage.js';
+// Key image functions — hashToPoint and generateKeyImage from Rust backend,
+// utility functions inlined (previously from deprecated keyimage.js)
+import { hashToPoint, generateKeyImage } from './crypto/index.js';
+
+/** Alias for hashToPoint (backward compat from keyimage.js) */
+const deriveKeyImageGenerator = hashToPoint;
+
+/** Check if a key image is valid (non-zero, 32 bytes, on curve) */
+function isValidKeyImage(keyImage) {
+  if (typeof keyImage === 'string') {
+    keyImage = new Uint8Array(keyImage.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+  }
+  if (!keyImage || keyImage.length !== 32) return false;
+  if (keyImage.every(b => b === 0)) return false;
+  return isValidPoint(keyImage);
+}
+
+/** Extract y-coordinate and sign from key image */
+function keyImageToY(keyImage) {
+  if (typeof keyImage === 'string') {
+    keyImage = new Uint8Array(keyImage.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+  }
+  const y = new Uint8Array(keyImage);
+  const sign = (y[31] & 0x80) !== 0;
+  y[31] &= 0x7f;
+  return { y, sign };
+}
+
+/** Reconstruct key image from y-coordinate and sign */
+function keyImageFromY(y, sign) {
+  const keyImage = new Uint8Array(y);
+  if (sign) keyImage[31] |= 0x80;
+  return keyImage;
+}
+
+/** Export key images for a list of outputs */
+function exportKeyImages(outputs) {
+  return outputs.map(output => {
+    const ki = generateKeyImage(output.outputPublicKey, output.outputSecretKey);
+    const _bytesToHex = (b) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+    return {
+      keyImage: ki ? _bytesToHex(ki) : null,
+      outputPublicKey: typeof output.outputPublicKey === 'string'
+        ? output.outputPublicKey : _bytesToHex(output.outputPublicKey),
+      outputIndex: output.outputIndex
+    };
+  }).filter(o => o.keyImage !== null);
+}
+
+/** Import key images (for view-only wallet) */
+function importKeyImages(keyImages) {
+  const map = new Map();
+  for (const { keyImage, outputPublicKey } of keyImages) {
+    map.set(outputPublicKey, keyImage);
+  }
+  return map;
+}
+
+export { deriveKeyImageGenerator, isValidKeyImage, keyImageToY, keyImageFromY, exportKeyImages, importKeyImages };
 
 import {
   // Scalar operations
@@ -420,25 +468,14 @@ import {
 } from './rpc/index.js';
 
 import {
-  bytesToScalar,
-  scalarToBytes,
-  bytesToPoint,
-  hashToPointMonero as bpHashToPoint,
-  hashToScalar as bpHashToScalar,
-  initGenerators,
-  initTranscript,
   parseProof,
-  multiScalarMul,
   verifyBulletproofPlus,
-  verifyBulletproofPlusBatch,
   verifyRangeProof,
   // Proof generation
   proveRange,
   proveRangeMultiple,
-  randomScalar,
   serializeProof,
   bulletproofPlusProve,
-  Point
 } from './bulletproofs_plus.js';
 
 import {
@@ -980,25 +1017,14 @@ const salvium = {
   getTransactionHashFromParsed,
 
   // Bulletproofs+
-  bytesToScalar,
-  scalarToBytes,
-  bytesToPoint,
-  bpHashToPoint,
-  bpHashToScalar,
-  initGenerators,
-  initTranscript,
   parseProof,
-  multiScalarMul,
   verifyBulletproofPlus,
-  verifyBulletproofPlusBatch,
   verifyRangeProof,
   // Proof generation
   proveRange,
   proveRangeMultiple,
-  randomScalar,
   serializeProof,
   bulletproofPlusProve,
-  Point,
 
   // Mining
   MINING_CONSTANTS,

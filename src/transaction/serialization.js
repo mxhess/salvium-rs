@@ -13,7 +13,11 @@
  */
 
 import { keccak256 } from '../keccak.js';
-import { scalarMultBase, scalarMultPoint, pointAddCompressed } from '../crypto/index.js';
+import {
+  scalarMultBase, scalarMultPoint, pointAddCompressed,
+  scReduce32, scReduce64, scAdd, scSub, scMul, scMulAdd, scMulSub,
+  scCheck, scIsZero, scInvert, randomScalar,
+} from '../crypto/index.js';
 import { bytesToHex, hexToBytes } from '../address.js';
 // NOTE: provider.js is a safe import here despite the circular path through backend-js.js.
 // ESM handles circular deps via live bindings — getCryptoBackend/getCurrentBackendType are
@@ -28,6 +32,15 @@ import {
   TXOUT_TYPE,
   TXIN_TYPE
 } from './constants.js';
+
+// Re-export scalar ops from crypto backend (backward compat for consumers of this module)
+export {
+  scReduce32, scReduce64, scAdd, scSub, scMul, scMulAdd, scMulSub,
+  scCheck, scIsZero, scInvert,
+};
+
+// Re-export randomScalar as scRandom for backward compat
+export { randomScalar as scRandom };
 
 // =============================================================================
 // SCALAR OPERATIONS MOD L
@@ -63,167 +76,6 @@ export function bigIntToBytes(n) {
     n >>= 8n;
   }
   return bytes;
-}
-
-/**
- * Reduce a scalar mod L
- * @param {Uint8Array|string} scalar - 32-byte scalar
- * @returns {Uint8Array} Reduced scalar
- */
-export function scReduce32(scalar) {
-  if (typeof scalar === 'string') {
-    scalar = hexToBytes(scalar);
-  }
-  const n = bytesToBigInt(scalar);
-  return bigIntToBytes(n % L);
-}
-
-/**
- * Reduce a 64-byte scalar mod L (used after multiplication)
- * @param {Uint8Array|string} scalar - 64-byte scalar
- * @returns {Uint8Array} Reduced 32-byte scalar
- */
-export function scReduce64(scalar) {
-  if (typeof scalar === 'string') {
-    scalar = hexToBytes(scalar);
-  }
-  const n = bytesToBigInt(scalar);
-  return bigIntToBytes(n % L);
-}
-
-/**
- * Add two scalars mod L: result = a + b mod L
- * @param {Uint8Array|string} a - First scalar
- * @param {Uint8Array|string} b - Second scalar
- * @returns {Uint8Array} Sum mod L
- */
-export function scAdd(a, b) {
-  const aBig = bytesToBigInt(a);
-  const bBig = bytesToBigInt(b);
-  return bigIntToBytes((aBig + bBig) % L);
-}
-
-/**
- * Subtract two scalars mod L: result = a - b mod L
- * @param {Uint8Array|string} a - First scalar
- * @param {Uint8Array|string} b - Second scalar
- * @returns {Uint8Array} Difference mod L
- */
-export function scSub(a, b) {
-  const aBig = bytesToBigInt(a);
-  const bBig = bytesToBigInt(b);
-  return bigIntToBytes(((aBig - bBig) % L + L) % L);
-}
-
-/**
- * Multiply two scalars mod L: result = a * b mod L
- * @param {Uint8Array|string} a - First scalar
- * @param {Uint8Array|string} b - Second scalar
- * @returns {Uint8Array} Product mod L
- */
-export function scMul(a, b) {
-  const aBig = bytesToBigInt(a);
-  const bBig = bytesToBigInt(b);
-  return bigIntToBytes((aBig * bBig) % L);
-}
-
-/**
- * Multiply-add: result = a*b + c mod L
- * @param {Uint8Array|string} a - First multiplicand
- * @param {Uint8Array|string} b - Second multiplicand
- * @param {Uint8Array|string} c - Addend
- * @returns {Uint8Array} Result mod L
- */
-export function scMulAdd(a, b, c) {
-  const aBig = bytesToBigInt(a);
-  const bBig = bytesToBigInt(b);
-  const cBig = bytesToBigInt(c);
-  return bigIntToBytes((aBig * bBig + cBig) % L);
-}
-
-/**
- * Multiply-subtract: result = c - a*b mod L
- * @param {Uint8Array|string} a - First multiplicand
- * @param {Uint8Array|string} b - Second multiplicand
- * @param {Uint8Array|string} c - Minuend
- * @returns {Uint8Array} Result mod L
- */
-export function scMulSub(a, b, c) {
-  const aBig = bytesToBigInt(a);
-  const bBig = bytesToBigInt(b);
-  const cBig = bytesToBigInt(c);
-  return bigIntToBytes(((cBig - aBig * bBig) % L + L) % L);
-}
-
-/**
- * Check if scalar is valid (less than L and non-zero for some operations)
- * @param {Uint8Array|string} scalar - Scalar to check
- * @returns {boolean} True if valid
- */
-export function scCheck(scalar) {
-  const n = bytesToBigInt(scalar);
-  return n < L;
-}
-
-/**
- * Check if scalar is zero
- * @param {Uint8Array|string} scalar - Scalar to check
- * @returns {boolean} True if zero
- */
-export function scIsZero(scalar) {
-  if (typeof scalar === 'string') {
-    scalar = hexToBytes(scalar);
-  }
-  for (let i = 0; i < scalar.length; i++) {
-    if (scalar[i] !== 0) return false;
-  }
-  return true;
-}
-
-/**
- * Generate a random scalar mod L
- * @returns {Uint8Array} Random 32-byte scalar < L
- */
-export function scRandom() {
-  const bytes = new Uint8Array(64);
-  crypto.getRandomValues(bytes);
-  return scReduce64(bytes);
-}
-
-/**
- * Compute modular inverse: result = a^(-1) mod L
- * Uses extended Euclidean algorithm / Fermat's little theorem
- * @param {Uint8Array|string} a - Scalar to invert
- * @returns {Uint8Array} Inverse mod L
- */
-export function scInvert(a) {
-  const aBig = bytesToBigInt(a);
-  if (aBig === 0n) {
-    throw new Error('Cannot invert zero');
-  }
-  // Using Fermat's little theorem: a^(-1) = a^(L-2) mod L
-  const result = modPow(aBig, L - 2n, L);
-  return bigIntToBytes(result);
-}
-
-/**
- * Modular exponentiation: base^exp mod m
- * @param {bigint} base
- * @param {bigint} exp
- * @param {bigint} m
- * @returns {bigint}
- */
-function modPow(base, exp, m) {
-  let result = 1n;
-  base = base % m;
-  while (exp > 0n) {
-    if (exp % 2n === 1n) {
-      result = (result * base) % m;
-    }
-    exp = exp >> 1n;
-    base = (base * base) % m;
-  }
-  return result;
 }
 
 // =============================================================================
@@ -969,7 +821,23 @@ export function serializeOutPk(commitments) {
  * @param {Object} tx - Transaction object
  * @returns {Uint8Array} Serialized transaction bytes
  */
-export function serializeTransaction(tx) {
+export function serializeTransaction(tx, { useNative = false } = {}) {
+  // Rust backend: opt-in only (JSON marshalling overhead)
+  if (useNative) {
+    const bt = getCurrentBackendType();
+    if (bt === 'ffi' || bt === 'wasm' || bt === 'jsi') {
+      try {
+        const backend = getCryptoBackend();
+        if (backend.serializeTransaction) {
+          const result = backend.serializeTransaction(tx);
+          if (result && result.length > 0) return result;
+        }
+      } catch (_e) {
+        // Fall through to JS implementation
+      }
+    }
+  }
+
   // Adapt prefix structure for serializeTxPrefix
   // (buildTransaction uses vin/vout, serializeTxPrefix expects inputs/outputs)
   const prefixForSerialization = {

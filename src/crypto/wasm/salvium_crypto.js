@@ -346,6 +346,21 @@ export function double_scalar_mult_base(a, p, b) {
 }
 
 /**
+ * Convert Ed25519 compressed point to X25519 u-coordinate.
+ * u = (1 + y) / (1 - y) mod p
+ * @param {Uint8Array} point
+ * @returns {Uint8Array}
+ */
+export function edwards_to_montgomery_u(point) {
+    const ptr0 = passArray8ToWasm0(point, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.edwards_to_montgomery_u(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
  * Generate commitment mask from shared secret
  * mask = scReduce32(keccak256("commitment_mask" || sharedSecret))
  * @param {Uint8Array} shared_secret
@@ -451,6 +466,26 @@ export function make_input_context_rct(first_key_image) {
 }
 
 /**
+ * Parse a complete block from raw bytes to JSON string.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function parse_block_bytes(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_block_bytes(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Parse tx_extra binary into JSON string.
  * @param {Uint8Array} extra_bytes
  * @returns {string}
@@ -462,6 +497,27 @@ export function parse_extra(extra_bytes) {
         const ptr0 = passArray8ToWasm0(extra_bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.parse_extra(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Parse a complete transaction from raw bytes to JSON string.
+ * Returns JSON with hex-encoded binary fields and decimal string amounts.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function parse_transaction_bytes(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_transaction_bytes(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -726,6 +782,21 @@ export function scalar_mult_point(s, p) {
     var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v3;
+}
+
+/**
+ * Serialize a transaction from JSON string to raw bytes.
+ * Returns empty Vec on error.
+ * @param {string} json
+ * @returns {Uint8Array}
+ */
+export function serialize_transaction_json(json) {
+    const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.serialize_transaction_json(ptr0, len0);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**

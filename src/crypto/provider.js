@@ -306,6 +306,9 @@ export function computeCarrotMainAddressViewPubkey(k_vi) {
 export function x25519ScalarMult(scalar, uCoord) {
   return getCryptoBackend().x25519ScalarMult(scalar, uCoord);
 }
+export function edwardsToMontgomeryU(point) {
+  return getCryptoBackend().edwardsToMontgomeryU(point);
+}
 
 // Batch subaddress map generation
 export function cnSubaddressMapBatch(spendPubkey, viewSecretKey, majorCount, minorCount) {
@@ -356,3 +359,8 @@ export function computeTxPrefixHash(data) {
 
 // Scalar add (simple wrapper around scAdd)
 export function scalarAdd(a, b) { return scAdd(a, b); }
+
+// Full transaction parsing & serialization (native acceleration)
+export function parseTransactionNative(...args) { return getCryptoBackend().parseTransaction(...args); }
+export function serializeTransactionNative(...args) { return getCryptoBackend().serializeTransaction(...args); }
+export function parseBlockNative(...args) { return getCryptoBackend().parseBlock(...args); }

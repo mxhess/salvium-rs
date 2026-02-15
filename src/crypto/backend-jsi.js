@@ -75,6 +75,7 @@ export class JsiCryptoBackend {
   // ─── X25519 ────────────────────────────────────────────────────────────
 
   x25519ScalarMult(scalar, uCoord) { return this.native.x25519ScalarMult(scalar, uCoord); }
+  edwardsToMontgomeryU(point) { return this.native.edwardsToMontgomeryU(point); }
 
   // ─── Hash-to-Point & Key Derivation ─────────────────────────────────────
 
@@ -165,6 +166,18 @@ export class JsiCryptoBackend {
   }
   computeTxPrefixHash(data) {
     return this.native.computeTxPrefixHash(data);
+  }
+
+  // ─── Full Transaction Parsing & Serialization ────────────────────────────
+
+  parseTransaction(data) {
+    return this.native.parseTransaction(data);
+  }
+  serializeTransaction(txObj) {
+    return this.native.serializeTransaction(txObj);
+  }
+  parseBlock(data) {
+    return this.native.parseBlock(data);
   }
 
   // ─── Pedersen Commitments ───────────────────────────────────────────────

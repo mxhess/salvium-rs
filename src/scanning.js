@@ -20,7 +20,8 @@ import {
   scalarMultBase,
   scalarMultPoint,
   pointAddCompressed,
-  scReduce32, scAdd as scalarAddBackend
+  scReduce32, scAdd as scalarAddBackend,
+  generateKeyDerivation as _generateKeyDerivation
 } from './crypto/index.js';
 
 // ============================================================================
@@ -78,51 +79,11 @@ function xorBytes(a, b) {
  * @returns {Uint8Array|null} 32-byte key derivation, or null if invalid
  */
 export function generateKeyDerivation(txPubKey, viewSecretKey) {
-  // Convert hex if needed
-  if (typeof txPubKey === 'string') {
-    txPubKey = hexToBytes(txPubKey);
-  }
-  if (typeof viewSecretKey === 'string') {
-    viewSecretKey = hexToBytes(viewSecretKey);
-  }
+  if (typeof txPubKey === 'string') txPubKey = hexToBytes(txPubKey);
+  if (typeof viewSecretKey === 'string') viewSecretKey = hexToBytes(viewSecretKey);
 
-  // Validate inputs
-  if (!txPubKey || txPubKey.length !== 32) {
-    throw new Error(`generateKeyDerivation: txPubKey must be 32 bytes, got ${txPubKey?.length ?? 'null'}`);
-  }
-  if (!viewSecretKey || viewSecretKey.length !== 32) {
-    throw new Error(`generateKeyDerivation: viewSecretKey must be 32 bytes, got ${viewSecretKey?.length ?? 'null'}`);
-  }
-
-  try {
-    // Convert scalar to BigInt (little-endian)
-    let scalar = 0n;
-    for (let i = 0; i < 32; i++) {
-      scalar |= BigInt(viewSecretKey[i]) << BigInt(i * 8);
-    }
-
-    // D = viewSecretKey * txPubKey (scalar mult)
-    const point = NoblePoint.fromBytes(txPubKey);
-    const result = point.multiply(scalar);
-
-    // Multiply by cofactor 8 using fast doubling (8 = 2^3)
-    const derivation = result.double().double().double();
-
-    return derivation.toBytes();
-  } catch (e) {
-    // Fallback to original implementation
-    const result = scalarMultPoint(viewSecretKey, txPubKey);
-    if (!result) {
-      throw new Error(`generateKeyDerivation: point multiplication failed - ${e.message}`);
-    }
-    const eight = new Uint8Array(32);
-    eight[0] = 8;
-    const cofactorResult = scalarMultPoint(eight, result);
-    if (!cofactorResult) {
-      throw new Error('generateKeyDerivation: cofactor multiplication failed');
-    }
-    return cofactorResult;
-  }
+  // Delegate to Rust backend: computes 8 * viewSecretKey * txPubKey in a single call
+  return _generateKeyDerivation(txPubKey, viewSecretKey);
 }
 
 /**

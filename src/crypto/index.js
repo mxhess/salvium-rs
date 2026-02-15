@@ -42,7 +42,7 @@ export {
   // Key derivation
   argon2id,
   // X25519
-  x25519ScalarMult,
+  x25519ScalarMult, edwardsToMontgomeryU,
   // CARROT key derivation
   computeCarrotSpendPubkey, computeCarrotAccountViewPubkey,
   computeCarrotMainAddressViewPubkey,

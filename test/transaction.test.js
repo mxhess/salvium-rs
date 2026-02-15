@@ -64,7 +64,7 @@ import {
   getGeneratorG
 } from '../src/crypto/index.js';
 
-import { hashToPoint, generateKeyImage } from '../src/keyimage.js';
+import { hashToPoint, generateKeyImage } from '../src/crypto/index.js';
 import { deriveKeys } from '../src/carrot.js';
 import { generateSeed } from '../src/carrot.js';
 import { bytesToHex, hexToBytes } from '../src/address.js';

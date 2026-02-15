@@ -292,6 +292,12 @@ async function runIntegrationTest() {
     console.log('Storage backend: memory');
   }
   await storage.open();
+  // Clear database for fresh syncs to avoid stale data from previous runs
+  // (e.g. NULL key image duplicates in SQLite from before synthetic KI fix)
+  if (startHeight === 0) {
+    await storage.clear();
+    console.log('  Database cleared for fresh sync');
+  }
   await storage.setSyncHeight(startHeight);
 
   // Generate subaddress maps (matching C++ wallet lookahead: 50 major x 200 minor)
@@ -405,12 +411,17 @@ async function runIntegrationTest() {
   // Track batch size adaptation
   let lastBatchSize = null;
   sync.on('batchComplete', (data) => {
-    // Only log when batch size changes
-    if (lastBatchSize !== data.batchSize) {
-      const direction = lastBatchSize === null ? 'initial' : (data.batchSize > lastBatchSize ? '↑' : '↓');
-      console.log(`  [Batch] ${direction} size=${data.batchSize} (${data.elapsed}ms, ${data.blocksPerSec.toFixed(1)} blk/s)`);
-      lastBatchSize = data.batchSize;
-    }
+    const direction = lastBatchSize === null ? 'initial' : (data.batchSize > lastBatchSize ? '↑' : (data.batchSize < lastBatchSize ? '↓' : '='));
+    const t = data.timing;
+    const b = data.breakdown;
+    const timingStr = t
+      ? ` [${t.path} hdr=${t.headerMs}ms fetch=${t.fetchMs}ms proc=${t.processMs}ms]`
+      : '';
+    const breakdownStr = b
+      ? `\n         parse=${b.parse}ms hash=${b.hash}ms miner=${b.miner}ms proto=${b.proto}ms regular=${b.regular}ms(${b.nRegularTxs}tx) flush=${b.flush}ms`
+      : '';
+    console.log(`  [Batch] ${direction} size=${data.batchSize} n=${data.blocksProcessed} (${data.elapsed}ms, ${data.blocksPerSec.toFixed(1)} blk/s)${timingStr}${breakdownStr}`);
+    lastBatchSize = data.batchSize;
   });
 
   // Debug: sample a few blocks to see transaction structure
@@ -461,42 +472,50 @@ async function runIntegrationTest() {
   const transactions = await storage.getTransactions();
   const syncHeight = await storage.getSyncHeight();
 
-  // Calculate balance with locked/unlocked split
-  let balance = 0n;
-  let unlockedBalance = 0n;
+  // ── Per-asset-type balance breakdown ─────────────────────────────────
+  // SAL and SAL1 are the same underlying asset (SAL1 is post-HF6 rename).
+  // Compute both individually and combined for proper comparison with C++ wallet.
+  const balanceByAsset = {};
+  let syntheticKiCount = 0;
+  let syntheticKiBalance = 0n;
   let unspentCount = 0;
-  let unlockedCount = 0;
 
-  if (storageBackend === 'ffi' && storage.getBalance) {
-    // Rust-computed balance — single FFI call, no output round-trip
-    const bal = storage.getBalance({ currentHeight: syncHeight, assetType: 'SAL1' });
-    balance = bal.balance;
-    unlockedBalance = bal.unlockedBalance;
-    // Count unspent outputs for display
-    for (const output of outputs) {
-      if (!output.isSpent) {
-        unspentCount++;
-        if (output.isUnlocked?.(syncHeight) ?? true) unlockedCount++;
-      }
+  for (const output of outputs) {
+    if (output.isSpent) continue;
+    const at = output.assetType || 'SAL';
+    const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
+    if (!balanceByAsset[at]) balanceByAsset[at] = { count: 0, total: 0n, unlocked: 0n, unlockedCount: 0 };
+    balanceByAsset[at].count++;
+    balanceByAsset[at].total += amount;
+    unspentCount++;
+    const unlocked = output.isUnlocked?.(syncHeight) ?? true;
+    if (unlocked) {
+      balanceByAsset[at].unlocked += amount;
+      balanceByAsset[at].unlockedCount++;
     }
-  } else {
-    // Manual balance computation for MemoryStorage
-    for (const output of outputs) {
-      if (!output.isSpent) {
-        const amount = typeof output.amount === 'bigint' ? output.amount : BigInt(output.amount);
-        balance += amount;
-        unspentCount++;
-
-        // Use WalletOutput.isUnlocked() which correctly handles both
-        // string ('miner','protocol') and numeric (1,2) txType values
-        if (output.isUnlocked(syncHeight)) {
-          unlockedBalance += amount;
-          unlockedCount++;
-        }
-      }
+    // Track synthetic key images (outputs where KI generation failed)
+    if (output.keyImage && output.keyImage.startsWith('00') && output.keyImage.length > 64) {
+      syntheticKiCount++;
+      syntheticKiBalance += amount;
     }
   }
-  const lockedBalance = balance - unlockedBalance;
+
+  // Combined SAL+SAL1 balance (same underlying asset)
+  let salBalance = (balanceByAsset['SAL']?.total || 0n) + (balanceByAsset['SAL1']?.total || 0n);
+  const salUnlocked = (balanceByAsset['SAL']?.unlocked || 0n) + (balanceByAsset['SAL1']?.unlocked || 0n);
+  const salCount = (balanceByAsset['SAL']?.count || 0) + (balanceByAsset['SAL1']?.count || 0);
+
+  // Include locked stakes in total balance (matches C++ wallet behavior)
+  let stakedBalance = 0n;
+  if (typeof storage.getStakes === 'function') {
+    const lockedStakes = await storage.getStakes({ status: 'locked' });
+    for (const s of lockedStakes) {
+      stakedBalance += typeof s.amountStaked === 'bigint' ? s.amountStaked : BigInt(s.amountStaked || 0);
+    }
+    salBalance += stakedBalance;
+  }
+
+  const salLocked = salBalance - salUnlocked;
 
   // Report results
   console.log('\n' + '='.repeat(60));
@@ -508,33 +527,65 @@ async function runIntegrationTest() {
   console.log(`Final sync height:  ${syncHeight}`);
   console.log('');
   console.log(`Outputs found:      ${outputs.length}`);
-  console.log(`Unspent outputs:    ${unspentCount} (${unlockedCount} unlocked, ${unspentCount - unlockedCount} locked)`);
+  console.log(`Unspent outputs:    ${unspentCount}`);
   console.log(`Transactions:       ${transactions.length}`);
   console.log('');
-  console.log(`Total balance:      ${balance} atomic (${(Number(balance) / 1e8).toFixed(8)} SAL1)`);
-  console.log(`Unlocked balance:   ${unlockedBalance} atomic (${(Number(unlockedBalance) / 1e8).toFixed(8)} SAL1)`);
-  console.log(`Locked balance:     ${lockedBalance} atomic (${(Number(lockedBalance) / 1e8).toFixed(8)} SAL1)`);
-
-  // === DIAGNOSTIC: null keyImage outputs ===
-  const nullKiOutput = await storage.getOutput(null);
-  const nullKiUndefined = await storage.getOutput(undefined);
-  console.log(`\n--- KEY IMAGE DIAGNOSTIC ---`);
-  console.log(`Output stored under null key:      ${nullKiOutput ? `YES h=${nullKiOutput.blockHeight} amt=${(Number(nullKiOutput.amount)/1e8).toFixed(8)}` : 'none'}`);
-  console.log(`Output stored under undefined key: ${nullKiUndefined ? `YES h=${nullKiUndefined.blockHeight} amt=${(Number(nullKiUndefined.amount)/1e8).toFixed(8)}` : 'none'}`);
-
-  let nullKiCount = 0;
-  let nullKiUnspentTotal = 0n;
-  for (const o of outputs) {
-    if (!o.keyImage) {
-      nullKiCount++;
-      if (!o.isSpent) {
-        nullKiUnspentTotal += BigInt(o.amount);
-        console.log(`  null-ki UNSPENT: h=${o.blockHeight} amt=${(Number(o.amount)/1e8).toFixed(8)} carrot=${o.isCarrot} type=${o.txType} tx=${o.txHash?.slice(0,16)}`);
-      }
-    }
+  console.log('--- Balance by Asset Type ---');
+  for (const [at, data] of Object.entries(balanceByAsset).sort()) {
+    console.log(`  ${at}: ${data.count} outputs, ${(Number(data.total) / 1e8).toFixed(8)} total (${(Number(data.unlocked) / 1e8).toFixed(8)} unlocked, ${data.unlockedCount}/${data.count} outputs)`);
   }
-  console.log(`Total outputs with null keyImage: ${nullKiCount}`);
-  console.log(`Unspent balance from null-ki outputs: ${(Number(nullKiUnspentTotal)/1e8).toFixed(8)} SAL`);
+  console.log('');
+  console.log(`Combined SAL+SAL1:  ${(Number(salBalance) / 1e8).toFixed(8)} (${salCount} outputs)`);
+  console.log(`  Unlocked:         ${(Number(salUnlocked) / 1e8).toFixed(8)}`);
+  console.log(`  Locked:           ${(Number(salLocked) / 1e8).toFixed(8)}`);
+  if (stakedBalance > 0n) {
+    console.log(`  Staked:           ${(Number(stakedBalance) / 1e8).toFixed(8)} (included in locked)`)
+  }
+  if (syntheticKiCount > 0) {
+    console.log(`\nSynthetic key images: ${syntheticKiCount} outputs, ${(Number(syntheticKiBalance) / 1e8).toFixed(8)} total`);
+    console.log(`  (These outputs had key image generation failures — balance may be inflated)`);
+  }
+
+  // === DIAGNOSTIC: key image health ===
+  console.log(`\n--- KEY IMAGE DIAGNOSTIC ---`);
+  let nullKiCount = 0;
+  let synthKiCount = 0;
+  let realKiCount = 0;
+  let synthUnspentBalance = 0n;
+  for (const o of outputs) {
+    if (!o.keyImage) nullKiCount++;
+    else if (o.keyImage.startsWith('00') && o.keyImage.length > 64) {
+      synthKiCount++;
+      if (!o.isSpent) synthUnspentBalance += typeof o.amount === 'bigint' ? o.amount : BigInt(o.amount || 0);
+    }
+    else realKiCount++;
+  }
+  console.log(`Real key images:      ${realKiCount}`);
+  console.log(`Synthetic key images: ${synthKiCount} (KI generation failed, cannot track spends)`);
+  console.log(`  Synth unspent bal:  ${(Number(synthUnspentBalance) / 1e8).toFixed(8)}`);
+  console.log(`Null key images:      ${nullKiCount} (legacy rows from before synthetic KI fix)`);
+
+  // === DIAGNOSTIC: unspent by txType + carrot ===
+  const unspentByType = {};
+  const unspentByCarrot = { cn: { count: 0, total: 0n }, carrot: { count: 0, total: 0n } };
+  for (const o of outputs) {
+    if (o.isSpent) continue;
+    const amt = typeof o.amount === 'bigint' ? o.amount : BigInt(o.amount || 0);
+    const tt = o.txType ?? 'unknown';
+    if (!unspentByType[tt]) unspentByType[tt] = { count: 0, total: 0n };
+    unspentByType[tt].count++;
+    unspentByType[tt].total += amt;
+    const bucket = o.isCarrot ? unspentByCarrot.carrot : unspentByCarrot.cn;
+    bucket.count++;
+    bucket.total += amt;
+  }
+  console.log(`\n--- UNSPENT BY TX TYPE ---`);
+  for (const [tt, data] of Object.entries(unspentByType).sort()) {
+    console.log(`  type=${tt}: ${data.count} outputs, ${(Number(data.total) / 1e8).toFixed(8)}`);
+  }
+  console.log(`\n--- UNSPENT BY FORMAT ---`);
+  console.log(`  CryptoNote: ${unspentByCarrot.cn.count} outputs, ${(Number(unspentByCarrot.cn.total) / 1e8).toFixed(8)}`);
+  console.log(`  CARROT:     ${unspentByCarrot.carrot.count} outputs, ${(Number(unspentByCarrot.carrot.total) / 1e8).toFixed(8)}`);
 
   // === DIAGNOSTIC: all unspent outputs ===
   const unspentOutputs = outputs.filter(o => !o.isSpent);
@@ -650,13 +701,13 @@ async function runIntegrationTest() {
     }
   }
 
-  // Verify expected balance
+  // Verify expected balance (uses combined SAL+SAL1 balance)
   if (EXPECTED_BALANCE !== null) {
     console.log('\n--- Verification ---');
-    if (balance >= EXPECTED_BALANCE) {
-      console.log(`✓ Balance ${balance} >= expected ${EXPECTED_BALANCE}`);
+    if (salBalance >= EXPECTED_BALANCE) {
+      console.log(`✓ Balance ${(Number(salBalance) / 1e8).toFixed(8)} >= expected ${(Number(EXPECTED_BALANCE) / 1e8).toFixed(8)}`);
     } else {
-      console.log(`✗ Balance ${balance} < expected ${EXPECTED_BALANCE}`);
+      console.log(`✗ Balance ${(Number(salBalance) / 1e8).toFixed(8)} < expected ${(Number(EXPECTED_BALANCE) / 1e8).toFixed(8)}`);
       process.exit(1);
     }
   }

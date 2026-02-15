@@ -75,6 +75,9 @@ export class WalletStorage {
 
   // Block hash tracking (for reorg detection)
   async putBlockHash(height, hash) { throw new Error('Not implemented'); }
+  async putBlockHashBatch(entries) {
+    for (const { height, hash } of entries) await this.putBlockHash(height, hash);
+  }
   async getBlockHash(height) { throw new Error('Not implemented'); }
   async deleteBlockHashesAbove(height) { throw new Error('Not implemented'); }
 
@@ -652,6 +655,21 @@ export class MemoryStorage extends WalletStorage {
     // Prune old block hashes to limit memory usage.
     // Only keep the most recent N hashes (sufficient for reorg detection).
     const cutoff = height - this._blockHashRetention;
+    if (cutoff > 0 && this._blockHashes.size > this._blockHashRetention * 1.5) {
+      for (const h of this._blockHashes.keys()) {
+        if (h < cutoff) this._blockHashes.delete(h);
+      }
+    }
+  }
+
+  async putBlockHashBatch(entries) {
+    let maxHeight = 0;
+    for (const { height, hash } of entries) {
+      this._blockHashes.set(height, hash);
+      if (height > maxHeight) maxHeight = height;
+    }
+    // Single prune pass at end
+    const cutoff = maxHeight - this._blockHashRetention;
     if (cutoff > 0 && this._blockHashes.size > this._blockHashRetention * 1.5) {
       for (const h of this._blockHashes.keys()) {
         if (h < cutoff) this._blockHashes.delete(h);
