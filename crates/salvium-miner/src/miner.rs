@@ -40,6 +40,21 @@ extern "C" {
     fn randomx_release_cache(cache: *mut std::ffi::c_void);
     fn randomx_release_dataset(dataset: *mut std::ffi::c_void);
     fn randomx_get_flags() -> u32;
+    fn randomx_calculate_hash_first(
+        vm: *mut std::ffi::c_void,
+        input: *const u8,
+        input_size: u64,
+    );
+    fn randomx_calculate_hash_next(
+        vm: *mut std::ffi::c_void,
+        input: *const u8,
+        input_size: u64,
+        output: *mut u8,
+    );
+    fn randomx_calculate_hash_last(
+        vm: *mut std::ffi::c_void,
+        output: *mut u8,
+    );
 }
 
 /// A found block ready for submission
@@ -80,11 +95,22 @@ impl MiningEngine {
     pub fn new_full(
         num_threads: usize,
         seed_hash: &[u8],
+        use_large_pages: bool,
     ) -> Result<Self, String> {
-        let flags = unsafe { randomx_get_flags() }
-            | 0x4   // FLAG_FULL_MEM
-            | 0x8;  // FLAG_JIT
-
+        let base_flags = unsafe { randomx_get_flags() } | 0x4 | 0x8;
+        let (flags, using_large_pages) = if use_large_pages {
+            let with_lp = base_flags | 0x1; // FLAG_LARGE_PAGES
+            let test_cache = unsafe { randomx_alloc_cache(with_lp) };
+            if !test_cache.is_null() {
+                unsafe { randomx_release_cache(test_cache); }
+                (with_lp, true)
+            } else {
+                (base_flags, false)
+            }
+        } else {
+            (base_flags, false)
+        };
+        eprintln!("Large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
         eprintln!("RandomX flags: 0x{:x}", flags);
 
         // Allocate and init cache via C FFI
@@ -189,8 +215,22 @@ impl MiningEngine {
     pub fn new_light(
         num_threads: usize,
         seed_hash: &[u8],
+        use_large_pages: bool,
     ) -> Result<Self, String> {
-        let flags = RandomXFlag::get_recommended_flags();
+        let mut flags = RandomXFlag::get_recommended_flags();
+        if use_large_pages {
+            let raw_flags = flags.bits() | 0x1; // FLAG_LARGE_PAGES
+            let test_cache = unsafe { randomx_alloc_cache(raw_flags) };
+            if !test_cache.is_null() {
+                unsafe { randomx_release_cache(test_cache); }
+                flags |= RandomXFlag::FLAG_LARGE_PAGES;
+                eprintln!("Large pages: YES");
+            } else {
+                eprintln!("Large pages: NO (falling back)");
+            }
+        } else {
+            eprintln!("Large pages: disabled");
+        }
 
         let hash_count = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
@@ -276,7 +316,11 @@ impl MiningEngine {
     }
 }
 
-/// Worker loop using raw C FFI VM pointer (full mode)
+/// Worker loop using raw C FFI VM pointer (full mode) with pipelined hashing.
+///
+/// Uses randomx_calculate_hash_first/next/last to overlap memory fetch with
+/// computation (same technique as XMRig). Double-buffered blobs avoid
+/// touching memory the VM may still be reading.
 fn worker_loop(
     vm_ptr: *mut std::ffi::c_void,
     job_rx: &mpsc::Receiver<MiningJob>,
@@ -297,56 +341,80 @@ fn worker_loop(
 
         let mut nonce_offset = find_nonce_offset(&job.hashing_blob);
         let mut nonce = nonce_start;
-        let mut blob = job.hashing_blob.clone();
-        let mut blob_len = blob.len();
+
+        // Double-buffered blobs for pipelined hashing
+        let mut blob_a = job.hashing_blob.clone();
+        let mut blob_b = job.hashing_blob.clone();
+        let mut blob_len = blob_a.len();
+
+        // Prime the pipeline: start first hash
+        set_nonce(&mut blob_a, nonce_offset, nonce);
+        unsafe {
+            randomx_calculate_hash_first(vm_ptr, blob_a.as_ptr(), blob_len as u64);
+        }
+        let mut prev_nonce = nonce;
+        nonce = nonce.wrapping_add(1);
 
         loop {
-            if !running.load(Ordering::Relaxed) {
+            // Stop or nonce space exhausted: drain last hash from pipeline
+            if !running.load(Ordering::Relaxed) || nonce == nonce_start {
+                unsafe {
+                    randomx_calculate_hash_last(vm_ptr, hash_out.as_mut_ptr());
+                }
+                hash_count.fetch_add(1, Ordering::Relaxed);
+                if check_hash(&hash_out, job.difficulty) {
+                    submit_block(&job, prev_nonce, &hash_out, result_tx);
+                }
                 break;
             }
 
             // Check for new job (non-blocking)
             if let Ok(new_job) = job_rx.try_recv() {
+                // Drain last hash from pipeline
+                unsafe {
+                    randomx_calculate_hash_last(vm_ptr, hash_out.as_mut_ptr());
+                }
+                hash_count.fetch_add(1, Ordering::Relaxed);
+                if check_hash(&hash_out, job.difficulty) {
+                    submit_block(&job, prev_nonce, &hash_out, result_tx);
+                }
+
+                // Switch to new job and re-prime pipeline
                 job = new_job;
                 nonce_offset = find_nonce_offset(&job.hashing_blob);
                 nonce = nonce_start;
-                blob = job.hashing_blob.clone();
-                blob_len = blob.len();
+                blob_a = job.hashing_blob.clone();
+                blob_b = job.hashing_blob.clone();
+                blob_len = blob_a.len();
+
+                set_nonce(&mut blob_a, nonce_offset, nonce);
+                unsafe {
+                    randomx_calculate_hash_first(vm_ptr, blob_a.as_ptr(), blob_len as u64);
+                }
+                prev_nonce = nonce;
+                nonce = nonce.wrapping_add(1);
                 continue;
             }
 
-            // Set nonce
-            set_nonce(&mut blob, nonce_offset, nonce);
-
-            // Hash
+            // Pipeline: output hash for prev_nonce, start hashing nonce
+            set_nonce(&mut blob_b, nonce_offset, nonce);
             unsafe {
-                randomx_calculate_hash(
+                randomx_calculate_hash_next(
                     vm_ptr,
-                    blob.as_ptr(),
+                    blob_b.as_ptr(),
                     blob_len as u64,
                     hash_out.as_mut_ptr(),
                 );
             }
-
             hash_count.fetch_add(1, Ordering::Relaxed);
 
             if check_hash(&hash_out, job.difficulty) {
-                let mut template = job.template_blob.clone();
-                let tmpl_offset = find_nonce_offset(&template);
-                set_nonce(&mut template, tmpl_offset, nonce);
-
-                let _ = result_tx.send(FoundBlock {
-                    nonce,
-                    hash: hash_out.to_vec(),
-                    blob_hex: hex::encode(&template),
-                    job_id: job.job_id,
-                });
+                submit_block(&job, prev_nonce, &hash_out, result_tx);
             }
 
+            prev_nonce = nonce;
             nonce = nonce.wrapping_add(1);
-            if nonce == nonce_start {
-                break; // exhausted nonce space
-            }
+            std::mem::swap(&mut blob_a, &mut blob_b);
         }
     }
 }
@@ -365,6 +433,7 @@ fn mine_job_rust(
     job_rx: &mpsc::Receiver<MiningJob>,
 ) -> Option<MiningJob> {
     let mut nonce = nonce_start;
+    let mut blob = job.hashing_blob.clone(); // clone once, reuse across iterations
 
     loop {
         if !running.load(Ordering::Relaxed) {
@@ -376,7 +445,6 @@ fn mine_job_rust(
             return Some(new_job);
         }
 
-        let mut blob = job.hashing_blob.clone();
         set_nonce(&mut blob, nonce_offset, nonce);
 
         let hash = match vm.calculate_hash(&blob) {
@@ -407,6 +475,23 @@ fn mine_job_rust(
             return None;
         }
     }
+}
+
+fn submit_block(
+    job: &MiningJob,
+    nonce: u32,
+    hash: &[u8; 32],
+    result_tx: &mpsc::Sender<FoundBlock>,
+) {
+    let mut template = job.template_blob.clone();
+    let tmpl_offset = find_nonce_offset(&template);
+    set_nonce(&mut template, tmpl_offset, nonce);
+    let _ = result_tx.send(FoundBlock {
+        nonce,
+        hash: hash.to_vec(),
+        blob_hex: hex::encode(&template),
+        job_id: job.job_id,
+    });
 }
 
 fn set_nonce(blob: &mut [u8], offset: usize, nonce: u32) {

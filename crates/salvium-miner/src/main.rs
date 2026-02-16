@@ -34,6 +34,10 @@ struct Args {
     #[arg(long)]
     benchmark: bool,
 
+    /// Disable large pages (large pages are tried by default with automatic fallback)
+    #[arg(long)]
+    no_large_pages: bool,
+
     /// IPC mode: read jobs from stdin, write results to stdout (JSON lines)
     #[arg(long)]
     ipc: bool,
@@ -57,7 +61,7 @@ fn main() {
     let args = Args::parse();
 
     if args.ipc {
-        ipc::run_ipc(args.threads, args.light);
+        ipc::run_ipc(args.threads, args.light, !args.no_large_pages);
         return;
     }
 
@@ -140,10 +144,11 @@ fn main() {
     let template_blob = hex::decode(&template.blocktemplate_blob).expect("Invalid template blob");
 
     // Initialize mining engine
+    let use_large_pages = !args.no_large_pages;
     let engine = if args.light {
-        MiningEngine::new_light(args.threads, &seed_bytes)
+        MiningEngine::new_light(args.threads, &seed_bytes, use_large_pages)
     } else {
-        MiningEngine::new_full(args.threads, &seed_bytes)
+        MiningEngine::new_full(args.threads, &seed_bytes, use_large_pages)
     };
 
     let engine = match engine {

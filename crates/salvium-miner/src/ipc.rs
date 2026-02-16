@@ -142,7 +142,7 @@ enum StdinEvent {
     Eof,
 }
 
-pub fn run_ipc(threads: usize, light: bool) {
+pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
     let mode_str = if light { "light" } else { "full" };
     eprintln!("[IPC] Waiting for commands on stdin (threads={}, mode={})", threads, mode_str);
 
@@ -244,9 +244,9 @@ pub fn run_ipc(threads: usize, light: bool) {
                 eprintln!("[IPC] Initializing RandomX (seed={}...)", &msg.seed_hash[..16.min(msg.seed_hash.len())]);
 
                 let result = if light {
-                    MiningEngine::new_light(threads, &seed_bytes)
+                    MiningEngine::new_light(threads, &seed_bytes, use_large_pages)
                 } else {
-                    MiningEngine::new_full(threads, &seed_bytes)
+                    MiningEngine::new_full(threads, &seed_bytes, use_large_pages)
                 };
 
                 match result {
