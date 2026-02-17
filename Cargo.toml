@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/salvium-crypto",
+    "crates/salvium-miner",
+    "crates/salvium-types",
+    "crates/salvium-consensus",
+    "crates/salvium-rpc",
+    "crates/salvium-wallet",
+    "crates/salvium-tx",
+    "crates/salvium-cli",
+    "crates/salvium-multisig",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/salvium/salvium-rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -469,6 +469,19 @@ impl WalletDb {
         Ok(())
     }
 
+    pub fn mark_unspent(&self, key_image: &str) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "UPDATE outputs SET is_spent = 0, spent_tx_hash = NULL, spent_height = NULL, updated_at = ?1 WHERE key_image = ?2",
+            params![now, key_image],
+        )?;
+        self.conn.execute(
+            "UPDATE key_images SET is_spent = 0 WHERE key_image = ?1",
+            params![key_image],
+        )?;
+        Ok(())
+    }
+
     // ── Transaction Operations ──────────────────────────────────────────
 
     pub fn put_tx(&self, row: &TransactionRow) -> Result<(), rusqlite::Error> {
@@ -1510,6 +1523,659 @@ mod tests {
         };
         let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
         assert_eq!(results.len(), 2); // ki_filter_1 and ki_filter_2
+
+        cleanup(handle, &path);
+    }
+
+    // ── Helpers for concise output/tx/stake construction ──────────────────
+
+    fn make_output(key_image: &str, height: i64, amount: &str, asset_type: &str) -> OutputRow {
+        OutputRow {
+            key_image: Some(key_image.into()),
+            public_key: None,
+            tx_hash: format!("tx_{}", key_image),
+            output_index: 0,
+            global_index: None,
+            asset_type_index: None,
+            block_height: Some(height),
+            block_timestamp: None,
+            amount: amount.into(),
+            asset_type: asset_type.into(),
+            commitment: None,
+            mask: None,
+            subaddress_index: SubaddressIndex::default(),
+            is_carrot: false,
+            carrot_ephemeral_pubkey: None,
+            carrot_shared_secret: None,
+            carrot_enote_type: None,
+            is_spent: false,
+            spent_height: None,
+            spent_tx_hash: None,
+            unlock_time: "0".into(),
+            tx_type: 3,
+            tx_pub_key: None,
+            is_frozen: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn make_tx(tx_hash: &str, height: i64) -> TransactionRow {
+        TransactionRow {
+            tx_hash: tx_hash.into(),
+            tx_pub_key: None,
+            block_height: Some(height),
+            block_timestamp: None,
+            confirmations: 0,
+            in_pool: false,
+            is_failed: false,
+            is_confirmed: true,
+            is_incoming: true,
+            is_outgoing: false,
+            incoming_amount: "1000".into(),
+            outgoing_amount: "0".into(),
+            fee: "0".into(),
+            change_amount: "0".into(),
+            transfers: None,
+            payment_id: None,
+            unlock_time: "0".into(),
+            tx_type: 3,
+            asset_type: "SAL".into(),
+            is_miner_tx: false,
+            is_protocol_tx: false,
+            note: String::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn make_stake(stake_tx_hash: &str, height: i64, amount: &str) -> StakeRow {
+        StakeRow {
+            stake_tx_hash: stake_tx_hash.into(),
+            stake_height: Some(height),
+            stake_timestamp: Some(1700000000),
+            amount_staked: amount.into(),
+            fee: "100".into(),
+            asset_type: "SAL".into(),
+            change_output_key: Some(format!("outkey_{}", stake_tx_hash)),
+            status: "locked".into(),
+            return_tx_hash: None,
+            return_height: None,
+            return_timestamp: None,
+            return_amount: "0".into(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Wallet-reorg tests (ported from wallet-reorg.test.js)
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_rollback_multi_height_cascade() {
+        let (handle, path) = test_db();
+
+        // Insert outputs at heights 5, 10, 15
+        for h in [5, 10, 15] {
+            let output = make_output(&format!("ki_h{}", h), h, "1000", "SAL");
+            with_db(handle, |db| db.put_output(&output)).unwrap();
+        }
+
+        // Rollback to height 10
+        with_db(handle, |db| db.rollback(10)).unwrap();
+
+        // Height 5 and 10 outputs survive
+        let o5 = with_db(handle, |db| db.get_output("ki_h5")).unwrap();
+        assert!(o5.is_some(), "output at height 5 should survive rollback to 10");
+
+        let o10 = with_db(handle, |db| db.get_output("ki_h10")).unwrap();
+        assert!(o10.is_some(), "output at height 10 should survive rollback to 10");
+
+        // Height 15 output removed
+        let o15 = with_db(handle, |db| db.get_output("ki_h15")).unwrap();
+        assert!(o15.is_none(), "output at height 15 should be removed by rollback to 10");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_rollback_unspend() {
+        let (handle, path) = test_db();
+
+        // Insert output at height 5
+        let output = make_output("ki_unspend", 5, "500", "SAL");
+        with_db(handle, |db| db.put_output(&output)).unwrap();
+
+        // Mark spent at height 12
+        with_db(handle, |db| db.mark_spent("ki_unspend", "spending_tx", 12)).unwrap();
+
+        // Verify it is spent
+        let got = with_db(handle, |db| db.get_output("ki_unspend")).unwrap().unwrap();
+        assert!(got.is_spent);
+        assert_eq!(got.spent_height, Some(12));
+
+        // Rollback to height 10 -> spent at 12 should be undone
+        with_db(handle, |db| db.rollback(10)).unwrap();
+
+        let got = with_db(handle, |db| db.get_output("ki_unspend")).unwrap().unwrap();
+        assert!(!got.is_spent, "output should be unspent after rollback past spent_height");
+        assert_eq!(got.spent_tx_hash, None);
+        assert_eq!(got.spent_height, None);
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_block_hash_mismatch_detection() {
+        let (handle, path) = test_db();
+
+        // Put a hash at height 100
+        with_db(handle, |db| db.put_block_hash(100, "hash_original")).unwrap();
+        let h = with_db(handle, |db| db.get_block_hash(100)).unwrap();
+        assert_eq!(h, Some("hash_original".into()));
+
+        // Put a different hash at the same height (simulates reorg detection)
+        with_db(handle, |db| db.put_block_hash(100, "hash_reorged")).unwrap();
+        let h = with_db(handle, |db| db.get_block_hash(100)).unwrap();
+        assert_eq!(h, Some("hash_reorged".into()), "last hash written should win (INSERT OR REPLACE)");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_rollback_stakes() {
+        let (handle, path) = test_db();
+
+        // Insert stakes at heights 5, 10, 15
+        for h in [5i64, 10, 15] {
+            let stake = make_stake(&format!("stake_h{}", h), h, "10000");
+            with_db(handle, |db| db.put_stake(&stake)).unwrap();
+        }
+
+        // Mark stake at height 5 as returned at height 12
+        with_db(handle, |db| {
+            db.mark_stake_returned("stake_h5", "return_tx", 12, 1700001000, "9900")
+        }).unwrap();
+
+        // Delete stakes above height 10
+        with_db(handle, |db| db.delete_stakes_above(10)).unwrap();
+
+        // Stake at height 5 should still exist
+        let s5 = with_db(handle, |db| db.get_stake("stake_h5")).unwrap();
+        assert!(s5.is_some(), "stake at height 5 should survive");
+        // Its return was at height 12 (> 10), so it should be reverted to locked
+        let s5 = s5.unwrap();
+        assert_eq!(s5.status, "locked", "stake return above rollback height should be reverted");
+        assert_eq!(s5.return_tx_hash, None);
+        assert_eq!(s5.return_height, None);
+        assert_eq!(s5.return_amount, "0");
+
+        // Stake at height 10 should still exist
+        let s10 = with_db(handle, |db| db.get_stake("stake_h10")).unwrap();
+        assert!(s10.is_some(), "stake at height 10 should survive");
+        assert_eq!(s10.unwrap().status, "locked");
+
+        // Stake at height 15 should be deleted
+        let s15 = with_db(handle, |db| db.get_stake("stake_h15")).unwrap();
+        assert!(s15.is_none(), "stake at height 15 should be deleted");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_rollback_preserves_below() {
+        let (handle, path) = test_db();
+
+        // Insert outputs, txs, and block hashes at heights 50 and 100
+        let o50 = make_output("ki_50", 50, "1000", "SAL");
+        let o100 = make_output("ki_100rb", 100, "2000", "SAL");
+        with_db(handle, |db| db.put_output(&o50)).unwrap();
+        with_db(handle, |db| db.put_output(&o100)).unwrap();
+
+        let tx50 = make_tx("tx_50", 50);
+        let tx100 = make_tx("tx_100rb", 100);
+        with_db(handle, |db| db.put_tx(&tx50)).unwrap();
+        with_db(handle, |db| db.put_tx(&tx100)).unwrap();
+
+        with_db(handle, |db| db.put_block_hash(50, "bh_50")).unwrap();
+        with_db(handle, |db| db.put_block_hash(100, "bh_100")).unwrap();
+
+        with_db(handle, |db| db.set_sync_height(100)).unwrap();
+
+        // Rollback to height 100 (nothing above)
+        with_db(handle, |db| db.rollback(100)).unwrap();
+
+        // Everything at 100 and below should remain intact
+        let got_o50 = with_db(handle, |db| db.get_output("ki_50")).unwrap();
+        assert!(got_o50.is_some());
+        let got_o100 = with_db(handle, |db| db.get_output("ki_100rb")).unwrap();
+        assert!(got_o100.is_some());
+
+        let got_tx50 = with_db(handle, |db| db.get_tx("tx_50")).unwrap();
+        assert!(got_tx50.is_some());
+        let got_tx100 = with_db(handle, |db| db.get_tx("tx_100rb")).unwrap();
+        assert!(got_tx100.is_some());
+
+        let got_bh50 = with_db(handle, |db| db.get_block_hash(50)).unwrap();
+        assert_eq!(got_bh50, Some("bh_50".into()));
+        let got_bh100 = with_db(handle, |db| db.get_block_hash(100)).unwrap();
+        assert_eq!(got_bh100, Some("bh_100".into()));
+
+        let height = with_db(handle, |db| db.get_sync_height()).unwrap();
+        assert_eq!(height, 100);
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_rollback_txs() {
+        let (handle, path) = test_db();
+
+        // Insert transactions at different heights
+        for h in [5i64, 10, 15, 20] {
+            let tx = make_tx(&format!("tx_rb_{}", h), h);
+            with_db(handle, |db| db.put_tx(&tx)).unwrap();
+        }
+
+        // Rollback to height 12
+        with_db(handle, |db| db.rollback(12)).unwrap();
+
+        // Txs at 5, 10 should survive
+        let t5 = with_db(handle, |db| db.get_tx("tx_rb_5")).unwrap();
+        assert!(t5.is_some(), "tx at height 5 should survive rollback to 12");
+        let t10 = with_db(handle, |db| db.get_tx("tx_rb_10")).unwrap();
+        assert!(t10.is_some(), "tx at height 10 should survive rollback to 12");
+
+        // Txs at 15, 20 should be removed
+        let t15 = with_db(handle, |db| db.get_tx("tx_rb_15")).unwrap();
+        assert!(t15.is_none(), "tx at height 15 should be removed by rollback to 12");
+        let t20 = with_db(handle, |db| db.get_tx("tx_rb_20")).unwrap();
+        assert!(t20.is_none(), "tx at height 20 should be removed by rollback to 12");
+
+        cleanup(handle, &path);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Wallet-store tests (ported from wallet-store.test.js)
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_mark_unspent() {
+        let (handle, path) = test_db();
+
+        let output = make_output("ki_mu", 100, "5000", "SAL");
+        with_db(handle, |db| db.put_output(&output)).unwrap();
+
+        // Mark spent
+        with_db(handle, |db| db.mark_spent("ki_mu", "spend_tx", 200)).unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_mu")).unwrap().unwrap();
+        assert!(got.is_spent);
+        assert_eq!(got.spent_tx_hash, Some("spend_tx".into()));
+        assert_eq!(got.spent_height, Some(200));
+
+        // Mark unspent
+        with_db(handle, |db| db.mark_unspent("ki_mu")).unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_mu")).unwrap().unwrap();
+        assert!(!got.is_spent, "output should be unspent after mark_unspent");
+        assert_eq!(got.spent_tx_hash, None);
+        assert_eq!(got.spent_height, None);
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_full_field_validation() {
+        let (handle, path) = test_db();
+
+        let output = OutputRow {
+            key_image: Some("ki_full".into()),
+            public_key: Some("pk_full".into()),
+            tx_hash: "tx_full".into(),
+            output_index: 7,
+            global_index: Some(42),
+            asset_type_index: Some(3),
+            block_height: Some(9999),
+            block_timestamp: Some(1700000000),
+            amount: "123456789012345".into(),
+            asset_type: "SAL1".into(),
+            commitment: Some("commit_abc".into()),
+            mask: Some("mask_def".into()),
+            subaddress_index: SubaddressIndex { major: 2, minor: 5 },
+            is_carrot: true,
+            carrot_ephemeral_pubkey: Some("carrot_eph_key".into()),
+            carrot_shared_secret: Some("carrot_secret".into()),
+            carrot_enote_type: Some(1),
+            is_spent: false,
+            spent_height: None,
+            spent_tx_hash: None,
+            unlock_time: "500".into(),
+            tx_type: 4,
+            tx_pub_key: Some("tx_pub_full".into()),
+            is_frozen: true,
+            created_at: Some(1700000000),
+            updated_at: None,
+        };
+
+        with_db(handle, |db| db.put_output(&output)).unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_full")).unwrap().unwrap();
+
+        assert_eq!(got.key_image, Some("ki_full".into()));
+        assert_eq!(got.public_key, Some("pk_full".into()));
+        assert_eq!(got.tx_hash, "tx_full");
+        assert_eq!(got.output_index, 7);
+        assert_eq!(got.global_index, Some(42));
+        assert_eq!(got.asset_type_index, Some(3));
+        assert_eq!(got.block_height, Some(9999));
+        assert_eq!(got.block_timestamp, Some(1700000000));
+        assert_eq!(got.amount, "123456789012345");
+        assert_eq!(got.asset_type, "SAL1");
+        assert_eq!(got.commitment, Some("commit_abc".into()));
+        assert_eq!(got.mask, Some("mask_def".into()));
+        assert_eq!(got.subaddress_index.major, 2);
+        assert_eq!(got.subaddress_index.minor, 5);
+        assert!(got.is_carrot);
+        assert_eq!(got.carrot_ephemeral_pubkey, Some("carrot_eph_key".into()));
+        assert_eq!(got.carrot_shared_secret, Some("carrot_secret".into()));
+        assert_eq!(got.carrot_enote_type, Some(1));
+        assert!(!got.is_spent);
+        assert_eq!(got.spent_height, None);
+        assert_eq!(got.spent_tx_hash, None);
+        assert_eq!(got.unlock_time, "500");
+        assert_eq!(got.tx_type, 4);
+        assert_eq!(got.tx_pub_key, Some("tx_pub_full".into()));
+        assert!(got.is_frozen);
+        assert_eq!(got.created_at, Some(1700000000));
+        assert!(got.updated_at.is_some());
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_multi_asset_balance() {
+        let (handle, path) = test_db();
+
+        // Insert SAL outputs
+        let o1 = make_output("ki_sal_1", 100, "1000000", "SAL");
+        let o2 = make_output("ki_sal_2", 100, "2000000", "SAL");
+        with_db(handle, |db| db.put_output(&o1)).unwrap();
+        with_db(handle, |db| db.put_output(&o2)).unwrap();
+
+        // Insert SAL1 outputs
+        let o3 = make_output("ki_sal1_1", 100, "5000000", "SAL1");
+        let o4 = make_output("ki_sal1_2", 100, "3000000", "SAL1");
+        with_db(handle, |db| db.put_output(&o3)).unwrap();
+        with_db(handle, |db| db.put_output(&o4)).unwrap();
+
+        // Query SAL balance (height 200 so outputs are unlocked, 100 confs > 10)
+        let sal_bal = with_db(handle, |db| db.get_balance(200, "SAL", -1)).unwrap();
+        assert_eq!(sal_bal.balance, "3000000");
+        assert_eq!(sal_bal.unlocked_balance, "3000000");
+
+        // Query SAL1 balance
+        let sal1_bal = with_db(handle, |db| db.get_balance(200, "SAL1", -1)).unwrap();
+        assert_eq!(sal1_bal.balance, "8000000");
+        assert_eq!(sal1_bal.unlocked_balance, "8000000");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_get_all_balances() {
+        let (handle, path) = test_db();
+
+        // Insert outputs of different asset types
+        let o1 = make_output("ki_ab_sal", 100, "1000", "SAL");
+        let o2 = make_output("ki_ab_sal1", 100, "2000", "SAL1");
+        let o3 = make_output("ki_ab_sal2", 100, "3000", "SAL");
+        with_db(handle, |db| db.put_output(&o1)).unwrap();
+        with_db(handle, |db| db.put_output(&o2)).unwrap();
+        with_db(handle, |db| db.put_output(&o3)).unwrap();
+
+        let all = with_db(handle, |db| db.get_all_balances(200, -1)).unwrap();
+
+        assert!(all.contains_key("SAL"), "should contain SAL balance");
+        assert!(all.contains_key("SAL1"), "should contain SAL1 balance");
+
+        let sal = &all["SAL"];
+        assert_eq!(sal.balance, "4000"); // 1000 + 3000
+        assert_eq!(sal.unlocked_balance, "4000");
+
+        let sal1 = &all["SAL1"];
+        assert_eq!(sal1.balance, "2000");
+        assert_eq!(sal1.unlocked_balance, "2000");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_amount_range_queries() {
+        let (handle, path) = test_db();
+
+        // Insert outputs with varying amounts
+        let amounts = [("ki_ar_1", "100"), ("ki_ar_2", "500"), ("ki_ar_3", "1000"), ("ki_ar_4", "5000")];
+        for (ki, amt) in &amounts {
+            let o = make_output(ki, 100, amt, "SAL");
+            with_db(handle, |db| db.put_output(&o)).unwrap();
+        }
+
+        // Query with min_amount only
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: None,
+            min_amount: Some("500".into()),
+            max_amount: None,
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 3, "should get outputs with amount >= 500");
+
+        // Query with max_amount only
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: None,
+            min_amount: None,
+            max_amount: Some("1000".into()),
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 3, "should get outputs with amount <= 1000");
+
+        // Query with both min and max
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: None,
+            min_amount: Some("200".into()),
+            max_amount: Some("800".into()),
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 1, "should get only the 500 amount output");
+        assert_eq!(results[0].amount, "500");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_frozen_output_excluded() {
+        let (handle, path) = test_db();
+
+        // Insert a normal output
+        let o1 = make_output("ki_normal", 100, "1000", "SAL");
+        with_db(handle, |db| db.put_output(&o1)).unwrap();
+
+        // Insert a frozen output
+        let mut o2 = make_output("ki_frozen", 100, "2000", "SAL");
+        o2.is_frozen = true;
+        with_db(handle, |db| db.put_output(&o2)).unwrap();
+
+        // Balance should exclude the frozen output
+        let bal = with_db(handle, |db| db.get_balance(200, "SAL", -1)).unwrap();
+        assert_eq!(bal.balance, "1000", "frozen output should be excluded from balance");
+        assert_eq!(bal.unlocked_balance, "1000");
+
+        // Query with is_frozen filter
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: Some(false),
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: None,
+            min_amount: None,
+            max_amount: None,
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 1, "only non-frozen outputs returned");
+        assert_eq!(results[0].key_image, Some("ki_normal".into()));
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_subaddress_filtering() {
+        let (handle, path) = test_db();
+
+        // Insert outputs with different subaddress indices
+        let mut o1 = make_output("ki_sa_00", 100, "1000", "SAL");
+        o1.subaddress_index = SubaddressIndex { major: 0, minor: 0 };
+        with_db(handle, |db| db.put_output(&o1)).unwrap();
+
+        let mut o2 = make_output("ki_sa_10", 100, "2000", "SAL");
+        o2.subaddress_index = SubaddressIndex { major: 1, minor: 0 };
+        with_db(handle, |db| db.put_output(&o2)).unwrap();
+
+        let mut o3 = make_output("ki_sa_01", 100, "3000", "SAL");
+        o3.subaddress_index = SubaddressIndex { major: 0, minor: 1 };
+        with_db(handle, |db| db.put_output(&o3)).unwrap();
+
+        // Query by account_index (major) = 0
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: Some(0),
+            subaddress_index: None,
+            min_amount: None,
+            max_amount: None,
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 2, "should get 2 outputs for account 0");
+
+        // Query by account_index = 1
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: Some(1),
+            subaddress_index: None,
+            min_amount: None,
+            max_amount: None,
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 1, "should get 1 output for account 1");
+        assert_eq!(results[0].key_image, Some("ki_sa_10".into()));
+
+        // Query by account_index = 0, subaddress_index (minor) = 1
+        let query = OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: Some(0),
+            subaddress_index: Some(1),
+            min_amount: None,
+            max_amount: None,
+        };
+        let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
+        assert_eq!(results.len(), 1, "should get 1 output for account 0 subaddress 1");
+        assert_eq!(results[0].key_image, Some("ki_sa_01".into()));
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_stake_crud() {
+        let (handle, path) = test_db();
+
+        // put_stake
+        let stake = make_stake("stake_crud_1", 100, "50000");
+        with_db(handle, |db| db.put_stake(&stake)).unwrap();
+
+        // get_stake
+        let got = with_db(handle, |db| db.get_stake("stake_crud_1")).unwrap();
+        assert!(got.is_some());
+        let got = got.unwrap();
+        assert_eq!(got.stake_tx_hash, "stake_crud_1");
+        assert_eq!(got.stake_height, Some(100));
+        assert_eq!(got.amount_staked, "50000");
+        assert_eq!(got.fee, "100");
+        assert_eq!(got.asset_type, "SAL");
+        assert_eq!(got.change_output_key, Some("outkey_stake_crud_1".into()));
+        assert_eq!(got.status, "locked");
+        assert_eq!(got.return_tx_hash, None);
+        assert_eq!(got.return_height, None);
+        assert_eq!(got.return_amount, "0");
+
+        // Insert a second stake
+        let stake2 = make_stake("stake_crud_2", 200, "30000");
+        with_db(handle, |db| db.put_stake(&stake2)).unwrap();
+
+        // get_stakes with no filter returns all
+        let all = with_db(handle, |db| db.get_stakes(None, None)).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // get_stakes with status filter
+        let locked = with_db(handle, |db| db.get_stakes(Some("locked"), None)).unwrap();
+        assert_eq!(locked.len(), 2);
+
+        // mark_stake_returned
+        with_db(handle, |db| {
+            db.mark_stake_returned("stake_crud_1", "ret_tx_1", 300, 1700001000, "49900")
+        }).unwrap();
+
+        let returned = with_db(handle, |db| db.get_stakes(Some("returned"), None)).unwrap();
+        assert_eq!(returned.len(), 1);
+        assert_eq!(returned[0].stake_tx_hash, "stake_crud_1");
+        assert_eq!(returned[0].return_tx_hash, Some("ret_tx_1".into()));
+        assert_eq!(returned[0].return_height, Some(300));
+        assert_eq!(returned[0].return_amount, "49900");
+
+        let still_locked = with_db(handle, |db| db.get_stakes(Some("locked"), None)).unwrap();
+        assert_eq!(still_locked.len(), 1);
+        assert_eq!(still_locked[0].stake_tx_hash, "stake_crud_2");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_stake_by_output_key() {
+        let (handle, path) = test_db();
+
+        let stake = make_stake("stake_by_ok", 100, "25000");
+        with_db(handle, |db| db.put_stake(&stake)).unwrap();
+
+        // Look up by change_output_key
+        let got = with_db(handle, |db| db.get_stake_by_output_key("outkey_stake_by_ok")).unwrap();
+        assert!(got.is_some());
+        let got = got.unwrap();
+        assert_eq!(got.stake_tx_hash, "stake_by_ok");
+        assert_eq!(got.amount_staked, "25000");
+
+        // Non-existent key returns None
+        let none = with_db(handle, |db| db.get_stake_by_output_key("nonexistent_key")).unwrap();
+        assert!(none.is_none());
 
         cleanup(handle, &path);
     }

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Native RandomX CPU miner for Salvium cryptocurrency"
 
+[lib]
+name = "salvium_miner"
+path = "src/lib.rs"
+
 [[bin]]
 name = "salvium-miner"
 path = "src/main.rs"
@@ -17,6 +21,7 @@ clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 num_cpus = "1"
 libc = "0.2"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3

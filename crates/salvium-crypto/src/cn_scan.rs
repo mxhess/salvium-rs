@@ -233,6 +233,53 @@ pub fn scan_cryptonote_output(
     })
 }
 
+// ─── Key Derivation for Spending ─────────────────────────────────────────────
+
+/// Derive the one-time spend secret key for a CryptoNote output.
+///
+/// Reconstructs the secret key needed to sign a transaction that spends this
+/// output. All parameters come from the wallet's master keys and the stored
+/// output metadata (`OutputRow`).
+///
+/// For main address outputs (major=0, minor=0):
+///   output_secret = spend_secret + H_s(view_secret * tx_pubkey || index)
+///
+/// For subaddress outputs:
+///   output_secret = spend_secret + subaddr_key(major, minor)
+///                   + H_s(view_secret * tx_pubkey || index)
+pub fn derive_output_spend_key(
+    view_secret_key: &[u8; 32],
+    spend_secret_key: &[u8; 32],
+    tx_pub_key: &[u8; 32],
+    output_index: u32,
+    subaddress_major: u32,
+    subaddress_minor: u32,
+) -> [u8; 32] {
+    let view_scalar = Scalar::from_bytes_mod_order(to32(view_secret_key));
+
+    // derivation = view_secret * tx_pub_key
+    let tx_pub = CompressedEdwardsY(to32(tx_pub_key))
+        .decompress()
+        .expect("invalid tx pubkey");
+    let derivation = (view_scalar * tx_pub).compress().to_bytes();
+
+    let d2s = derivation_to_scalar(&derivation, output_index);
+    let spend_scalar = Scalar::from_bytes_mod_order(to32(spend_secret_key));
+
+    let base_spend = if subaddress_major != 0 || subaddress_minor != 0 {
+        let m = crate::subaddress::cn_subaddress_secret_key(
+            view_secret_key,
+            subaddress_major,
+            subaddress_minor,
+        );
+        spend_scalar + m
+    } else {
+        spend_scalar
+    };
+
+    (base_spend + d2s).to_bytes()
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -118,12 +118,15 @@ pub fn serialize_rct_base(rct: &Value, buf: &mut Vec<u8>) -> Result<(), String> 
         write_hex_bytes(buf, hex)?;
     }
 
-    // p_r (32 bytes)
+    // p_r (32 bytes) — Ed25519 identity if missing.
     let p_r = get_str(rct, "p_r");
     if !p_r.is_empty() {
         write_hex_bytes(buf, p_r)?;
     } else {
-        buf.extend_from_slice(&[0u8; 32]);
+        // Ed25519 compressed identity point: [0x01, 0x00, ..., 0x00].
+        let mut identity = [0u8; 32];
+        identity[0] = 0x01;
+        buf.extend_from_slice(&identity);
     }
 
     // salvium_data
@@ -290,6 +293,20 @@ fn serialize_extra_from_parsed(extra: &Value) -> Result<Vec<u8>, String> {
         None => return Ok(Vec::new()),
     };
 
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // If the first entry is a number, this is a raw byte array (from builder).
+    // Just collect the bytes directly.
+    if entries[0].is_number() {
+        return Ok(entries
+            .iter()
+            .filter_map(|v| v.as_u64().map(|n| n as u8))
+            .collect());
+    }
+
+    // Structured extra entries (from parse_extra).
     let mut buf = Vec::new();
     for entry in entries {
         let tag = get_u8(entry, "type");
@@ -511,6 +528,29 @@ mod tests {
             hex::encode(&original),
             hex::encode(&reserialized),
             "Transfer TX roundtrip failed"
+        );
+    }
+
+    /// Roundtrip a real testnet miner TX (v4 CARROT, txout_to_carrot_v1).
+    #[test]
+    fn test_roundtrip_real_miner_tx() {
+        let hex_str = "043c01ffa50a01c4ac84892e04432aa8ffd2cd1d0edb8bbe5c191bf75b3435911f9794edbf15dccaacfb79d96f0453414c318b02fb52bcbcaf26be71a922be126c1e69ab072b013c54483190fbb1bc81c39b4c67e9f2166da31dd0f41049747d86e943bc064d450208000000000000000001908ba1c20b00";
+        let original = hex::decode(hex_str).unwrap();
+
+        let json = tx_parse::parse_transaction(&original)
+            .expect("Failed to parse real miner TX");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["prefix"]["version"], 4);
+        assert_eq!(parsed["prefix"]["txType"], 1); // MINER
+        assert_eq!(parsed["prefix"]["vout"][0]["type"], TXOUT_CARROT_V1 as u64);
+
+        let reserialized = serialize_transaction(&json)
+            .expect("Failed to re-serialize real miner TX");
+
+        assert_eq!(
+            hex_str,
+            hex::encode(&reserialized),
+            "Real miner TX roundtrip failed"
         );
     }
 }

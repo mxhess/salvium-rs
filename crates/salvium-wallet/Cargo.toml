@@ -1,0 +1,31 @@
+[package]
+name = "salvium-wallet"
+version = "0.1.0"
+edition.workspace = true
+description = "Wallet core: key management, output scanning, sync engine, balance, UTXO selection"
+
+[dependencies]
+salvium-types = { path = "../salvium-types" }
+salvium-crypto = { path = "../salvium-crypto" }
+salvium-rpc = { path = "../salvium-rpc" }
+salvium-consensus = { path = "../salvium-consensus" }
+tokio = { version = "1", features = ["rt", "time", "macros", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+hex = "0.4"
+rand = "0.8"
+aes-gcm = "0.10"
+ml-kem = { version = "0.2", features = ["deterministic"] }
+hkdf = "0.12"
+sha2 = "0.10"
+
+[dev-dependencies]
+salvium-rpc = { path = "../salvium-rpc" }
+salvium-tx = { path = "../salvium-tx" }
+salvium-types = { path = "../salvium-types" }
+salvium-crypto = { path = "../salvium-crypto" }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+dirs = "5"
+hex = "0.4"

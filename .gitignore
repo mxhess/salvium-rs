@@ -7,6 +7,7 @@ crates/salvium-crypto/.cargo/
 TODO
 
 # Rust/WASM build artifacts
+target/
 crates/*/target/
 src/crypto/wasm/package.json
 src/crypto/wasm/*.wasm.d.ts

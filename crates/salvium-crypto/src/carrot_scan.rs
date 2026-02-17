@@ -355,6 +355,41 @@ pub fn scan_carrot_internal_output(
     )
 }
 
+// ─── Key Derivation for Spending ─────────────────────────────────────────────
+
+/// Derive the CARROT one-time spend keys for a CARROT output.
+///
+/// Returns `(secret_key_x, secret_key_y)` where:
+///   secret_key_x = prove_spend_key + k^o_g
+///   secret_key_y = generate_image_key + k^o_t
+///
+/// These are used with TCLSAG signing (dual-key ring signatures).
+///
+/// Parameters:
+/// - `prove_spend_key`: from `CarrotKeys.prove_spend_key`
+/// - `generate_image_key`: from `CarrotKeys.generate_image_key`
+/// - `s_sr_ctx`: the contextualized shared secret (stored in OutputRow.carrot_shared_secret)
+/// - `commitment`: the output commitment (stored in OutputRow.commitment)
+pub fn derive_carrot_spend_keys(
+    prove_spend_key: &[u8; 32],
+    generate_image_key: &[u8; 32],
+    s_sr_ctx: &[u8; 32],
+    commitment: &[u8; 32],
+) -> ([u8; 32], [u8; 32]) {
+    let k_g = derive_extension_g(s_sr_ctx, commitment);
+    let k_t = derive_extension_t(s_sr_ctx, commitment);
+
+    let psk = Scalar::from_bytes_mod_order(*prove_spend_key);
+    let gik = Scalar::from_bytes_mod_order(*generate_image_key);
+
+    // x = generate_image_key + k^o_g  (scales G)
+    // y = prove_spend_key + k^o_t     (scales T)
+    let secret_x = (gik + k_g).to_bytes();
+    let secret_y = (psk + k_t).to_bytes();
+
+    (secret_x, secret_y)
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

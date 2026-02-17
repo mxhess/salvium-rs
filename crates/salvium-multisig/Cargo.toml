@@ -1,0 +1,12 @@
+[package]
+name = "salvium-multisig"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"

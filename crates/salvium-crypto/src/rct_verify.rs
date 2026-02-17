@@ -245,6 +245,49 @@ pub fn verify_rct_signatures_wasm(
     }
 }
 
+// ─── Expand Transaction ─────────────────────────────────────────────────────
+
+/// Expand a transaction by injecting key images into RCT signature structures.
+///
+/// In Salvium's serialization, key images live in the prefix inputs,
+/// not in the RCT signature structures. This function copies them
+/// into the appropriate signature fields for verification.
+///
+/// `key_images`: slice of 32-byte key images, one per input
+/// `rct_sig_json`: mutable reference to the RCT signatures JSON
+///
+/// Returns Ok(()) on success, or an error message.
+pub fn expand_transaction(
+    key_images: &[[u8; 32]],
+    rct_sig_json: &mut serde_json::Value,
+) -> Result<(), String> {
+    // Get the signature array (MGs for CLSAG, or p.CLSAGs/p.TCLSAGs)
+    let p_key = if rct_sig_json.get("p").is_some() { "p" }
+        else if rct_sig_json.get("prunable").is_some() { "prunable" }
+        else { return Err("missing prunable section".to_string()); };
+    let p = rct_sig_json.get_mut(p_key).unwrap();
+
+    // Determine which signature key exists
+    let sig_key = if p.get("CLSAGs").is_some() { "CLSAGs" }
+        else if p.get("clsags").is_some() { "clsags" }
+        else if p.get("TCLSAGs").is_some() { "TCLSAGs" }
+        else if p.get("tclsags").is_some() { "tclsags" }
+        else { return Err("no CLSAG or TCLSAG signatures found".to_string()); };
+
+    let sigs = p.get_mut(sig_key).unwrap();
+    let arr = sigs.as_array_mut().ok_or(format!("{} not an array", sig_key))?;
+    if arr.len() != key_images.len() {
+        return Err(format!(
+            "{} count {} != key image count {}",
+            sig_key, arr.len(), key_images.len()
+        ));
+    }
+    for (i, sig) in arr.iter_mut().enumerate() {
+        sig["I"] = serde_json::Value::String(hex::encode(key_images[i]));
+    }
+    Ok(())
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -635,5 +678,201 @@ mod tests {
         );
 
         assert_eq!(result, vec![0xFF], "Invalid points should return error");
+    }
+
+    // ─── expand_transaction tests ────────────────────────────────────────
+
+    /// Helper: build a minimal RCT JSON with a prunable section containing CLSAGs.
+    fn make_clsag_rct_json(count: usize) -> serde_json::Value {
+        let sigs: Vec<serde_json::Value> = (0..count)
+            .map(|_| serde_json::json!({
+                "s": ["00".repeat(32)],
+                "c1": "00".repeat(32),
+                "D": "00".repeat(32),
+            }))
+            .collect();
+        serde_json::json!({
+            "p": {
+                "CLSAGs": sigs
+            }
+        })
+    }
+
+    /// Helper: build a minimal RCT JSON with a prunable section containing TCLSAGs.
+    fn make_tclsag_rct_json(count: usize) -> serde_json::Value {
+        let sigs: Vec<serde_json::Value> = (0..count)
+            .map(|_| serde_json::json!({
+                "sx": ["00".repeat(32)],
+                "sy": ["00".repeat(32)],
+                "c1": "00".repeat(32),
+                "D": "00".repeat(32),
+            }))
+            .collect();
+        serde_json::json!({
+            "p": {
+                "TCLSAGs": sigs
+            }
+        })
+    }
+
+    #[test]
+    fn test_expand_transaction_clsag() {
+        let ki1 = [0xAAu8; 32];
+        let ki2 = [0xBBu8; 32];
+        let key_images = [ki1, ki2];
+        let mut rct = make_clsag_rct_json(2);
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_ok(), "expand_transaction should succeed for CLSAGs");
+
+        let clsags = rct["p"]["CLSAGs"].as_array().unwrap();
+        assert_eq!(clsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
+        assert_eq!(clsags[1]["I"].as_str().unwrap(), hex::encode(ki2));
+    }
+
+    #[test]
+    fn test_expand_transaction_tclsag() {
+        let ki1 = [0xCCu8; 32];
+        let ki2 = [0xDDu8; 32];
+        let key_images = [ki1, ki2];
+        let mut rct = make_tclsag_rct_json(2);
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_ok(), "expand_transaction should succeed for TCLSAGs");
+
+        let tclsags = rct["p"]["TCLSAGs"].as_array().unwrap();
+        assert_eq!(tclsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
+        assert_eq!(tclsags[1]["I"].as_str().unwrap(), hex::encode(ki2));
+    }
+
+    #[test]
+    fn test_expand_mismatched_count() {
+        let key_images = [[0xAAu8; 32]]; // 1 key image
+        let mut rct = make_clsag_rct_json(2); // 2 sigs
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_err(), "mismatched count should return error");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("count 2 != key image count 1"),
+            "error message should mention counts, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_expand_missing_prunable() {
+        let key_images = [[0xAAu8; 32]];
+        let mut rct = serde_json::json!({ "type": 5 }); // no prunable section
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_err(), "missing prunable should return error");
+        assert_eq!(result.unwrap_err(), "missing prunable section");
+    }
+
+    #[test]
+    fn test_expand_empty_key_images() {
+        let key_images: &[[u8; 32]] = &[];
+        let mut rct = make_clsag_rct_json(0);
+
+        let result = expand_transaction(key_images, &mut rct);
+        assert!(result.is_ok(), "empty key images with empty sigs should succeed");
+    }
+
+    #[test]
+    fn test_expand_overwrites_existing() {
+        let old_i = hex::encode([0xFFu8; 32]);
+        let mut rct = serde_json::json!({
+            "p": {
+                "CLSAGs": [{
+                    "s": ["00".repeat(32)],
+                    "c1": "00".repeat(32),
+                    "D": "00".repeat(32),
+                    "I": old_i,
+                }]
+            }
+        });
+
+        let new_ki = [0x11u8; 32];
+        let result = expand_transaction(&[new_ki], &mut rct);
+        assert!(result.is_ok());
+        assert_eq!(
+            rct["p"]["CLSAGs"][0]["I"].as_str().unwrap(),
+            hex::encode(new_ki),
+            "I field should be overwritten with the new key image"
+        );
+    }
+
+    #[test]
+    fn test_expand_preserves_other_fields() {
+        let mut rct = serde_json::json!({
+            "p": {
+                "CLSAGs": [{
+                    "s": ["abcd".repeat(16)],
+                    "c1": "1234".repeat(16),
+                    "D": "5678".repeat(16),
+                    "extra_field": 42,
+                }]
+            }
+        });
+
+        let ki = [0xEEu8; 32];
+        let result = expand_transaction(&[ki], &mut rct);
+        assert!(result.is_ok());
+
+        let sig = &rct["p"]["CLSAGs"][0];
+        assert_eq!(sig["s"][0].as_str().unwrap(), "abcd".repeat(16));
+        assert_eq!(sig["c1"].as_str().unwrap(), "1234".repeat(16));
+        assert_eq!(sig["D"].as_str().unwrap(), "5678".repeat(16));
+        assert_eq!(sig["extra_field"].as_i64().unwrap(), 42);
+        assert_eq!(sig["I"].as_str().unwrap(), hex::encode(ki));
+    }
+
+    #[test]
+    fn test_expand_single_input() {
+        let ki = [0x42u8; 32];
+        let mut rct = make_tclsag_rct_json(1);
+
+        let result = expand_transaction(&[ki], &mut rct);
+        assert!(result.is_ok());
+        assert_eq!(
+            rct["p"]["TCLSAGs"][0]["I"].as_str().unwrap(),
+            hex::encode(ki)
+        );
+    }
+
+    #[test]
+    fn test_expand_multiple_inputs() {
+        let key_images: Vec<[u8; 32]> = (0..5)
+            .map(|i| [i as u8; 32])
+            .collect();
+        let mut rct = make_clsag_rct_json(5);
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_ok());
+
+        let clsags = rct["p"]["CLSAGs"].as_array().unwrap();
+        for (i, ki) in key_images.iter().enumerate() {
+            assert_eq!(
+                clsags[i]["I"].as_str().unwrap(),
+                hex::encode(ki),
+                "key image mismatch at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_expand_no_signatures() {
+        let key_images = [[0xAAu8; 32]];
+        let mut rct = serde_json::json!({
+            "p": {
+                "someOtherField": []
+            }
+        });
+
+        let result = expand_transaction(&key_images, &mut rct);
+        assert!(result.is_err(), "no CLSAG or TCLSAG should return error");
+        assert_eq!(result.unwrap_err(), "no CLSAG or TCLSAG signatures found");
     }
 }

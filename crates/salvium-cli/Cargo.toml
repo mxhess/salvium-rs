@@ -1,0 +1,22 @@
+[package]
+name = "salvium-cli"
+version = "0.1.0"
+edition.workspace = true
+description = "Command-line wallet for Salvium"
+
+[[bin]]
+name = "salvium-wallet-cli"
+path = "src/main.rs"
+
+[dependencies]
+salvium-types = { path = "../salvium-types" }
+salvium-crypto = { path = "../salvium-crypto" }
+salvium-rpc = { path = "../salvium-rpc" }
+salvium-wallet = { path = "../salvium-wallet" }
+salvium-tx = { path = "../salvium-tx" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+hex = "0.4"
+rpassword = "7"
+dirs = "5"

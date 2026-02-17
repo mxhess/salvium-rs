@@ -1,0 +1,18 @@
+[package]
+name = "salvium-rpc"
+version = "0.1.0"
+edition.workspace = true
+description = "Async and blocking RPC clients for Salvium daemon and wallet"
+
+[dependencies]
+salvium-types = { path = "../salvium-types" }
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+hex = "0.4"
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

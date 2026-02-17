@@ -23,7 +23,7 @@ pub mod bulletproofs_plus;
 pub mod rct_verify;
 
 #[cfg(not(target_arch = "wasm32"))]
-mod storage;
+pub mod storage;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod ffi;
@@ -689,5 +689,290 @@ pub fn parse_block_bytes(data: &[u8]) -> String {
     match tx_parse::parse_block(data) {
         Ok(json) => json,
         Err(e) => format!(r#"{{"error":"{}"}}"#, e.replace('"', "\\\"")),
+    }
+}
+
+// ─── Key Image Helpers ──────────────────────────────────────────────────────
+
+/// Check if a 32-byte key image is valid (non-zero, decompresses to a valid Ed25519 point).
+#[wasm_bindgen]
+pub fn is_valid_key_image(key_image: &[u8]) -> bool {
+    if key_image.len() != 32 {
+        return false;
+    }
+    let bytes = to32(key_image);
+    // Must not be all zeros
+    if bytes == [0u8; 32] {
+        return false;
+    }
+    // Must decompress to a valid point
+    CompressedEdwardsY(bytes).decompress().is_some()
+}
+
+/// Extract the Y coordinate from a compressed Edwards key image.
+/// In compressed Edwards form, the 32 bytes are the Y coordinate with a sign bit
+/// in the high bit of byte 31. This clears the sign bit to return the pure Y coordinate.
+#[wasm_bindgen]
+pub fn key_image_to_y(key_image: &[u8]) -> Vec<u8> {
+    if key_image.len() != 32 {
+        return Vec::new();
+    }
+    // In compressed Edwards form, the 32 bytes ARE the Y coordinate
+    // (with sign bit in the high bit of byte 31)
+    let mut y = to32(key_image);
+    // Clear the sign bit to get pure Y coordinate
+    y[31] &= 0x7F;
+    y.to_vec()
+}
+
+/// Reconstruct a key image from Y coordinate and sign bit.
+/// Sets or clears the high bit of byte 31 based on the sign_bit parameter,
+/// then verifies the result is a valid curve point.
+#[wasm_bindgen]
+pub fn key_image_from_y(y_coord: &[u8], sign_bit: bool) -> Vec<u8> {
+    if y_coord.len() != 32 {
+        return Vec::new();
+    }
+    let mut ki = to32(y_coord);
+    if sign_bit {
+        ki[31] |= 0x80;
+    } else {
+        ki[31] &= 0x7F;
+    }
+    // Verify it's a valid point
+    if CompressedEdwardsY(ki).decompress().is_none() {
+        return Vec::new();
+    }
+    ki.to_vec()
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: derive a deterministic test secret key from a passphrase.
+    /// Computes keccak256 of the passphrase and reduces mod L via sc_reduce32.
+    fn test_secret_key() -> Vec<u8> {
+        let hash = keccak256(b"test_secret_key");
+        sc_reduce32(&hash)
+    }
+
+    /// Helper: derive the public key from a secret key via scalar_mult_base.
+    fn test_public_key(sec: &[u8]) -> Vec<u8> {
+        scalar_mult_base(sec)
+    }
+
+    #[test]
+    fn test_generate_key_image_deterministic() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki1 = generate_key_image(&pub_key, &sec);
+        let ki2 = generate_key_image(&pub_key, &sec);
+        assert_eq!(ki1, ki2, "same inputs must produce the same key image");
+    }
+
+    #[test]
+    fn test_generate_key_image_different_keys() {
+        let sec1 = test_secret_key();
+        let pub1 = test_public_key(&sec1);
+        let ki1 = generate_key_image(&pub1, &sec1);
+
+        // Derive a second, different secret key
+        let sec2 = sc_reduce32(&keccak256(b"test_secret_key_2"));
+        let pub2 = test_public_key(&sec2);
+        let ki2 = generate_key_image(&pub2, &sec2);
+
+        assert_ne!(ki1, ki2, "different keys must produce different key images");
+    }
+
+    #[test]
+    fn test_is_valid_key_image_valid() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki = generate_key_image(&pub_key, &sec);
+        assert!(is_valid_key_image(&ki), "generated key image must be valid");
+    }
+
+    #[test]
+    fn test_is_valid_key_image_zeros() {
+        let zeros = [0u8; 32];
+        assert!(!is_valid_key_image(&zeros), "all-zero must be rejected");
+    }
+
+    #[test]
+    fn test_is_valid_key_image_wrong_length() {
+        let short = [0u8; 31];
+        let long = [0u8; 33];
+        assert!(!is_valid_key_image(&short), "31 bytes must be rejected");
+        assert!(!is_valid_key_image(&long), "33 bytes must be rejected");
+    }
+
+    #[test]
+    fn test_is_valid_key_image_basepoint() {
+        // The Ed25519 basepoint compressed form
+        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT
+            .compress()
+            .to_bytes();
+        assert!(
+            is_valid_key_image(&basepoint),
+            "Ed25519 basepoint must be a valid key image"
+        );
+    }
+
+    #[test]
+    fn test_key_image_to_y_roundtrip() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki = generate_key_image(&pub_key, &sec);
+
+        let y = key_image_to_y(&ki);
+        assert_eq!(y.len(), 32);
+
+        // Determine sign bit from original key image
+        let sign = (ki[31] & 0x80) != 0;
+        let reconstructed = key_image_from_y(&y, sign);
+        assert_eq!(
+            reconstructed, ki,
+            "to_y then from_y must recover the original key image"
+        );
+    }
+
+    #[test]
+    fn test_key_image_from_y_invalid() {
+        // Wrong length should fail
+        let short = [0u8; 16];
+        assert!(key_image_from_y(&short, false).is_empty(), "short input should fail");
+        // Empty input should fail
+        assert!(key_image_from_y(&[], false).is_empty(), "empty input should fail");
+    }
+
+    #[test]
+    fn test_hash_to_point_deterministic() {
+        let data = b"deterministic_test_input";
+        let hp1 = hash_to_point(data);
+        let hp2 = hash_to_point(data);
+        assert_eq!(hp1, hp2, "same input must give same hash-to-point output");
+    }
+
+    #[test]
+    fn test_hash_to_point_different_inputs() {
+        let hp1 = hash_to_point(b"input_one");
+        let hp2 = hash_to_point(b"input_two");
+        assert_ne!(
+            hp1, hp2,
+            "different inputs must give different hash-to-point outputs"
+        );
+    }
+
+    #[test]
+    fn test_key_image_from_known_keys() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+
+        // Verify the key pair is consistent: sec * G == pub_key
+        assert_eq!(
+            scalar_mult_base(&sec),
+            pub_key,
+            "scalar_mult_base(sec) must equal the public key"
+        );
+
+        let ki = generate_key_image(&pub_key, &sec);
+        assert_eq!(ki.len(), 32, "key image must be 32 bytes");
+        assert!(
+            is_valid_key_image(&ki),
+            "key image from known keys must be valid"
+        );
+    }
+
+    #[test]
+    fn test_is_valid_key_image_random_bytes() {
+        // Random-looking bytes that are not valid curve points should mostly fail.
+        // We test several fixed patterns.
+        let mut invalid_count = 0;
+        let patterns: Vec<[u8; 32]> = (0..10)
+            .map(|i| {
+                let mut buf = [0u8; 32];
+                // Fill with a simple pattern seeded by i
+                for (j, b) in buf.iter_mut().enumerate() {
+                    *b = ((i * 37 + j * 13 + 7) & 0xFF) as u8;
+                }
+                buf
+            })
+            .collect();
+
+        for pat in &patterns {
+            if !is_valid_key_image(pat) {
+                invalid_count += 1;
+            }
+        }
+        assert!(
+            invalid_count >= 5,
+            "most random byte patterns should not be valid curve points (got {} invalid out of 10)",
+            invalid_count
+        );
+    }
+
+    #[test]
+    fn test_key_image_y_sign_bit() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki = generate_key_image(&pub_key, &sec);
+
+        let sign = (ki[31] & 0x80) != 0;
+        let y = key_image_to_y(&ki);
+
+        // The Y coordinate must have its high bit cleared
+        assert_eq!(
+            y[31] & 0x80,
+            0,
+            "key_image_to_y must clear the sign bit"
+        );
+
+        // Reconstruct with the correct sign bit
+        let reconstructed = key_image_from_y(&y, sign);
+        assert_eq!(reconstructed, ki);
+
+        // Reconstruct with the wrong sign bit - should either fail or produce
+        // a different key image
+        let wrong_sign = key_image_from_y(&y, !sign);
+        if !wrong_sign.is_empty() {
+            assert_ne!(
+                wrong_sign, ki,
+                "wrong sign bit must produce a different key image"
+            );
+        }
+    }
+
+    #[test]
+    fn test_generate_key_image_non_empty() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki = generate_key_image(&pub_key, &sec);
+        assert!(!ki.is_empty(), "key image must never be empty for valid inputs");
+        assert_eq!(ki.len(), 32);
+    }
+
+    #[test]
+    fn test_key_image_to_y_preserves_low_bytes() {
+        let sec = test_secret_key();
+        let pub_key = test_public_key(&sec);
+        let ki = generate_key_image(&pub_key, &sec);
+        let y = key_image_to_y(&ki);
+
+        // First 31 bytes must be identical (only bit 255 in byte 31 may differ)
+        assert_eq!(
+            &ki[..31],
+            &y[..31],
+            "first 31 bytes must match between key image and Y coordinate"
+        );
+
+        // Byte 31: only the high bit may differ
+        assert_eq!(
+            ki[31] & 0x7F,
+            y[31] & 0x7F,
+            "low 7 bits of byte 31 must match"
+        );
     }
 }

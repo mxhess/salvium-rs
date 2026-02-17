@@ -5,7 +5,7 @@ edition = "2021"
 description = "WASM crypto primitives for salvium-js"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 tiny-keccak = { version = "2.0", features = ["keccak"] }
