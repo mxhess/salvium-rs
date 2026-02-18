@@ -1084,8 +1084,15 @@ mod tests {
     use super::*;
     use std::fs;
 
+    static TEST_ID: AtomicU32 = AtomicU32::new(0);
+
     fn test_db() -> (u32, String) {
-        let path = format!("/tmp/salvium_test_{}.db", NEXT_HANDLE.load(Ordering::SeqCst));
+        let id = TEST_ID.fetch_add(1, Ordering::SeqCst);
+        let path = format!("/tmp/salvium_test_{}.db", id);
+        // Clean up any leftover files from previous runs
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(format!("{}-wal", &path));
+        let _ = fs::remove_file(format!("{}-shm", &path));
         let key = [0x42u8; 32];
         let handle = storage_open(&path, &key).expect("open failed");
         (handle, path)
