@@ -2,7 +2,7 @@
 name = "salvium-crypto"
 version = "0.1.0"
 edition = "2021"
-description = "WASM crypto primitives for salvium-js"
+description = "Crypto primitives for salvium-rs"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
