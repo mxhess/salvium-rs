@@ -308,7 +308,7 @@ impl DaemonRpc {
         let val = self.client.post("/get_height", &serde_json::json!({})).await?;
         val.get("height")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_height".into() })
     }
 
     /// Check if daemon is synchronized.
@@ -339,7 +339,7 @@ impl DaemonRpc {
             .client
             .call("get_last_block_header", serde_json::json!({}))
             .await?;
-        let header = val.get("block_header").ok_or(RpcError::NoResult)?;
+        let header = val.get("block_header").ok_or(RpcError::NoResult { context: "get_last_block_header".into() })?;
         Ok(serde_json::from_value(header.clone())?)
     }
 
@@ -352,7 +352,7 @@ impl DaemonRpc {
                 serde_json::json!({ "height": height }),
             )
             .await?;
-        let header = val.get("block_header").ok_or(RpcError::NoResult)?;
+        let header = val.get("block_header").ok_or(RpcError::NoResult { context: format!("get_block_header_by_height({})", height) })?;
         Ok(serde_json::from_value(header.clone())?)
     }
 
@@ -365,7 +365,7 @@ impl DaemonRpc {
                 serde_json::json!({ "hash": hash }),
             )
             .await?;
-        let header = val.get("block_header").ok_or(RpcError::NoResult)?;
+        let header = val.get("block_header").ok_or(RpcError::NoResult { context: format!("get_block_header_by_hash({})", &hash[..8.min(hash.len())]) })?;
         Ok(serde_json::from_value(header.clone())?)
     }
 
@@ -385,7 +385,7 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        let headers = val.get("headers").ok_or(RpcError::NoResult)?;
+        let headers = val.get("headers").ok_or(RpcError::NoResult { context: "get_block_headers_range".into() })?;
         Ok(serde_json::from_value(headers.clone())?)
     }
 
@@ -406,7 +406,7 @@ impl DaemonRpc {
             .await?;
         val.as_str()
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_block_hash".into() })
     }
 
     // =========================================================================
@@ -429,7 +429,7 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        let txs = val.get("txs").ok_or(RpcError::NoResult)?;
+        let txs = val.get("txs").ok_or(RpcError::NoResult { context: "get_transactions(txs)".into() })?;
         Ok(serde_json::from_value(txs.clone())?)
     }
 
@@ -524,7 +524,7 @@ impl DaemonRpc {
             req["asset_type"] = serde_json::Value::String(asset_type.to_string());
         }
         let val = self.client.post("/get_outs", &req).await?;
-        let outs = val.get("outs").ok_or(RpcError::NoResult)?;
+        let outs = val.get("outs").ok_or(RpcError::NoResult { context: "get_outs".into() })?;
         Ok(serde_json::from_value(outs.clone())?)
     }
 
@@ -556,7 +556,7 @@ impl DaemonRpc {
             .client
             .call("get_output_distribution", params)
             .await?;
-        let dists = val.get("distributions").ok_or(RpcError::NoResult)?;
+        let dists = val.get("distributions").ok_or(RpcError::NoResult { context: "get_output_distribution".into() })?;
         Ok(serde_json::from_value(dists.clone())?)
     }
 

@@ -416,7 +416,7 @@ impl WalletRpc {
             .await?;
         val.get("height")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "wallet get_height".into() })
     }
 
     // =========================================================================
@@ -503,7 +503,7 @@ impl WalletRpc {
         val.get("tx_hash")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "relay_tx(tx_hash)".into() })
     }
 
     // =========================================================================
@@ -553,7 +553,7 @@ impl WalletRpc {
                 serde_json::json!({ "txid": txid }),
             )
             .await?;
-        let transfer = val.get("transfer").ok_or(RpcError::NoResult)?;
+        let transfer = val.get("transfer").ok_or(RpcError::NoResult { context: "get_transfer_by_txid".into() })?;
         Ok(serde_json::from_value(transfer.clone())?)
     }
 
@@ -596,7 +596,7 @@ impl WalletRpc {
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_mnemonic(key)".into() })
     }
 
     /// Get the view key.
@@ -611,7 +611,7 @@ impl WalletRpc {
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_view_key(key)".into() })
     }
 
     /// Get the spend key.
@@ -626,7 +626,7 @@ impl WalletRpc {
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_spend_key(key)".into() })
     }
 
     /// Export key images.
@@ -691,7 +691,7 @@ impl WalletRpc {
         val.get("version")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_version".into() })
     }
 
     /// Check if wallet is multisig.
@@ -716,7 +716,7 @@ impl WalletRpc {
         val.get("signature")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "sign(signature)".into() })
     }
 
     /// Verify a signature.
@@ -749,7 +749,7 @@ impl WalletRpc {
         val.get("tx_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult)
+            .ok_or(RpcError::NoResult { context: "get_tx_key(tx_key)".into() })
     }
 }
 

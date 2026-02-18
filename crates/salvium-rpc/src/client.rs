@@ -2,7 +2,7 @@
 //!
 //! Provides `call()` for JSON-RPC methods (POST to `/json_rpc`) and
 //! `post()` / `post_binary()` for raw endpoints.
-//! Supports Basic auth, configurable timeout, and retry with backoff.
+//! Supports Basic auth, configurable timeout, and retry with exponential backoff.
 
 use crate::error::RpcError;
 use base64::Engine;
@@ -48,7 +48,7 @@ pub struct RpcConfig {
     pub timeout: Duration,
     /// Number of retry attempts on transient failure.
     pub retries: u32,
-    /// Delay between retries.
+    /// Initial delay between retries (doubles each attempt).
     pub retry_delay: Duration,
 }
 
@@ -59,8 +59,8 @@ impl Default for RpcConfig {
             username: None,
             password: None,
             timeout: Duration::from_secs(30),
-            retries: 0,
-            retry_delay: Duration::from_secs(1),
+            retries: 2,
+            retry_delay: Duration::from_millis(500),
         }
     }
 }
@@ -85,6 +85,7 @@ impl RpcClient {
     pub fn with_config(config: RpcConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
+            .pool_max_idle_per_host(4)
             .build()
             .expect("failed to create HTTP client");
 
@@ -134,25 +135,25 @@ impl RpcClient {
             params,
         };
 
-        let mut last_err = RpcError::NoResult;
         let attempts = self.config.retries + 1;
+        let mut last_err = RpcError::NoResult {
+            context: method.to_string(),
+        };
 
         for attempt in 0..attempts {
             if attempt > 0 {
-                tokio::time::sleep(self.config.retry_delay).await;
+                let delay = self.config.retry_delay * 2u32.saturating_pow(attempt - 1);
+                tokio::time::sleep(delay).await;
             }
 
-            match self.do_call(&url, &req).await {
+            match self.do_call(&url, &req, method).await {
                 Ok(val) => return Ok(val),
-                Err(RpcError::Busy) if attempt + 1 < attempts => {
-                    last_err = RpcError::Busy;
-                    continue;
-                }
                 Err(e) => {
-                    last_err = e;
-                    if attempt + 1 < attempts {
-                        continue;
+                    let should_retry = e.is_transient() && attempt + 1 < attempts;
+                    if !should_retry {
+                        return Err(e);
                     }
+                    last_err = e;
                 }
             }
         }
@@ -160,53 +161,93 @@ impl RpcClient {
         Err(last_err)
     }
 
-    async fn do_call(&self, url: &str, req: &JsonRpcRequest<'_>) -> Result<Value, RpcError> {
+    async fn do_call(
+        &self,
+        url: &str,
+        req: &JsonRpcRequest<'_>,
+        method: &str,
+    ) -> Result<Value, RpcError> {
         let resp = self
             .client
             .post(url)
             .headers(self.build_headers())
             .json(req)
             .send()
-            .await?;
+            .await
+            .map_err(|e| RpcError::Http {
+                method: method.to_string(),
+                url: url.to_string(),
+                source: e,
+            })?;
 
-        if resp.status().as_u16() == 401 {
-            return Err(RpcError::AuthFailed);
+        let status = resp.status().as_u16();
+
+        if status == 401 {
+            return Err(RpcError::AuthFailed {
+                url: url.to_string(),
+            });
         }
 
-        let body: JsonRpcResponse = resp.json().await?;
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RpcError::HttpStatus {
+                method: method.to_string(),
+                url: url.to_string(),
+                status,
+                body: body.chars().take(500).collect(),
+            });
+        }
+
+        let body: JsonRpcResponse =
+            resp.json()
+                .await
+                .map_err(|e| RpcError::Http {
+                    method: method.to_string(),
+                    url: url.to_string(),
+                    source: e,
+                })?;
 
         if let Some(err) = body.error {
             if err.message == "BUSY" {
-                return Err(RpcError::Busy);
+                return Err(RpcError::Busy {
+                    context: method.to_string(),
+                });
             }
             return Err(RpcError::Rpc {
                 code: err.code,
                 message: err.message,
+                method: method.to_string(),
             });
         }
 
-        body.result.ok_or(RpcError::NoResult)
+        body.result.ok_or(RpcError::NoResult {
+            context: method.to_string(),
+        })
     }
 
     /// POST JSON to a raw endpoint (not JSON-RPC).
     pub async fn post(&self, endpoint: &str, body: &Value) -> Result<Value, RpcError> {
         let url = format!("{}{}", self.config.url, endpoint);
 
-        let mut last_err = RpcError::NoResult;
         let attempts = self.config.retries + 1;
+        let mut last_err = RpcError::NoResult {
+            context: endpoint.to_string(),
+        };
 
         for attempt in 0..attempts {
             if attempt > 0 {
-                tokio::time::sleep(self.config.retry_delay).await;
+                let delay = self.config.retry_delay * 2u32.saturating_pow(attempt - 1);
+                tokio::time::sleep(delay).await;
             }
 
-            match self.do_post(&url, body).await {
+            match self.do_post(&url, body, endpoint).await {
                 Ok(val) => return Ok(val),
                 Err(e) => {
-                    last_err = e;
-                    if attempt + 1 < attempts {
-                        continue;
+                    let should_retry = e.is_transient() && attempt + 1 < attempts;
+                    if !should_retry {
+                        return Err(e);
                     }
+                    last_err = e;
                 }
             }
         }
@@ -214,20 +255,49 @@ impl RpcClient {
         Err(last_err)
     }
 
-    async fn do_post(&self, url: &str, body: &Value) -> Result<Value, RpcError> {
+    async fn do_post(
+        &self,
+        url: &str,
+        body: &Value,
+        endpoint: &str,
+    ) -> Result<Value, RpcError> {
         let resp = self
             .client
             .post(url)
             .headers(self.build_headers())
             .json(body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| RpcError::Http {
+                method: endpoint.to_string(),
+                url: url.to_string(),
+                source: e,
+            })?;
 
-        if resp.status().as_u16() == 401 {
-            return Err(RpcError::AuthFailed);
+        let status = resp.status().as_u16();
+
+        if status == 401 {
+            return Err(RpcError::AuthFailed {
+                url: url.to_string(),
+            });
         }
 
-        let val: Value = resp.json().await?;
+        if status >= 400 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RpcError::HttpStatus {
+                method: endpoint.to_string(),
+                url: url.to_string(),
+                status,
+                body: body.chars().take(500).collect(),
+            });
+        }
+
+        let val: Value = resp.json().await.map_err(|e| RpcError::Http {
+            method: endpoint.to_string(),
+            url: url.to_string(),
+            source: e,
+        })?;
+
         Ok(val)
     }
 
@@ -249,13 +319,36 @@ impl RpcClient {
             .headers(headers)
             .body(body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| RpcError::Http {
+                method: endpoint.to_string(),
+                url: url.to_string(),
+                source: e,
+            })?;
 
-        if resp.status().as_u16() == 401 {
-            return Err(RpcError::AuthFailed);
+        let status = resp.status().as_u16();
+
+        if status == 401 {
+            return Err(RpcError::AuthFailed {
+                url: url.to_string(),
+            });
         }
 
-        let bytes = resp.bytes().await?;
+        if status >= 400 {
+            let body_text = resp.text().await.unwrap_or_default();
+            return Err(RpcError::HttpStatus {
+                method: endpoint.to_string(),
+                url: url.to_string(),
+                status,
+                body: body_text.chars().take(500).collect(),
+            });
+        }
+
+        let bytes = resp.bytes().await.map_err(|e| RpcError::Http {
+            method: endpoint.to_string(),
+            url: url.to_string(),
+            source: e,
+        })?;
         Ok(bytes.to_vec())
     }
 
@@ -276,7 +369,7 @@ mod tests {
         let config = RpcConfig::default();
         assert_eq!(config.url, "http://localhost:19081");
         assert_eq!(config.timeout, Duration::from_secs(30));
-        assert_eq!(config.retries, 0);
+        assert_eq!(config.retries, 2);
     }
 
     #[test]
