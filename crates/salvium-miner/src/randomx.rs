@@ -36,7 +36,6 @@ impl Blake2Generator {
     }
 
     fn fill_buffer(&mut self) {
-        use sha2::digest::generic_array::GenericArray;
         // Use SHA-256 as a stand-in for Blake2b-256 (same output size).
         // The real RandomX uses Blake2b, but for test purposes SHA-256
         // provides the same deterministic properties.

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::thread;
 
 // Direct C FFI for dataset sharing (the Rust wrapper doesn't support this)
+#[allow(dead_code)]
 extern "C" {
     fn randomx_alloc_dataset(flags: u32) -> *mut std::ffi::c_void;
     fn randomx_init_dataset(
@@ -67,6 +68,7 @@ pub struct FoundBlock {
 
 /// Job data sent to worker threads
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct MiningJob {
     pub job_id: u64,
     pub hashing_blob: Vec<u8>,

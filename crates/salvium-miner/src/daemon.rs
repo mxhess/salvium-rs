@@ -13,6 +13,7 @@ pub struct DaemonClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct BlockTemplate {
     pub difficulty: u64,
     pub wide_difficulty: Option<String>,
@@ -27,6 +28,7 @@ pub struct BlockTemplate {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DaemonInfo {
     pub height: u64,
     pub difficulty: u64,

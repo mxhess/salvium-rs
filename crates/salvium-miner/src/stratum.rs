@@ -8,11 +8,13 @@
 //! - TLS support
 
 /// Placeholder for future stratum pool client
+#[allow(dead_code)]
 pub struct StratumClient {
     _pool_url: String,
 }
 
 impl StratumClient {
+    #[allow(dead_code)]
     pub fn new(pool_url: &str) -> Self {
         Self {
             _pool_url: pool_url.to_string(),
