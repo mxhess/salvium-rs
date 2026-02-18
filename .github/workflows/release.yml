@@ -7,35 +7,45 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  # ── WASM artifacts (platform-independent) ────────────────────────────
-  wasm:
+  # ── Verify before building release artifacts ────────────────────────
+  test:
+    name: Pre-release tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run all workspace tests
+        run: cargo test --workspace
+      - name: Clippy (release mode)
+        run: cargo clippy --workspace --release -- -Dwarnings
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+  # ── WASM artifacts (platform-independent) ────────────────────────────
+  wasm:
+    name: Build WASM
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install wasm-pack
         run: cargo install wasm-pack
-
-      - name: Install JS dependencies
-        run: bun install
 
       - name: Build WASM crypto
         working-directory: crates/salvium-crypto
         run: |
           RUSTFLAGS="-Ctarget-feature=+simd128" \
             wasm-pack build --target web --out-dir ../../src/crypto/wasm
-
-      - name: Build RandomX WASM
-        run: bun run build:wasm
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
@@ -45,10 +55,11 @@ jobs:
             src/crypto/wasm/salvium_crypto_bg.wasm
             src/crypto/wasm/salvium_crypto.js
             src/crypto/wasm/salvium_crypto.d.ts
-            build/randomx.wasm
 
   # ── Native miner binaries ────────────────────────────────────────────
   miner:
+    name: "Build miner (${{ matrix.name }})"
+    needs: [test]
     strategy:
       fail-fast: false
       matrix:
@@ -84,49 +95,43 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Linux: install cross for musl/cross-compilation
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install cross (Linux)
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # macOS: install cmake
       - name: Install cmake (macOS)
         if: runner.os == 'macOS'
         run: brew install cmake
 
-      # Windows: install cmake
       - name: Install cmake (Windows)
         if: runner.os == 'Windows'
         run: choco install cmake --installargs '"ADD_CMAKE_TO_PATH=System"' -y
 
-      # Build with cross (Linux musl targets)
       - name: Build with cross (Linux)
         if: matrix.cross
-        working-directory: crates/salvium-miner
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --target ${{ matrix.target }} -p salvium-miner
 
-      # Build natively (macOS / Windows)
       - name: Build native (macOS/Windows)
         if: ${{ !matrix.cross }}
-        working-directory: crates/salvium-miner
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }} -p salvium-miner
 
-      # Rename binary to target name
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp crates/salvium-miner/target/${{ matrix.target }}/release/salvium-miner \
+          cp target/${{ matrix.target }}/release/salvium-miner \
              ${{ matrix.name }}
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
         run: |
-          copy crates\salvium-miner\target\${{ matrix.target }}\release\salvium-miner.exe ^
+          copy target\${{ matrix.target }}\release\salvium-miner.exe ^
                ${{ matrix.name }}
         shell: cmd
 
@@ -136,8 +141,9 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
 
-  # ── Create GitHub Release ────────────────────────────────────────────
+  # ── Create release (on this repo or push to public releases repo) ───
   release:
+    name: Publish release
     needs: [wasm, miner]
     runs-on: ubuntu-latest
 
@@ -162,15 +168,31 @@ jobs:
 
           # WASM files
           cp artifacts/wasm-artifacts/src/crypto/wasm/salvium_crypto_bg.wasm release/
-          cp artifacts/wasm-artifacts/build/randomx.wasm release/
 
           # Generate checksums
           cd release
           sha256sum * > checksums.sha256
           cat checksums.sha256
 
+      # Option A: Release on this repo (works for both public and private)
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: release/*
+
+      # Option B: Push to public releases repo (uncomment and set RELEASES_PAT)
+      # To enable: create a PAT with repo scope, add as RELEASES_PAT secret,
+      # and set RELEASES_REPO to e.g. "salvium/salvium-rs-releases"
+      #
+      # - name: Push to public releases repo
+      #   if: env.RELEASES_REPO != ''
+      #   env:
+      #     RELEASES_REPO: ${{ vars.RELEASES_REPO }}
+      #     GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+      #   run: |
+      #     TAG="${GITHUB_REF#refs/tags/}"
+      #     gh release create "$TAG" release/* \
+      #       --repo "$RELEASES_REPO" \
+      #       --title "$TAG" \
+      #       --notes "Automated release from salvium-rs $TAG"

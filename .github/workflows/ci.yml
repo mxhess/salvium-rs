@@ -6,27 +6,152 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
 jobs:
-  test:
+  # ── Stage 1: Compile-time checks ────────────────────────────────────
+  fmt:
+    name: Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - run: bun install
-
-      - run: bun test/run.js
-
-  lint-miner:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Check miner compiles
-        working-directory: crates/salvium-miner
-        run: cargo check
+  clippy:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets
+
+  compile:
+    name: Compile workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build all crates
+        run: cargo build --workspace
+      - name: Build in release mode
+        run: cargo build --workspace --release
+
+  compile-wasm:
+    name: Compile WASM target
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Check crypto crate compiles for WASM
+        run: cargo check -p salvium-crypto --target wasm32-unknown-unknown
+
+  # ── Stage 2: Unit tests (per-crate, parallel) ───────────────────────
+  test-types:
+    name: "Test: types + consensus rules"
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: salvium-types
+        run: cargo test -p salvium-types -- --nocapture
+      - name: salvium-consensus
+        run: cargo test -p salvium-consensus -- --nocapture
+
+  test-crypto:
+    name: "Test: crypto verification"
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: salvium-crypto (unit)
+        run: cargo test -p salvium-crypto --lib -- --nocapture
+      - name: salvium-crypto (integration)
+        run: cargo test -p salvium-crypto --test '*' -- --nocapture
+
+  test-wallet:
+    name: "Test: wallet + transactions"
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: salvium-wallet
+        run: cargo test -p salvium-wallet --lib -- --nocapture
+      - name: salvium-tx
+        run: cargo test -p salvium-tx -- --nocapture
+
+  test-infra:
+    name: "Test: miner + multisig + RPC"
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: salvium-miner
+        run: cargo test -p salvium-miner -- --nocapture
+      - name: salvium-multisig
+        run: cargo test -p salvium-multisig -- --nocapture
+      - name: salvium-rpc
+        run: cargo test -p salvium-rpc -- --nocapture
+
+  # ── Stage 3: Doc tests + documentation build ────────────────────────
+  docs:
+    name: Documentation
+    needs: [compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Doc tests
+        run: cargo test --workspace --doc
+      - name: Build docs (check for broken links)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-Dwarnings"
+
+  # ── Gate: all checks must pass ──────────────────────────────────────
+  ci-pass:
+    name: CI passed
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - compile
+      - compile-wasm
+      - test-types
+      - test-crypto
+      - test-wallet
+      - test-infra
+      - docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs were cancelled"
+            exit 1
+          fi
+          echo "All CI checks passed"
