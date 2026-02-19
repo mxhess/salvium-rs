@@ -322,7 +322,7 @@ fn parse_ringct_signature(
     }
 
     // Validate type
-    if rct_type < RCT_TYPE_BULLETPROOF_PLUS || rct_type > RCT_TYPE_SALVIUM_ONE {
+    if !(RCT_TYPE_BULLETPROOF_PLUS..=RCT_TYPE_SALVIUM_ONE).contains(&rct_type) {
         return Err(format!(
             "Invalid RCT type: {} at offset {}",
             rct_type,

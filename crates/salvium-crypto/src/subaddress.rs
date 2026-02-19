@@ -225,7 +225,7 @@ mod tests {
     fn test_cn_batch_first_entry_matches_spend_key() {
         // For (0,0) the subaddress spend pubkey should be the original spend pubkey
         let view_key = [0x01u8; 32];
-        let view_scalar = Scalar::from_bytes_mod_order(view_key);
+        let _view_scalar = Scalar::from_bytes_mod_order(view_key);
         let spend_scalar = Scalar::from(42u64);
         let spend_pub = (ED25519_BASEPOINT_TABLE * &spend_scalar).compress().to_bytes();
 

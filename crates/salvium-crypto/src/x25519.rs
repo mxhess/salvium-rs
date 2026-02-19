@@ -50,7 +50,8 @@ impl Fe {
     }
 
     /// Encode a field element to 32-byte little-endian, fully reduced mod p.
-    fn to_bytes(&self) -> [u8; 32] {
+    #[allow(clippy::needless_range_loop)]
+    fn to_bytes(self) -> [u8; 32] {
         let mut h = self.0;
         // Carry and reduce
         let mut carry: i64;
@@ -280,12 +281,11 @@ impl Fe {
             for _ in 1..50 { t = Fe::sq(&t); }
             Fe::mul(&t, &z_50_0)                // a^(2^250 - 1)
         };
-        let t = {
+        {
             let mut t = Fe::sq(&z_250_0);
             for _ in 1..5 { t = Fe::sq(&t); }   // a^(2^255 - 32)
             Fe::mul(&t, &z11)                   // a^(2^255 - 21) = a^(p-2)
-        };
-        t
+        }
     }
 
     /// Constant-time conditional swap: if swap != 0, swap a and b.

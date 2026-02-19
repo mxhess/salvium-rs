@@ -40,8 +40,8 @@ impl Blake2Generator {
         // The real RandomX uses Blake2b, but for test purposes SHA-256
         // provides the same deterministic properties.
         let mut hasher = Sha256::new();
-        hasher.update(&self.seed);
-        hasher.update(&self.counter.to_le_bytes());
+        hasher.update(self.seed);
+        hasher.update(self.counter.to_le_bytes());
         self.buffer = hasher.finalize().to_vec();
         self.position = 0;
         self.counter += 1;
@@ -203,8 +203,8 @@ mod tests {
         let seed = [0u8; 32];
         let mut gen = Blake2Generator::new(&seed);
 
-        let byte = gen.get_byte();
-        assert!(byte <= 255);
+        let _byte = gen.get_byte();
+        // u8 is always <= 255, just verify we can call get_byte without panic.
     }
 
     #[test]
@@ -212,8 +212,8 @@ mod tests {
         let seed = [0u8; 32];
         let mut gen = Blake2Generator::new(&seed);
 
-        let val = gen.get_uint32();
-        assert!(val <= u32::MAX);
+        let _val = gen.get_uint32();
+        // Just verify get_uint32 doesn't panic.
     }
 
     #[test]

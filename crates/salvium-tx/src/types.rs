@@ -275,7 +275,7 @@ impl Transaction {
         let json = self.prefix.to_json();
         let json_str = serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
         let prefix_bytes = salvium_crypto::tx_serialize::serialize_tx_prefix(&json_str)
-            .map_err(|e| TxError::Serialize(e))?;
+            .map_err(TxError::Serialize)?;
         Ok(to_32(&salvium_crypto::keccak256(&prefix_bytes)))
     }
 
@@ -339,7 +339,7 @@ impl TxPrefix {
         let return_pubkey = v
             .get("return_pubkey")
             .and_then(|s| s.as_str())
-            .and_then(|s| hex_to_32(s));
+            .and_then(hex_to_32);
         let return_address_list = v
             .get("return_address_list")
             .and_then(|a| a.as_array())
@@ -358,8 +358,8 @@ impl TxPrefix {
                 return None;
             }
             let ver = ptd.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
-            let ra = ptd.get("return_address").and_then(|s| s.as_str()).and_then(|s| hex_to_32(s))?;
-            let rp = ptd.get("return_pubkey").and_then(|s| s.as_str()).and_then(|s| hex_to_32(s))?;
+            let ra = ptd.get("return_address").and_then(|s| s.as_str()).and_then(hex_to_32)?;
+            let rp = ptd.get("return_pubkey").and_then(|s| s.as_str()).and_then(hex_to_32)?;
             let vt_hex = ptd.get("return_view_tag").and_then(|s| s.as_str())?;
             let vt_bytes = hex::decode(vt_hex).ok()?;
             if vt_bytes.len() < 3 { return None; }
@@ -466,7 +466,7 @@ impl TxInput {
                 let key_image = v
                     .get("keyImage")
                     .and_then(|s| s.as_str())
-                    .and_then(|s| hex_to_32(s))
+                    .and_then(hex_to_32)
                     .ok_or(TxError::Parse("missing keyImage".into()))?;
                 Ok(Self::Key {
                     amount,
@@ -515,7 +515,7 @@ impl TxOutput {
         let key = v
             .get("key")
             .and_then(|s| s.as_str())
-            .and_then(|s| hex_to_32(s))
+            .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing output key".into()))?;
         let asset_type = v
             .get("assetType")
@@ -664,7 +664,7 @@ impl RctSignatures {
         let p_r = v
             .get("p_r")
             .and_then(|s| s.as_str())
-            .and_then(|s| hex_to_32(s));
+            .and_then(hex_to_32);
 
         let salvium_data = v.get("salvium_data").cloned();
 
@@ -748,12 +748,12 @@ impl ClsagData {
         let c1 = v
             .get("c1")
             .and_then(|x| x.as_str())
-            .and_then(|x| hex_to_32(x))
+            .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing CLSAG c1".into()))?;
         let d = v
             .get("D")
             .and_then(|x| x.as_str())
-            .and_then(|x| hex_to_32(x))
+            .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing CLSAG D".into()))?;
         Ok(Self { s, c1, d })
     }
@@ -775,12 +775,12 @@ impl TclsagData {
         let c1 = v
             .get("c1")
             .and_then(|x| x.as_str())
-            .and_then(|x| hex_to_32(x))
+            .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing TCLSAG c1".into()))?;
         let d = v
             .get("D")
             .and_then(|x| x.as_str())
-            .and_then(|x| hex_to_32(x))
+            .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing TCLSAG D".into()))?;
         Ok(Self { sx, sy, c1, d })
     }
@@ -802,7 +802,7 @@ impl BpPlusData {
         let get32 = |field: &str| -> Result<[u8; 32], TxError> {
             v.get(field)
                 .and_then(|s| s.as_str())
-                .and_then(|s| hex_to_32(s))
+                .and_then(hex_to_32)
                 .ok_or(TxError::Parse(format!("missing BP+ field: {}", field)))
         };
 
@@ -855,7 +855,7 @@ fn parse_hex_array_32(v: Option<&Value>) -> Vec<[u8; 32]> {
     v.and_then(|a| a.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|s| s.as_str().and_then(|h| hex_to_32(h)))
+                .filter_map(|s| s.as_str().and_then(hex_to_32))
                 .collect()
         })
         .unwrap_or_default()
@@ -1070,6 +1070,7 @@ mod tests {
             return_pubkey: None,
             return_address_list: None,
             return_address_change_mask: None,
+            protocol_tx_data: None,
             source_asset_type: "SAL".to_string(),
             destination_asset_type: "SAL".to_string(),
             amount_slippage_limit: 0,

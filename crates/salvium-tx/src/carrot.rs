@@ -138,7 +138,7 @@ pub fn create_carrot_output(
     let partial = salvium_crypto::point_add_compressed(params.recipient_spend_pubkey, &g_part);
     // k^o_t*T: need to use double_scalar_mult or dedicated T-point multiplication.
     // For now, use scalar_mult_point with the T generator point.
-    let t_generator = salvium_crypto::hash_to_point(&[b'T']);
+    let t_generator = salvium_crypto::hash_to_point(b"T");
     let t_part = salvium_crypto::scalar_mult_point(&k_o_t, &t_generator);
     let onetime_address = to_32(&salvium_crypto::point_add_compressed(&partial, &t_part));
 

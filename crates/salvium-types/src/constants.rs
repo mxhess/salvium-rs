@@ -287,7 +287,7 @@ impl AssetType {
     }
 
     /// Parse from string representation.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "SAL"  => Some(Self::Sal),
             "SAL1" => Some(Self::Sal1),

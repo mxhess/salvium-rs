@@ -19,10 +19,6 @@ use crate::clsag::{ClsagSignature, clsag_verify};
 
 // ─── RCT Type Constants ─────────────────────────────────────────────────────
 
-const RCT_TYPE_CLSAG: u8 = 5;
-const _RCT_TYPE_BULLETPROOF_PLUS: u8 = 6;
-const _RCT_TYPE_FULL_PROOFS: u8 = 7;
-const _RCT_TYPE_SALVIUM_ZERO: u8 = 8;
 const RCT_TYPE_SALVIUM_ONE: u8 = 9;
 
 // ─── Message Hash ────────────────────────────────────────────────────────────
@@ -50,6 +46,7 @@ pub fn compute_rct_message(
 /// Verify all RCT signatures in a transaction.
 ///
 /// Returns `(success, failed_input_index)`.
+#[allow(clippy::too_many_arguments)]
 pub fn verify_rct_signatures(
     rct_type: u8,
     message: &[u8; 32],
@@ -168,6 +165,7 @@ pub fn verify_rct_signatures(
 /// - `[0x01]` if all signatures valid
 /// - `[0x00, idx_u32_le]` if signature at index `idx` is invalid
 /// - `[0xFF]` if input data is malformed
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn verify_rct_signatures_wasm(
     rct_type: u8,
@@ -297,6 +295,8 @@ mod tests {
     use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
     use curve25519_dalek::edwards::EdwardsPoint;
     use curve25519_dalek::traits::VartimeMultiscalarMul;
+
+    const RCT_TYPE_CLSAG: u8 = 5;
 
     #[test]
     fn test_compute_rct_message() {

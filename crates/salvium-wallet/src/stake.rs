@@ -113,8 +113,8 @@ impl StakeStore {
         self.stakes
             .iter()
             .filter(|s| {
-                status.map_or(true, |st| s.status == st)
-                    && asset_type.map_or(true, |at| s.asset_type == at)
+                status.is_none_or(|st| s.status == st)
+                    && asset_type.is_none_or(|at| s.asset_type == at)
             })
             .collect()
     }
@@ -236,6 +236,7 @@ pub fn extract_return_pubkey(tx_json: &serde_json::Value) -> Option<String> {
 ///
 /// `is_our_stake` should be `true` when the wallet spent inputs in a STAKE
 /// transaction (i.e. it was **our** stake, not someone else's).
+#[allow(clippy::too_many_arguments)]
 pub fn record_stake_lifecycle(
     store: &mut StakeStore,
     tx_json: &serde_json::Value,

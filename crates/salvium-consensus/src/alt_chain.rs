@@ -25,7 +25,7 @@ const ALT_BLOCK_PRUNE_DEPTH: u64 = 720;
 ///
 /// Stores the fields required to evaluate cumulative difficulty along an
 /// alternative chain without needing the full block body.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockExtendedInfo {
     /// Block hash.
     pub hash: String,
@@ -41,20 +41,6 @@ pub struct BlockExtendedInfo {
     pub cumulative_difficulty: u128,
     /// Serialised block weight (bytes).
     pub weight: u64,
-}
-
-impl Default for BlockExtendedInfo {
-    fn default() -> Self {
-        Self {
-            hash: String::new(),
-            prev_hash: String::new(),
-            height: 0,
-            timestamp: 0,
-            difficulty: 0,
-            cumulative_difficulty: 0,
-            weight: 0,
-        }
-    }
 }
 
 // =============================================================================

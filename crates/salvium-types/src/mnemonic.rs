@@ -92,9 +92,9 @@ pub fn detect_language(mnemonic: &str) -> Result<&'static WordList, MnemonicErro
 
     // Multiple candidates — check more words to disambiguate
     let check_count = words.len().min(5);
-    for i in 1..check_count {
+    for word in &words[1..check_count] {
         for candidate in &mut candidates {
-            if find_word(candidate.0, words[i]).is_some() {
+            if find_word(candidate.0, word).is_some() {
                 candidate.1 += 1;
             }
         }

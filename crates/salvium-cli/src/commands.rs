@@ -924,8 +924,8 @@ pub async fn show_history(ctx: &AppContext, _account: i32, limit: usize) -> Resu
     );
     println!();
     println!(
-        "{:<8} {:<10} {:<8} {:>16} {}",
-        "Height", "Type", "Asset", "Amount", "TX Hash"
+        "{:<8} {:<10} {:<8} {:>16} TX Hash",
+        "Height", "Type", "Asset", "Amount"
     );
     println!("{}", "-".repeat(80));
 
@@ -970,8 +970,8 @@ pub async fn show_stakes(ctx: &AppContext) -> Result {
     }
 
     println!(
-        "{:<8} {:>16} {:<10} {}",
-        "Height", "Amount", "Status", "TX Hash"
+        "{:<8} {:>16} {:<10} TX Hash",
+        "Height", "Amount", "Status"
     );
     println!("{}", "-".repeat(70));
 
@@ -1017,17 +1017,14 @@ pub async fn show_status(ctx: &AppContext) -> Result {
     );
 
     // Try to get yield info (staking economics).
-    match daemon.get_yield_info().await {
-        Ok(yi) => {
-            println!();
-            println!("Staking info:");
-            println!("  Total staked:     {}", format_sal_u64(yi.total_staked));
-            println!("  Total yield:      {}", format_sal_u64(yi.total_yield));
-            if yi.yield_per_stake > 0.0 {
-                println!("  Yield per stake:  {:.4}", yi.yield_per_stake);
-            }
+    if let Ok(yi) = daemon.get_yield_info().await {
+        println!();
+        println!("Staking info:");
+        println!("  Total staked:     {}", format_sal_u64(yi.total_staked));
+        println!("  Total yield:      {}", format_sal_u64(yi.total_yield));
+        if yi.yield_per_stake > 0.0 {
+            println!("  Yield per stake:  {:.4}", yi.yield_per_stake);
         }
-        Err(_) => {}
     }
 
     Ok(())

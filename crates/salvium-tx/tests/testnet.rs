@@ -199,11 +199,11 @@ async fn test_address_generation_testnet() {
             Network::Testnet, *format, *addr_type,
             &spend_pub, &view_pub, None,
         )
-        .expect(&format!("{} address creation failed", label));
+        .unwrap_or_else(|_| panic!("{} address creation failed", label));
 
         assert!(is_valid_address(&addr), "{} address should be valid: {}", label, &addr[..20]);
 
-        let parsed = parse_address(&addr).expect(&format!("{} address parsing failed", label));
+        let parsed = parse_address(&addr).unwrap_or_else(|_| panic!("{} address parsing failed", label));
         assert_eq!(parsed.network, Network::Testnet);
         assert_eq!(parsed.format, *format);
         assert_eq!(parsed.address_type, *addr_type);
@@ -358,6 +358,7 @@ async fn test_build_and_sign_with_real_decoys() {
             return_pubkey: None,
             return_address_list: None,
             return_address_change_mask: None,
+            protocol_tx_data: None,
             source_asset_type: "SAL".to_string(),
             destination_asset_type: "SAL".to_string(),
             amount_slippage_limit: 0,

@@ -74,7 +74,7 @@ impl DaemonClient {
 
         let resp = self
             .client
-            .post(&format!("{}/json_rpc", self.url))
+            .post(format!("{}/json_rpc", self.url))
             .json(&req)
             .send()
             .map_err(|e| format!("HTTP error: {}", e))?;
@@ -115,7 +115,7 @@ impl DaemonClient {
 
         let resp = self
             .client
-            .post(&format!("{}/json_rpc", self.url))
+            .post(format!("{}/json_rpc", self.url))
             .json(&req)
             .send()
             .map_err(|e| format!("HTTP error: {}", e))?;

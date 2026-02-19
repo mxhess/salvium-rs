@@ -385,6 +385,7 @@ mod tests {
                 commitment: Some([0u8; 32]),
                 carrot_view_tag: None,
                 carrot_ephemeral_pubkey: None,
+                asset_type: "SAL".to_string(),
             }],
             is_coinbase: false,
             block_height: 100,

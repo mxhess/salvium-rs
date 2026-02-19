@@ -48,6 +48,7 @@ pub struct TclsagSignature {
 
 // ─── Core TCLSAG Sign ───────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn tclsag_sign(
     message: &[u8; 32],
     ring: &[[u8; 32]],
@@ -354,6 +355,7 @@ fn deserialize_tclsag(bytes: &[u8]) -> Option<TclsagSignature> {
 
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn tclsag_sign_wasm(
     message: &[u8],

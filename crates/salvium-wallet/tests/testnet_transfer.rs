@@ -296,7 +296,7 @@ async fn test_real_testnet_transfer() {
 
         // Also verify by fetching with global index (no asset_type).
         {
-            let global_idx_req = vec![OutputRequest { amount: 0, index: block_height }]; // NOT the right call, see below
+            // Global index lookup is done via get_transactions output_indices below.
             // Actually let's get the global index from get_transactions output_indices
             let (_, ref global_indices_for_tx) = tx_entries.iter()
                 .zip(tx_hashes_to_resolve.iter())
@@ -549,6 +549,7 @@ async fn test_real_testnet_transfer() {
     let verify_output_masks = unsigned.output_masks.clone();
     let verify_output_amounts = unsigned.output_amounts.clone();
     let verify_output_commitments = unsigned.output_commitments.clone();
+    #[allow(clippy::type_complexity)]
     let verify_inputs: Vec<(u64, [u8; 32], [u8; 32], Option<[u8; 32]>, Vec<[u8; 32]>, Vec<[u8; 32]>, usize)> = unsigned.inputs.iter().map(|i| {
         (i.amount, i.public_key, i.secret_key, i.secret_key_y, i.ring.clone(), i.ring_commitments.clone(), i.real_index)
     }).collect();
@@ -596,7 +597,7 @@ async fn test_real_testnet_transfer() {
         let mut pseudo_sum = rct.pseudo_outs[0];
         for po in &rct.pseudo_outs[1..] {
             pseudo_sum = to_32(&salvium_crypto::point_add_compressed(
-                &pseudo_sum.to_vec(), &po.to_vec()
+                &pseudo_sum, po
             ));
         }
 
@@ -604,11 +605,11 @@ async fn test_real_testnet_transfer() {
         let mut out_sum = rct.out_pk[0];
         for pk in &rct.out_pk[1..] {
             out_sum = to_32(&salvium_crypto::point_add_compressed(
-                &out_sum.to_vec(), &pk.to_vec()
+                &out_sum, pk
             ));
         }
         out_sum = to_32(&salvium_crypto::point_add_compressed(
-            &out_sum.to_vec(), &fee_commit.to_vec()
+            &out_sum, &fee_commit
         ));
 
         if pseudo_sum == out_sum {
@@ -746,7 +747,7 @@ async fn test_real_testnet_transfer() {
     // Diagnostic: verify serialization roundtrip.
     println!("\n[7c/8] Verifying serialization roundtrip...");
     let tx_json = signed_tx.to_json();
-    let json_str = serde_json::to_string_pretty(&tx_json).unwrap();
+    let _json_str = serde_json::to_string_pretty(&tx_json).unwrap();
     println!("  TX JSON prefix version: {}", tx_json["prefix"]["version"]);
     println!("  TX JSON prefix txType: {}", tx_json["prefix"]["txType"]);
     println!("  TX JSON rct type: {}", tx_json["rct"]["type"]);
@@ -907,7 +908,7 @@ async fn test_real_testnet_transfer() {
             println!("  RCT fee={}", fee);
             println!("  ecdhInfo starts at byte {}", pos);
             // Skip ecdhInfo (2 outputs * 8 bytes)
-            let ecdh_start = pos;
+            let _ecdh_start = pos;
             pos += (vout_count as usize) * 8;
             println!("  outPk starts at byte {}", pos);
             pos += (vout_count as usize) * 32;

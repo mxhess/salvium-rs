@@ -39,15 +39,16 @@ impl MultisigTxSet {
             .map_err(|e| format!("Failed to deserialize MultisigTxSet: {}", e))
     }
 
-    /// Serialize to a JSON string.
-    pub fn to_string(&self) -> String {
-        serde_json::to_string(self).expect("MultisigTxSet to_string should not fail")
-    }
-
     /// Deserialize from a JSON string.
     pub fn from_string(s: &str) -> Result<Self, String> {
         serde_json::from_str(s)
             .map_err(|e| format!("Failed to parse MultisigTxSet: {}", e))
+    }
+}
+
+impl std::fmt::Display for MultisigTxSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).expect("MultisigTxSet to_string should not fail"))
     }
 }
 

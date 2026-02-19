@@ -256,9 +256,9 @@ pub fn bulletproof_plus_prove(
         let mut two_pow = Scalar::ONE;
         for i in 0..N {
             d[j * N + i] = z_pow * two_pow;
-            two_pow = two_pow + two_pow; // *= 2
+            two_pow += two_pow; // *= 2
         }
-        z_pow = z_pow * z2;
+        z_pow *= z2;
     }
 
     // Step 6: Compute y powers
@@ -267,7 +267,7 @@ pub fn bulletproof_plus_prove(
     let mut y_pow = y;
     for _ in 1..=mn + 1 {
         y_powers.push(y_pow);
-        y_pow = y_pow * y;
+        y_pow *= y;
     }
 
     let y_inv = y.invert();
@@ -276,7 +276,7 @@ pub fn bulletproof_plus_prove(
     let mut yi = y_inv;
     for _ in 1..mn {
         y_inv_powers.push(yi);
-        yi = yi * y_inv;
+        yi *= y_inv;
     }
 
     // Step 7: Prepare inner product inputs
@@ -290,9 +290,9 @@ pub fn bulletproof_plus_prove(
     // Update alpha with gamma terms
     let mut alpha1 = alpha;
     let mut temp = Scalar::ONE;
-    for j in 0..amounts.len() {
-        temp = temp * z2;
-        alpha1 = alpha1 + temp * y_powers[mn + 1] * masks[j];
+    for mask in masks.iter().take(amounts.len()) {
+        temp *= z2;
+        alpha1 += temp * y_powers[mn + 1] * mask;
     }
 
     // Step 8: Inner product argument
@@ -313,9 +313,9 @@ pub fn bulletproof_plus_prove(
         let mut c_r = Scalar::ZERO;
         let mut y_pow_local = y;
         for i in 0..nprime {
-            c_l = c_l + aprime[i] * bprime[nprime + i] * y_pow_local;
-            c_r = c_r + aprime[nprime + i] * y_powers[nprime] * bprime[i] * y_pow_local;
-            y_pow_local = y_pow_local * y;
+            c_l += aprime[i] * bprime[nprime + i] * y_pow_local;
+            c_r += aprime[nprime + i] * y_powers[nprime] * bprime[i] * y_pow_local;
+            y_pow_local *= y;
         }
 
         let d_l = random_scalar();
@@ -393,7 +393,7 @@ pub fn bulletproof_plus_prove(
         bprime = new_bprime;
 
         // Update alpha1
-        alpha1 = alpha1 + d_l * x * x + d_r * x_inv * x_inv;
+        alpha1 += d_l * x * x + d_r * x_inv * x_inv;
     }
 
     // Step 9: Final round
@@ -574,8 +574,9 @@ pub fn bulletproof_plus_verify_batch(
         let z2 = data.z * data.z;
         let mut z_powers = Vec::with_capacity(data.m_val);
         z_powers.push(z2);
-        for j in 1..data.m_val {
-            z_powers.push(z_powers[j - 1] * z2);
+        for _ in 1..data.m_val {
+            let last = *z_powers.last().unwrap();
+            z_powers.push(last * z2);
         }
 
         // sum_d = (2^64 - 1) * sum(z_powers)
@@ -587,15 +588,15 @@ pub fn bulletproof_plus_verify_batch(
         let mut sum_y = Scalar::ZERO;
         let mut yp = data.y;
         for _ in 0..data.mn {
-            sum_y = sum_y + yp;
-            yp = yp * data.y;
+            sum_y += yp;
+            yp *= data.y;
         }
 
         // V commitments
-        for j in 0..data.m {
-            let scalar = -(w * e2 * z_powers[j] * y_mn_p1);
+        for (zp, v_pt) in z_powers.iter().zip(data.v.iter()).take(data.m) {
+            let scalar = -(w * e2 * *zp * y_mn_p1);
             all_scalars.push(scalar);
-            all_points.push(mul8(&data.v[j]));
+            all_points.push(mul8(v_pt));
         }
 
         // A, A1, B
@@ -609,13 +610,13 @@ pub fn bulletproof_plus_verify_batch(
         all_points.push(mul8(&data.capital_b));
 
         // G scalar
-        g_scalar = g_scalar + w * data.d1;
+        g_scalar += w * data.d1;
 
         // H scalar
         let h_term1 = data.r1 * data.y * data.s1;
         let h_term2 = y_mn_p1 * data.z * sum_d;
         let h_term3 = (z2 - data.z) * sum_y;
-        h_scalar = h_scalar + w * (h_term1 + e2 * (h_term2 + h_term3));
+        h_scalar += w * (h_term1 + e2 * (h_term2 + h_term3));
 
         // Challenge cache
         let challenge_cache = build_challenge_cache(
@@ -645,8 +646,8 @@ pub fn bulletproof_plus_verify_batch(
             all_scalars.push(h_scalar_i);
             all_points.push(gens.hi[i]);
 
-            e_r1_w = e_r1_w * data.y_inv;
-            minus_e2_w_y = minus_e2_w_y * data.y_inv;
+            e_r1_w *= data.y_inv;
+            minus_e2_w_y *= data.y_inv;
         }
 
         // L and R terms
@@ -691,9 +692,9 @@ fn scalar_pow(base: &Scalar, exp: usize) -> Scalar {
     let mut e = exp;
     while e > 0 {
         if e & 1 == 1 {
-            result = result * b;
+            result *= b;
         }
-        b = b * b;
+        b *= b;
         e >>= 1;
     }
     result
@@ -707,8 +708,8 @@ fn batch_invert(scalars: &[Scalar]) -> Vec<Scalar> {
     let mut products = Vec::with_capacity(n);
     let mut acc = scalars[0];
     products.push(acc);
-    for i in 1..n {
-        acc = acc * scalars[i];
+    for scalar in &scalars[1..] {
+        acc *= *scalar;
         products.push(acc);
     }
 
@@ -716,7 +717,7 @@ fn batch_invert(scalars: &[Scalar]) -> Vec<Scalar> {
     let mut result = vec![Scalar::ZERO; n];
     for i in (1..n).rev() {
         result[i] = products[i - 1] * inv;
-        inv = inv * scalars[i];
+        inv *= scalars[i];
     }
     result[0] = inv;
 
@@ -880,10 +881,7 @@ pub fn bulletproof_plus_verify_wasm(
 ) -> bool {
     let n = commitments_flat.len() / 32;
     let v: Vec<EdwardsPoint> = (0..n).map(|i| {
-        match CompressedEdwardsY(to32(&commitments_flat[i*32..(i+1)*32])).decompress() {
-            Some(p) => p,
-            None => return EdwardsPoint::default(),
-        }
+        CompressedEdwardsY(to32(&commitments_flat[i*32..(i+1)*32])).decompress().unwrap_or_default()
     }).collect();
 
     let proof = match parse_proof(proof_data) {

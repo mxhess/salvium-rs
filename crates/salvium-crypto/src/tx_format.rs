@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn test_serialize_tx_extra_two_different_keys_uses_per_output() {
         let json = r#"{"additionalPubKeys":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}"#;
-        let result = serialize_tx_extra(&json).unwrap();
+        let result = serialize_tx_extra(json).unwrap();
         // 2 different keys → use per-output (tag 0x04)
         assert_eq!(result[0], 0x04);
         assert_eq!(result[1], 2); // count
@@ -502,7 +502,7 @@ mod tests {
         // Should parse padding then fail on truncated tag 0x01
         let json = parse_extra(&extra);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(parsed.as_array().unwrap().len() >= 1);
+        assert!(!parsed.as_array().unwrap().is_empty());
         assert_eq!(parsed[0]["type"], 0x00);
         assert_eq!(parsed[0]["tag"], "padding");
     }

@@ -158,8 +158,6 @@ impl SyncEngine {
 struct ParsedBlock {
     #[serde(default)]
     miner_tx: Option<serde_json::Value>,
-    #[serde(default)]
-    tx_hashes: Vec<String>,
 }
 
 /// Fetch and scan a single block.
@@ -630,7 +628,7 @@ fn store_found_outputs(
 
     for output in found {
         let row = salvium_crypto::storage::OutputRow {
-            key_image: output.key_image.map(|ki| hex::encode(ki)),
+            key_image: output.key_image.map(hex::encode),
             public_key: Some(hex::encode(output.output_public_key)),
             tx_hash: hex::encode(tx.tx_hash),
             output_index: output.output_index as i64,
@@ -648,7 +646,7 @@ fn store_found_outputs(
             },
             is_carrot: output.is_carrot,
             carrot_ephemeral_pubkey: None,
-            carrot_shared_secret: output.carrot_shared_secret.map(|s| hex::encode(s)),
+            carrot_shared_secret: output.carrot_shared_secret.map(hex::encode),
             carrot_enote_type: output.carrot_enote_type.map(|t| t as i64),
             is_spent: false,
             spent_height: None,
@@ -949,7 +947,7 @@ mod tests {
     #[test]
     fn test_parse_tx_for_scanning_legacy_output() {
         // TX with target.tagged_key format (legacy daemon RPC).
-        let tx_pub_hex = "aa".repeat(32);
+        let _tx_pub_hex = "aa".repeat(32);
         let tx_hash_hex = "bb".repeat(32);
         let out_key_hex = "cc".repeat(32);
         let view_tag_hex = "ff"; // 1 byte

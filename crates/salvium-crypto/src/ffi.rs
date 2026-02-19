@@ -19,10 +19,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 /// We use AssertUnwindSafe because the closures capture raw pointers (which are
 /// !UnwindSafe) but we know we won't observe torn state through them on panic.
 unsafe fn catch_ffi<F: FnOnce() -> i32>(f: F) -> i32 {
-    match panic::catch_unwind(panic::AssertUnwindSafe(f)) {
-        Ok(rc) => rc,
-        Err(_) => -1,
-    }
+    panic::catch_unwind(panic::AssertUnwindSafe(f)).unwrap_or(-1)
 }
 
 /// Validate that 32 bytes represent a valid compressed Edwards Y point.
@@ -459,6 +456,7 @@ pub unsafe extern "C" fn salvium_argon2id(
 /// out_len receives actual output length.
 /// Returns 0 on success, -1 on error.
 #[no_mangle]
+#[allow(deprecated)]
 pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
     key: *const u8,
     plaintext: *const u8,
@@ -467,7 +465,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
+        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace};
         use aes_gcm::aead::OsRng;
         use aes_gcm::aead::rand_core::RngCore;
 
@@ -482,7 +480,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
         // Generate random 12-byte nonce
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = aes_gcm::aead::generic_array::GenericArray::from(nonce_bytes);
 
         // Encrypt in-place: copy plaintext to output buffer after nonce
         let out_slice = slice::from_raw_parts_mut(out, plaintext_len + 28);
@@ -493,7 +491,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
 
         // Encrypt in-place (appends 16-byte tag)
         let mut buffer = out_slice[12..12 + plaintext_len].to_vec();
-        match cipher.encrypt_in_place(nonce, b"", &mut buffer) {
+        match cipher.encrypt_in_place(&nonce, b"", &mut buffer) {
             Ok(_) => {},
             Err(_) => return -1,
         }
@@ -510,6 +508,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
 /// out must be at least ciphertext_len - 28 bytes.
 /// out_len receives actual output length.
 /// Returns 0 on success, -1 on error (authentication failure or bad input).
+#[allow(deprecated)]
 #[no_mangle]
 pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
     key: *const u8,
@@ -519,7 +518,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace, Nonce};
+        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace};
 
         if ciphertext_len < 28 {
             return -1; // Too short: need at least nonce(12) + tag(16)
@@ -534,11 +533,13 @@ pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
         };
 
         // Read nonce from first 12 bytes
-        let nonce = Nonce::from_slice(&input[..12]);
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&input[..12]);
+        let nonce = aes_gcm::aead::generic_array::GenericArray::from(nonce_bytes);
 
         // Decrypt in-place: ciphertext + tag is input[12..]
         let mut buffer = input[12..].to_vec();
-        match cipher.decrypt_in_place(nonce, b"", &mut buffer) {
+        match cipher.decrypt_in_place(&nonce, b"", &mut buffer) {
             Ok(_) => {},
             Err(_) => return -1,
         }
@@ -917,10 +918,8 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
 
     catch_ffi(move || {
         let v: Vec<_> = (0..n).map(|i| {
-            match CompressedEdwardsY(crate::to32(&comms_data[i*32..(i+1)*32])).decompress() {
-                Some(p) => p,
-                None => curve25519_dalek::edwards::EdwardsPoint::default(),
-            }
+            CompressedEdwardsY(crate::to32(&comms_data[i*32..(i+1)*32])).decompress()
+                .unwrap_or_default()
         }).collect();
 
         let proof = match crate::bulletproofs_plus::parse_proof(&proof_data) {
@@ -2136,7 +2135,7 @@ pub unsafe extern "C" fn salvium_storage_delete_stakes_above(
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_free_buf(buf_ptr: *mut u8, len: usize) {
     if !buf_ptr.is_null() && len > 0 {
-        let _ = Box::from_raw(slice::from_raw_parts_mut(buf_ptr, len));
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(buf_ptr, len));
     }
 }
 
@@ -2618,7 +2617,7 @@ mod tests {
     #[test]
     fn test_x25519_scalar_mult_ffi_salvium_clamping() {
         // Verify FFI matches direct call and that bit 255 is cleared
-        let mut scalar = [0xFFu8; 32]; // all bits set
+        let scalar = [0xFFu8; 32]; // all bits set
         let mut u_coord = [0u8; 32];
         u_coord[0] = 9; // basepoint
         let mut out = [0u8; 32];

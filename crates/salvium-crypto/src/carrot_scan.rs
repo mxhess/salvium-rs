@@ -219,6 +219,7 @@ fn pedersen_commit(amount: u64, mask: &Scalar) -> [u8; 32] {
 /// `subaddress_map`: slice of (32-byte spend pubkey, major, minor) tuples.
 /// `account_spend_pubkey`: the main account K_s.
 /// `clear_text_amount`: if Some, use this instead of decrypting (coinbase).
+#[allow(clippy::too_many_arguments)]
 fn scan_core(
     s_sr_unctx: &[u8; 32],
     ko: &[u8; 32],
@@ -309,6 +310,7 @@ fn scan_core(
 // ─── Public entry points ────────────────────────────────────────────────────
 
 /// Standard CARROT scan: X25519 ECDH then core steps 2-7.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_carrot_output(
     ko: &[u8; 32],
     view_tag: &[u8; 3],
@@ -335,6 +337,7 @@ pub fn scan_carrot_output(
 }
 
 /// Self-send CARROT scan: viewBalanceSecret used directly as s_sr_unctx.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_carrot_internal_output(
     ko: &[u8; 32],
     view_tag: &[u8; 3],

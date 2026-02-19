@@ -319,7 +319,7 @@ pub fn next_difficulty(
     }
 
     // Sort pairs by timestamp
-    let mut pairs: Vec<(u64, u128)> = ts.into_iter().zip(cd.into_iter()).collect();
+    let mut pairs: Vec<(u64, u128)> = ts.into_iter().zip(cd).collect();
     pairs.sort_by_key(|p| p.0);
     let ts: Vec<u64> = pairs.iter().map(|p| p.0).collect();
     let cd: Vec<u128> = pairs.iter().map(|p| p.1).collect();
@@ -328,7 +328,7 @@ pub fn next_difficulty(
     let (cut_begin, cut_end) = if length <= DIFFICULTY_WINDOW - 2 * DIFFICULTY_CUT {
         (0, length)
     } else {
-        let begin = (length - (DIFFICULTY_WINDOW - 2 * DIFFICULTY_CUT) + 1) / 2;
+        let begin = (length - (DIFFICULTY_WINDOW - 2 * DIFFICULTY_CUT)).div_ceil(2);
         (begin, begin + (DIFFICULTY_WINDOW - 2 * DIFFICULTY_CUT))
     };
 
@@ -341,7 +341,7 @@ pub fn next_difficulty(
     let total_work = cd[cut_end - 1] - cd[cut_begin];
 
     // difficulty = work × target / timeSpan
-    (total_work * target_seconds as u128 + time_span - 1) / time_span
+    (total_work * target_seconds as u128).div_ceil(time_span)
 }
 
 /// Calculate next difficulty using LWMA (Linearly Weighted Moving Average) v2.
@@ -547,7 +547,7 @@ pub fn minimum_fee(tx_weight: u64, _base_reward: u64, version: u8) -> u64 {
     if version >= HfVersion::PER_BYTE_FEE {
         tx_weight * FEE_PER_BYTE
     } else {
-        let kb = (tx_weight + 1023) / 1024;
+        let kb = tx_weight.div_ceil(1024);
         kb * FEE_PER_KB
     }
 }

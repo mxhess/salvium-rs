@@ -340,16 +340,14 @@ fn serialize_zk_proof_for_hash(buf: &mut Vec<u8>, proof: Option<&serde_json::Val
 
     if r.is_empty() {
         buf.extend_from_slice(&[0u8; 96]);
+    } else if let (Ok(r_b), Ok(z1_b), Ok(z2_b)) =
+        (hex::decode(r), hex::decode(z1), hex::decode(z2))
+    {
+        buf.extend_from_slice(&r_b);
+        buf.extend_from_slice(&z1_b);
+        buf.extend_from_slice(&z2_b);
     } else {
-        if let (Ok(r_b), Ok(z1_b), Ok(z2_b)) =
-            (hex::decode(r), hex::decode(z1), hex::decode(z2))
-        {
-            buf.extend_from_slice(&r_b);
-            buf.extend_from_slice(&z1_b);
-            buf.extend_from_slice(&z2_b);
-        } else {
-            buf.extend_from_slice(&[0u8; 96]);
-        }
+        buf.extend_from_slice(&[0u8; 96]);
     }
 }
 

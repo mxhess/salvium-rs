@@ -279,14 +279,11 @@ impl MiningEngine {
 
                     let nonce_offset = find_nonce_offset(&job.hashing_blob);
                     let mut current_job = job;
-                    loop {
-                        match mine_job_rust(
-                            &mut vm, &current_job, &running, &hash_count,
-                            &result_tx, nonce_start, nonce_offset, &job_rx,
-                        ) {
-                            Some(new_job) => current_job = new_job,
-                            None => break,
-                        }
+                    while let Some(new_job) = mine_job_rust(
+                        &mut vm, &current_job, &running, &hash_count,
+                        &result_tx, nonce_start, nonce_offset, &job_rx,
+                    ) {
+                        current_job = new_job;
                     }
                 }
             });
@@ -424,6 +421,7 @@ fn worker_loop(
 /// Mine a single job using the Rust RandomXVM wrapper (light mode).
 /// Checks for new jobs periodically so workers can switch to updated templates.
 /// Returns Some(new_job) if a new job arrived, None if mining was stopped.
+#[allow(clippy::too_many_arguments)]
 fn mine_job_rust(
     vm: &mut RandomXVM,
     job: &MiningJob,
@@ -529,11 +527,11 @@ fn check_hash(hash: &[u8], difficulty: u128) -> bool {
     // Read hash as little-endian u128 pair [low, high]
     let mut lo = 0u128;
     let mut hi = 0u128;
-    for i in 0..16 {
-        lo |= (hash[i] as u128) << (i * 8);
+    for (i, &byte) in hash[..16].iter().enumerate() {
+        lo |= (byte as u128) << (i * 8);
     }
-    for i in 0..16 {
-        hi |= (hash[16 + i] as u128) << (i * 8);
+    for (i, &byte) in hash[16..32].iter().enumerate() {
+        hi |= (byte as u128) << (i * 8);
     }
 
     // Check: hash * difficulty < 2^256

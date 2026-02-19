@@ -26,7 +26,7 @@ pub struct CnScanResult {
 #[cfg(not(target_arch = "wasm32"))]
 impl CnScanResult {
     pub fn to_json(&self) -> Vec<u8> {
-        let ki = self.key_image.map(|k| hex::encode(k));
+        let ki = self.key_image.map(hex::encode);
         let json = serde_json::json!({
             "amount": self.amount,
             "mask": hex::encode(self.mask),
@@ -95,7 +95,7 @@ fn derive_subaddress_pubkey(
     output_index: u32,
 ) -> [u8; 32] {
     let scalar = derivation_to_scalar(derivation, output_index);
-    let scalar_g = &*ED25519_BASEPOINT_TABLE * &scalar;
+    let scalar_g = ED25519_BASEPOINT_TABLE * &scalar;
     (output_pubkey - scalar_g).compress().to_bytes()
 }
 
@@ -152,6 +152,7 @@ pub fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
 /// `subaddrs`: slice of (32-byte spend pubkey, major, minor) tuples.
 ///
 /// Returns `Some(CnScanResult)` if the output belongs to us, `None` otherwise.
+#[allow(clippy::too_many_arguments)]
 pub fn scan_cryptonote_output(
     output_pubkey: &[u8; 32],
     derivation: &[u8; 32],
@@ -401,7 +402,7 @@ mod tests {
     fn test_key_image_generation_matches_lib() {
         // Generate a known keypair: secret = 1, public = G
         let secret = Scalar::ONE;
-        let public = (&*ED25519_BASEPOINT_TABLE * &secret).compress().to_bytes();
+        let public = (ED25519_BASEPOINT_TABLE * &secret).compress().to_bytes();
 
         let ki = generate_key_image(&public, &secret);
         let ki_lib = crate::generate_key_image(&public, &secret.to_bytes());

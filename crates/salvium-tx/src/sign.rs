@@ -229,6 +229,7 @@ fn compute_prefix_hash(prefix: &TxPrefix) -> Result<[u8; 32], TxError> {
 /// This ensures the balance equation: sum(pseudo_masks) = sum(output_masks).
 ///
 /// Returns (pseudo_masks, pseudo_output_commitments).
+#[allow(clippy::type_complexity)]
 fn compute_pseudo_outputs(
     inputs: &[PreparedInput],
     output_masks: &[[u8; 32]],
@@ -459,7 +460,7 @@ fn to_32(v: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::{Destination, PreparedInput, TransactionBuilder};
+    use crate::builder::PreparedInput;
 
     /// Reconstruct salvium_data bytes from a signed TX's RctSignatures.
     /// Used to rebuild the message hash for signature verification in tests.
@@ -616,7 +617,7 @@ mod tests {
         let change_amount = total_amount - send_amount - fee;
 
         let input = make_valid_input(total_amount, false);
-        let input_mask = input.mask;
+        let _input_mask = input.mask;
 
         // Build unsigned tx (we construct it manually since the builder
         // requires valid CARROT keys for output construction).
@@ -667,6 +668,7 @@ mod tests {
                 return_pubkey: None,
                 return_address_list: None,
                 return_address_change_mask: None,
+                protocol_tx_data: None,
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
@@ -693,7 +695,7 @@ mod tests {
         assert_eq!(rct.bulletproof_plus.len(), 1);
 
         // Verify the CLSAG signature.
-        let clsag_sig = salvium_crypto::clsag::ClsagSignature {
+        let _clsag_sig = salvium_crypto::clsag::ClsagSignature {
             s: rct.clsags[0].s.clone(),
             c1: rct.clsags[0].c1,
             key_image: to_32(&salvium_crypto::generate_key_image(
@@ -782,6 +784,7 @@ mod tests {
                 return_pubkey: None,
                 return_address_list: None,
                 return_address_change_mask: None,
+                protocol_tx_data: None,
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
@@ -867,6 +870,7 @@ mod tests {
                 return_pubkey: None,
                 return_address_list: None,
                 return_address_change_mask: None,
+                protocol_tx_data: None,
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
@@ -956,6 +960,7 @@ mod tests {
                 return_pubkey: None,
                 return_address_list: None,
                 return_address_change_mask: None,
+                protocol_tx_data: None,
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
@@ -1065,6 +1070,7 @@ mod tests {
                 return_pubkey: None,
                 return_address_list: None,
                 return_address_change_mask: None,
+                protocol_tx_data: None,
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,

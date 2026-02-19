@@ -4,7 +4,6 @@
 /// This maps a field element (from a hash) to a curve point using the
 /// Elligator 2 algorithm. The result is NOT cofactor-cleared — caller
 /// must multiply by 8.
-
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::edwards::CompressedEdwardsY;
 
@@ -27,9 +26,9 @@ impl U256 {
 
     fn from_bytes_le(bytes: &[u8; 32]) -> Self {
         let mut limbs = [0u64; 4];
-        for i in 0..4 {
+        for (i, limb) in limbs.iter_mut().enumerate() {
             let offset = i * 8;
-            limbs[i] = u64::from_le_bytes([
+            *limb = u64::from_le_bytes([
                 bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3],
                 bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7],
             ]);
@@ -37,7 +36,7 @@ impl U256 {
         U256(limbs)
     }
 
-    fn to_bytes_le(&self) -> [u8; 32] {
+    fn to_bytes_le(self) -> [u8; 32] {
         let mut out = [0u8; 32];
         for i in 0..4 {
             let bytes = self.0[i].to_le_bytes();
@@ -68,9 +67,9 @@ impl U256 {
     fn add_raw(&self, other: &Self) -> (Self, bool) {
         let mut result = [0u64; 4];
         let mut carry = 0u64;
-        for i in 0..4 {
+        for (i, r) in result.iter_mut().enumerate() {
             let sum = (self.0[i] as u128) + (other.0[i] as u128) + (carry as u128);
-            result[i] = sum as u64;
+            *r = sum as u64;
             carry = (sum >> 64) as u64;
         }
         (U256(result), carry != 0)
@@ -80,13 +79,13 @@ impl U256 {
     fn sub_raw(&self, other: &Self) -> (Self, bool) {
         let mut result = [0u64; 4];
         let mut borrow = 0i128;
-        for i in 0..4 {
+        for (i, r) in result.iter_mut().enumerate() {
             let diff = (self.0[i] as i128) - (other.0[i] as i128) + borrow;
             if diff < 0 {
-                result[i] = (diff + (1i128 << 64)) as u64;
+                *r = (diff + (1i128 << 64)) as u64;
                 borrow = -1;
             } else {
-                result[i] = diff as u64;
+                *r = diff as u64;
                 borrow = 0;
             }
         }
@@ -184,9 +183,9 @@ fn reduce_512(prod: &[u128; 8]) -> U256 {
 fn mul_u256_small(a: &U256, b: u64) -> U256 {
     let mut result = [0u64; 4];
     let mut carry = 0u128;
-    for i in 0..4 {
+    for (i, r) in result.iter_mut().enumerate() {
         let v = (a.0[i] as u128) * (b as u128) + carry;
-        result[i] = v as u64;
+        *r = v as u64;
         carry = v >> 64;
     }
     // If carry, we need to reduce: carry * 2^256 ≡ carry * 38 (mod p)

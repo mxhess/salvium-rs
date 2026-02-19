@@ -60,9 +60,7 @@ pub fn tree_hash(hashes: &[[u8; 32]]) -> [u8; 32] {
 
     // Copy hashes that don't need initial hashing
     let start_idx = 2 * cnt - count;
-    for i in 0..start_idx {
-        ints[i] = hashes[i];
-    }
+    ints[..start_idx].copy_from_slice(&hashes[..start_idx]);
 
     // Hash remaining pairs into intermediate array
     let mut i = start_idx;

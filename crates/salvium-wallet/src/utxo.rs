@@ -170,10 +170,10 @@ pub fn select_utxos_with_options(
     let filtered: Vec<UtxoCandidate> = candidates
         .iter()
         .filter(|c| {
-            if options.current_height > 0 && options.min_confirmations > 0 {
-                if options.current_height < c.block_height + options.min_confirmations {
-                    return false;
-                }
+            if options.current_height > 0 && options.min_confirmations > 0
+                && options.current_height < c.block_height + options.min_confirmations
+            {
+                return false;
             }
             if c.amount < options.dust_threshold {
                 return false;

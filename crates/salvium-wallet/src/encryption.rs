@@ -27,6 +27,7 @@ const ARGON2_DK_LEN: u32 = 32;
 /// Encrypt wallet data with a password.
 ///
 /// Returns the complete encrypted file contents (header + ciphertext).
+#[allow(deprecated)] // aes-gcm 0.10 uses generic-array 0.x
 pub fn encrypt_wallet_data(plaintext: &[u8], password: &[u8]) -> Result<Vec<u8>, WalletError> {
     let mut rng = rand::thread_rng();
 
@@ -94,6 +95,7 @@ pub fn wallet_file_version(data: &[u8]) -> Option<u8> {
 /// Decrypt wallet data with a password.
 ///
 /// Takes the complete encrypted file contents, returns the decrypted plaintext.
+#[allow(deprecated)] // aes-gcm 0.10 uses generic-array 0.x
 pub fn decrypt_wallet_data(encrypted: &[u8], password: &[u8]) -> Result<Vec<u8>, WalletError> {
     if encrypted.len() < HEADER_SIZE {
         return Err(WalletError::InvalidFile("file too short".into()));

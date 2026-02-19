@@ -222,7 +222,7 @@ async fn mine_to(
         while let Ok(Some(line)) = reader.next_line().await {
             if line.contains("Block accepted!") {
                 accepted_count += 1;
-                if accepted_count % 50 == 0 || accepted_count >= blocks_needed {
+                if accepted_count.is_multiple_of(50) || accepted_count >= blocks_needed {
                     println!("    {} blocks accepted...", accepted_count);
                 }
             }
@@ -434,7 +434,7 @@ impl<'a> TestTransactor<'a> {
 
             let mut ring_asset_resolved: Option<String> = None;
             let mut resolved_distribution: Option<Vec<u64>> = None;
-            let mut resolved_start_height: u64 = 0;
+            let mut _resolved_start_height: u64 = 0;
             let mut resolved_at_index: u64 = 0;
 
             for try_asset in &candidates_to_try {
@@ -494,7 +494,7 @@ impl<'a> TestTransactor<'a> {
 
                 ring_asset_resolved = Some(try_asset_str);
                 resolved_distribution = Some(distribution.clone());
-                resolved_start_height = start_height;
+                _resolved_start_height = start_height;
                 resolved_at_index = asset_type_index;
                 break;
             }

@@ -5,13 +5,11 @@
 
 use salvium_types::consensus::{
     block_reward, PREMINE_AMOUNT, MONEY_SUPPLY,
-    EMISSION_SPEED_FACTOR_PER_MINUTE, DIFFICULTY_TARGET_V2,
     hf_version_for_height, MINED_MONEY_UNLOCK_WINDOW,
 };
-use salvium_types::constants::{TxType, Network, HfVersion};
+use salvium_types::constants::{TxType, Network};
 use salvium_consensus::validation::{
-    validate_tx_type_and_version, validate_miner_tx_structure,
-    validate_miner_tx_reward, validate_output_count,
+    validate_miner_tx_structure, validate_miner_tx_reward,
 };
 
 /// Simulated miner transaction output.

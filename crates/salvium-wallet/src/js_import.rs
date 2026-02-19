@@ -37,6 +37,7 @@ pub struct JsWalletSecrets {
 ///
 /// The `wallet_json` parameter is the raw contents of the wallet-*.json file.
 /// The `pin` is the 6-digit PIN string.
+#[allow(deprecated)] // aes-gcm 0.10 uses generic-array 0.x
 pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets, WalletError> {
     let envelope: serde_json::Value =
         serde_json::from_str(wallet_json).map_err(|e| WalletError::InvalidFile(e.to_string()))?;

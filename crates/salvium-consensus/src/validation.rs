@@ -175,7 +175,7 @@ pub fn validate_tx_type_and_version(
 
     // TX type must be in valid range (1-8)
     let type_val = tx_type as u16;
-    if type_val < 1 || type_val > 8 {
+    if !(1..=8).contains(&type_val) {
         return Err(ValidationError::InvalidTxType(type_val));
     }
 
@@ -188,18 +188,17 @@ pub fn validate_tx_type_and_version(
     }
 
     // Carrot fork requirements
-    if hf_version >= HfVersion::CARROT {
-        if tx_type != TxType::Transfer
-            && tx_type != TxType::Miner
-            && tx_type != TxType::Protocol
-            && version != TRANSACTION_VERSION_CARROT
-        {
-            return Err(ValidationError::TxVersionMismatch {
-                tx_type: tx_type.to_string(),
-                required: TRANSACTION_VERSION_CARROT,
-                hf_version,
-            });
-        }
+    if hf_version >= HfVersion::CARROT
+        && tx_type != TxType::Transfer
+        && tx_type != TxType::Miner
+        && tx_type != TxType::Protocol
+        && version != TRANSACTION_VERSION_CARROT
+    {
+        return Err(ValidationError::TxVersionMismatch {
+            tx_type: tx_type.to_string(),
+            required: TRANSACTION_VERSION_CARROT,
+            hf_version,
+        });
     }
 
     // CONVERT requires oracle HF
@@ -325,15 +324,16 @@ pub fn validate_rct_type(
                 hf_version,
             });
         }
-    } else if hf_version >= HfVersion::BULLETPROOF_PLUS {
-        if rct_type != RctType::BulletproofPlus && rct_type != RctType::Clsag {
-            return Err(ValidationError::WrongRctType {
-                tx_type: tx_type.to_string(),
-                required: "BulletproofPlus or CLSAG".to_string(),
-                actual: format!("{:?}", rct_type),
-                hf_version,
-            });
-        }
+    } else if hf_version >= HfVersion::BULLETPROOF_PLUS
+        && rct_type != RctType::BulletproofPlus
+        && rct_type != RctType::Clsag
+    {
+        return Err(ValidationError::WrongRctType {
+            tx_type: tx_type.to_string(),
+            required: "BulletproofPlus or CLSAG".to_string(),
+            actual: format!("{:?}", rct_type),
+            hf_version,
+        });
     }
 
     Ok(())
@@ -418,10 +418,8 @@ pub fn validate_output_target_types(
 ) -> Result<(), ValidationError> {
     if hf_version >= HfVersion::CARROT {
         for &otype in output_types {
-            if tx_type != TxType::Protocol && tx_type != TxType::Miner {
-                if otype != output_type::TO_CARROT_V1 {
-                    return Err(ValidationError::WrongOutputType);
-                }
+            if tx_type != TxType::Protocol && tx_type != TxType::Miner && otype != output_type::TO_CARROT_V1 {
+                return Err(ValidationError::WrongOutputType);
             }
         }
     }

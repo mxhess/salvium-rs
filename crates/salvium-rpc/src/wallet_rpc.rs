@@ -511,6 +511,7 @@ impl WalletRpc {
     // =========================================================================
 
     /// Get transfer history.
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_transfers(
         &self,
         incoming: bool,

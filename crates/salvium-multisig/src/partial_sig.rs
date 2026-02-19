@@ -35,15 +35,16 @@ impl MultisigPartialSig {
             .map_err(|e| format!("Failed to deserialize MultisigPartialSig: {}", e))
     }
 
-    /// Serialize to a JSON string.
-    pub fn to_string(&self) -> String {
-        serde_json::to_string(self).expect("MultisigPartialSig to_string should not fail")
-    }
-
     /// Deserialize from a JSON string.
     pub fn from_string(s: &str) -> Result<Self, String> {
         serde_json::from_str(s)
             .map_err(|e| format!("Failed to parse MultisigPartialSig: {}", e))
+    }
+}
+
+impl std::fmt::Display for MultisigPartialSig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).expect("MultisigPartialSig to_string should not fail"))
     }
 }
 
