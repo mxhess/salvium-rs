@@ -307,6 +307,18 @@ impl Wallet {
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
 
+    /// Mark an output as spent by key image.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn mark_output_spent(
+        &self,
+        key_image: &str,
+        spending_tx_hash: &str,
+    ) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.mark_spent(key_image, spending_tx_hash, 0)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
     // ── Transfers query ──────────────────────────────────────────────────
 
     /// Get transactions matching a query.

@@ -13,7 +13,7 @@ pub mod analysis;
 pub mod sign;
 pub mod offline;
 
-pub use types::{Transaction, TxPrefix, TxInput, TxOutput, RctSignatures};
+pub use types::{Transaction, TxPrefix, TxInput, TxOutput, RctSignatures, ProtocolTxData};
 pub use builder::TransactionBuilder;
 pub use decoy::DecoySelector;
 pub use fee::estimate_tx_fee;

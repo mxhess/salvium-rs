@@ -23,7 +23,7 @@ use salvium_tx::builder::{Destination, PreparedInput, TransactionBuilder};
 use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
 use salvium_tx::sign::sign_transaction;
-use salvium_tx::types::{output_type, tx_type};
+use salvium_tx::types::{output_type, tx_type, Transaction, TxInput};
 use salvium_wallet::utxo::SelectionStrategy;
 use salvium_wallet::{decrypt_js_wallet, Wallet};
 use salvium_types::address::parse_address;
@@ -344,6 +344,17 @@ impl<'a> TestTransactor<'a> {
         Self { daemon, wallet }
     }
 
+    /// Mark the inputs of a signed transaction as spent in the wallet DB.
+    /// This prevents re-spending when multiple TXs are submitted before mining.
+    fn mark_inputs_spent(&self, signed: &Transaction, tx_hash: &str) {
+        for input in &signed.prefix.inputs {
+            if let TxInput::Key { key_image, .. } = input {
+                let ki_hex = hex::encode(key_image);
+                let _ = self.wallet.mark_output_spent(&ki_hex, tx_hash);
+            }
+        }
+    }
+
     /// Prepare inputs: select UTXOs, resolve asset-type indices, build rings.
     async fn prepare_inputs(
         &self,
@@ -353,31 +364,20 @@ impl<'a> TestTransactor<'a> {
     ) -> Vec<PreparedInput> {
         let db_asset_type = self.db_asset_type(fork);
 
-        // Select outputs based on era
-        let selection = if fork.hf >= 6 {
-            self.wallet
-                .select_carrot_outputs(amount, estimated_fee, db_asset_type, SelectionStrategy::Default)
-                .expect("CARROT output selection failed")
-        } else {
-            self.wallet
-                .select_outputs(amount, estimated_fee, db_asset_type, SelectionStrategy::Default)
-                .expect("output selection failed")
-        };
+        // Select outputs based on era.
+        // CARROT outputs only exist at HF10+; before that, all outputs are legacy CryptoNote.
+        // Use select_outputs for ALL eras — the wallet may contain a mix of
+        // legacy and CARROT outputs. The is_carrot flag on each output tells
+        // prepare_inputs how to derive spending keys.
+        let selection = self.wallet
+            .select_outputs(amount, estimated_fee, db_asset_type, SelectionStrategy::Default)
+            .expect("output selection failed");
         println!(
             "    Selected {} output(s), total: {} SAL, change: {} SAL",
             selection.selected.len(),
             fmt_sal(selection.total),
             fmt_sal(selection.change),
         );
-
-        // Get asset-type output distribution
-        let dist = self
-            .daemon
-            .get_output_distribution(&[0], 0, 0, true, fork.asset)
-            .await
-            .expect("failed to get output distribution");
-        let decoy_selector =
-            DecoySelector::new(dist[0].distribution.clone()).expect("failed to create decoy selector");
 
         // Resolve TX block heights
         let mut tx_hashes: Vec<String> = selection
@@ -405,6 +405,9 @@ impl<'a> TestTransactor<'a> {
         let keys = self.wallet.keys();
         let mut prepared_inputs = Vec::new();
 
+        // Cache distributions per asset type (SAL and SAL1 may have separate distributions)
+        let mut dist_cache: std::collections::HashMap<String, (Vec<u64>, u64)> = std::collections::HashMap::new();
+
         for utxo in &selection.selected {
             let output_row = self
                 .wallet
@@ -421,42 +424,91 @@ impl<'a> TestTransactor<'a> {
                 .map(|(e, _)| e)
                 .expect("tx not found in entries");
 
-            // Resolve asset-type-specific index
-            let h_idx = (entry.block_height - dist[0].start_height) as usize;
-            let at_start = if h_idx == 0 {
-                0
-            } else {
-                dist[0].distribution[h_idx - 1]
-            };
-            let at_end = dist[0].distribution[h_idx];
-            let at_count = at_end - at_start;
+            // Determine the ring asset type. The daemon has separate distributions
+            // for "SAL" (pre-HF6) and "SAL1" (post-HF6). Our wallet DB may store
+            // post-HF6 outputs as "SAL" if the scanner doesn't detect SAL1. Try the
+            // stored type first, then the equivalent type.
+            let stored_asset = &output_row.asset_type;
+            let equivalent_asset = if stored_asset == "SAL" { "SAL1" } else { "SAL" };
+            let candidates_to_try = [stored_asset.as_str(), equivalent_asset];
 
-            let asset_type_index = if at_count == 1 {
-                at_start
-            } else if at_count == 0 {
+            let mut ring_asset_resolved: Option<String> = None;
+            let mut resolved_distribution: Option<Vec<u64>> = None;
+            let mut resolved_start_height: u64 = 0;
+            let mut resolved_at_index: u64 = 0;
+
+            for try_asset in &candidates_to_try {
+                // Get or fetch the distribution for this asset type
+                let try_asset_str = try_asset.to_string();
+                if !dist_cache.contains_key(&try_asset_str) {
+                    let dist = self
+                        .daemon
+                        .get_output_distribution(&[0], 0, 0, true, try_asset)
+                        .await
+                        .expect("failed to get output distribution");
+                    dist_cache.insert(
+                        try_asset_str.clone(),
+                        (dist[0].distribution.clone(), dist[0].start_height),
+                    );
+                }
+                let (ref distribution, start_height) = dist_cache[&try_asset_str];
+
+                if entry.block_height < start_height {
+                    continue; // This distribution doesn't cover the output's height
+                }
+                let h_idx = (entry.block_height - start_height) as usize;
+                if h_idx >= distribution.len() {
+                    continue;
+                }
+                let at_start = if h_idx == 0 { 0 } else { distribution[h_idx - 1] };
+                let at_end = distribution[h_idx];
+                let at_count = at_end - at_start;
+
+                if at_count == 0 {
+                    continue; // No outputs of this type at this height, try equivalent
+                }
+
+                let asset_type_index = if at_count == 1 {
+                    at_start
+                } else {
+                    let candidates: Vec<OutputRequest> = (at_start..at_end)
+                        .map(|idx| OutputRequest {
+                            amount: 0,
+                            index: idx,
+                        })
+                        .collect();
+                    let probe = self
+                        .daemon
+                        .get_outs(&candidates, false, try_asset)
+                        .await
+                        .expect("failed to probe outputs");
+                    match probe
+                        .iter()
+                        .enumerate()
+                        .find(|(_, out)| out.key == *output_row.public_key.as_ref().unwrap())
+                    {
+                        Some((i, _)) => at_start + i as u64,
+                        None => continue, // Not found in this distribution
+                    }
+                };
+
+                ring_asset_resolved = Some(try_asset_str);
+                resolved_distribution = Some(distribution.clone());
+                resolved_start_height = start_height;
+                resolved_at_index = asset_type_index;
+                break;
+            }
+
+            let ring_asset = ring_asset_resolved.unwrap_or_else(|| {
                 panic!(
-                    "no {} outputs at height {} for tx {}",
-                    fork.asset, entry.block_height, output_row.tx_hash
-                );
-            } else {
-                let candidates: Vec<OutputRequest> = (at_start..at_end)
-                    .map(|idx| OutputRequest {
-                        amount: 0,
-                        index: idx,
-                    })
-                    .collect();
-                let probe = self
-                    .daemon
-                    .get_outs(&candidates, false, fork.asset)
-                    .await
-                    .expect("failed to probe outputs");
-                probe
-                    .iter()
-                    .enumerate()
-                    .find(|(_, out)| out.key == *output_row.public_key.as_ref().unwrap())
-                    .map(|(i, _)| at_start + i as u64)
-                    .expect("could not find asset-type index")
-            };
+                    "output not found in any asset distribution at height {} for tx {}",
+                    entry.block_height, output_row.tx_hash
+                )
+            });
+            let distribution = resolved_distribution.unwrap();
+            let decoy_selector =
+                DecoySelector::new(distribution).expect("failed to create decoy selector");
+            let asset_type_index = resolved_at_index;
 
             // Derive spending keys
             let (secret_key, secret_key_y, public_key) = if output_row.is_carrot {
@@ -494,7 +546,14 @@ impl<'a> TestTransactor<'a> {
                     output_row.subaddress_index.minor as u32,
                 );
                 let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
-                (sk, None, pk)
+                // For TCLSAG (rct_type >= 9), legacy outputs need secret_key_y = 0.
+                // The C++ code sets ctkey.y = rct::zero() for non-CARROT outputs.
+                let sk_y = if fork.rct_type >= 9 {
+                    Some([0u8; 32])
+                } else {
+                    None
+                };
+                (sk, sk_y, pk)
             };
 
             let mask = hex_to_32(output_row.mask.as_ref().expect("missing mask"));
@@ -512,9 +571,20 @@ impl<'a> TestTransactor<'a> {
                 .collect();
             let ring_members = self
                 .daemon
-                .get_outs(&out_requests, false, fork.asset)
+                .get_outs(&out_requests, false, &ring_asset)
                 .await
                 .expect("failed to fetch ring members");
+
+            // Diagnostic: verify the derived public key matches ring at real position
+            let ring_pub_keys: Vec<[u8; 32]> = ring_members.iter().map(|m| hex_to_32(&m.key)).collect();
+            if public_key != ring_pub_keys[real_pos] {
+                eprintln!("    WARNING: derived pk != ring[real_pos]!");
+                eprintln!("      derived pk:    {}", hex::encode(public_key));
+                eprintln!("      ring[{}]:   {}", real_pos, hex::encode(ring_pub_keys[real_pos]));
+                eprintln!("      output_pub_key: {}", hex::encode(output_pub_key));
+            }
+            eprintln!("    Input: asset_idx={}, ring_size={}, real_pos={}, ring_indices={:?}",
+                asset_type_index, ring_indices.len(), real_pos, &ring_indices[..ring_indices.len().min(5)]);
 
             prepared_inputs.push(PreparedInput {
                 secret_key,
@@ -522,9 +592,9 @@ impl<'a> TestTransactor<'a> {
                 public_key,
                 amount: utxo.amount,
                 mask,
-                asset_type: fork.asset.to_string(),
+                asset_type: ring_asset.to_string(),
                 global_index: asset_type_index,
-                ring: ring_members.iter().map(|m| hex_to_32(&m.key)).collect(),
+                ring: ring_pub_keys,
                 ring_commitments: ring_members.iter().map(|m| hex_to_32(&m.mask)).collect(),
                 ring_indices,
                 real_index: real_pos,
@@ -551,9 +621,25 @@ impl<'a> TestTransactor<'a> {
     }
 
     fn db_asset_type(&self, fork: &ForkSpec) -> &str {
-        // Mined outputs before HF6 are stored as "SAL", after HF6 as "SAL1".
-        // For output selection, use the DB asset type matching stored outputs.
-        if fork.hf >= 6 { "SAL1" } else { "SAL" }
+        // SAL and SAL1 are equivalent asset types. After HF6, the active asset
+        // becomes SAL1 but old SAL outputs remain spendable. We query "SAL"
+        // because that's what our pre-HF6 mined outputs are stored as.
+        // When SAL1 coinbase outputs start appearing they'll be stored as "SAL1",
+        // but for now the wallet's SAL balance covers both.
+        if fork.hf >= 6 {
+            // Try SAL1 first (post-HF6 coinbase), fall back to SAL (pre-HF6)
+            let sal1_balance = self.wallet.get_balance("SAL1", 0);
+            let has_sal1 = sal1_balance
+                .map(|b| b.unlocked_balance.parse::<u64>().unwrap_or(0) > 0)
+                .unwrap_or(false);
+            if has_sal1 {
+                "SAL1"
+            } else {
+                "SAL"
+            }
+        } else {
+            "SAL"
+        }
     }
 
     /// Build, sign, and submit a TRANSFER transaction.
@@ -567,12 +653,12 @@ impl<'a> TestTransactor<'a> {
         let estimated_fee = self.estimate_fee(1, 2, fork).await;
         let inputs = self.prepare_inputs(amount, estimated_fee, fork).await;
 
-        let keys = self.wallet.keys();
         let mut builder = TransactionBuilder::new();
         for input in inputs {
             builder = builder.add_input(input);
         }
 
+        let (chg_spend, chg_view) = change_keys(self.wallet, fork);
         builder = builder
             .add_destination(Destination {
                 spend_pubkey: dest_spend,
@@ -582,10 +668,7 @@ impl<'a> TestTransactor<'a> {
                 payment_id: [0u8; 8],
                 is_subaddress: false,
             })
-            .set_change_address(
-                keys.carrot.account_spend_pubkey,
-                keys.carrot.account_view_pubkey,
-            )
+            .set_change_address(chg_spend, chg_view)
             .set_asset_types(fork.asset, fork.asset)
             .set_rct_type(fork.rct_type)
             .set_fee(estimated_fee);
@@ -595,6 +678,28 @@ impl<'a> TestTransactor<'a> {
         let signed = sign_transaction(unsigned).expect("failed to sign transfer TX");
         let tx_hash = hex::encode(signed.tx_hash().expect("tx hash"));
         let tx_bytes = signed.to_bytes().expect("serialize TX");
+
+        // Roundtrip verification: parse the bytes back and re-serialize
+        let parsed_json = salvium_crypto::tx_parse::parse_transaction(&tx_bytes)
+            .expect("failed to parse our own TX");
+        let re_serialized = salvium_crypto::tx_serialize::serialize_transaction(&parsed_json)
+            .expect("failed to re-serialize TX");
+        if tx_bytes != re_serialized {
+            eprintln!("    ROUNDTRIP MISMATCH: {} bytes vs {} bytes", tx_bytes.len(), re_serialized.len());
+            for (i, (a, b)) in tx_bytes.iter().zip(re_serialized.iter()).enumerate() {
+                if a != b {
+                    eprintln!("    First diff at byte {}: {:02x} vs {:02x}", i, a, b);
+                    break;
+                }
+            }
+        } else {
+            eprintln!("    Roundtrip OK ({} bytes)", tx_bytes.len());
+        }
+
+        // Print parsed transaction summary
+        let pj = &parsed_json;
+        eprintln!("    Parsed TX: {}", serde_json::to_string_pretty(pj).unwrap_or("?".to_string()).lines().take(30).collect::<Vec<_>>().join("\n    "));
+
         let tx_hex = hex::encode(&tx_bytes);
 
         let result = self
@@ -602,47 +707,48 @@ impl<'a> TestTransactor<'a> {
             .send_raw_transaction_ex(&tx_hex, false, true, fork.asset)
             .await
             .expect("RPC send failed");
+        if result.status != "OK" {
+            eprintln!("    DAEMON REJECT: {:?}", result);
+            eprintln!("    TX hex ({} bytes): {}...{}", tx_bytes.len(), &tx_hex[..80], &tx_hex[tx_hex.len()-40..]);
+        }
         assert_eq!(
             result.status, "OK",
             "transfer TX rejected: {} (reason: {})",
             result.status, result.reason
         );
 
+        // Mark spent inputs in the wallet DB so we don't re-spend them.
+        self.mark_inputs_spent(&signed, &tx_hash);
+
         TxResult { tx_hash, fee }
     }
 
     /// Build, sign, and submit a STAKE transaction.
     async fn stake(&self, amount: u64, fork: &ForkSpec) -> TxResult {
-        let estimated_fee = self.estimate_fee(1, 2, fork).await;
+        // STAKE: the staked amount goes into amount_burnt (protocol pool).
+        // Only 1 output: the change (total_input - amount_burnt - fee).
+        let estimated_fee = self.estimate_fee(1, 1, fork).await;
         let inputs = self.prepare_inputs(amount, estimated_fee, fork).await;
 
-        let keys = self.wallet.keys();
         let current_height = get_daemon_height(self.daemon).await;
         let unlock_time = current_height + 20; // testnet stake lock period
 
+        let keys = self.wallet.keys();
         let mut builder = TransactionBuilder::new();
         for input in inputs {
             builder = builder.add_input(input);
         }
 
+        let (chg_spend, chg_view) = change_keys(self.wallet, fork);
         builder = builder
-            .add_destination(Destination {
-                spend_pubkey: keys.carrot.account_spend_pubkey,
-                view_pubkey: keys.carrot.account_view_pubkey,
-                amount,
-                asset_type: fork.asset.to_string(),
-                payment_id: [0u8; 8],
-                is_subaddress: false,
-            })
-            .set_change_address(
-                keys.carrot.account_spend_pubkey,
-                keys.carrot.account_view_pubkey,
-            )
+            .set_change_address(chg_spend, chg_view)
             .set_tx_type(tx_type::STAKE)
             .set_unlock_time(unlock_time)
             .set_asset_types(fork.asset, fork.asset)
             .set_rct_type(fork.rct_type)
-            .set_fee(estimated_fee);
+            .set_fee(estimated_fee)
+            .set_amount_burnt(amount)
+            .set_view_secret_key(keys.cn.view_secret_key);
 
         let unsigned = builder.build().expect("failed to build STAKE TX");
         let fee = unsigned.fee;
@@ -662,6 +768,8 @@ impl<'a> TestTransactor<'a> {
             result.status, result.reason
         );
 
+        self.mark_inputs_spent(&signed, &tx_hash);
+
         TxResult { tx_hash, fee }
     }
 
@@ -671,25 +779,22 @@ impl<'a> TestTransactor<'a> {
         let estimated_fee = self.estimate_fee(1, 1, fork).await;
         let inputs = self.prepare_inputs(amount, estimated_fee, fork).await;
 
-        let keys = self.wallet.keys();
         let mut builder = TransactionBuilder::new();
         for input in inputs {
             builder = builder.add_input(input);
         }
 
+        let (chg_spend, chg_view) = change_keys(self.wallet, fork);
         builder = builder
             .add_destination(Destination {
-                spend_pubkey: keys.carrot.account_spend_pubkey,
-                view_pubkey: keys.carrot.account_view_pubkey,
+                spend_pubkey: chg_spend,
+                view_pubkey: chg_view,
                 amount,
                 asset_type: fork.asset.to_string(),
                 payment_id: [0u8; 8],
                 is_subaddress: false,
             })
-            .set_change_address(
-                keys.carrot.account_spend_pubkey,
-                keys.carrot.account_view_pubkey,
-            )
+            .set_change_address(chg_spend, chg_view)
             .set_tx_type(tx_type::BURN)
             .set_amount_burnt(amount)
             .set_unlock_time(0)
@@ -714,6 +819,8 @@ impl<'a> TestTransactor<'a> {
             "BURN TX rejected: {} (reason: {})",
             result.status, result.reason
         );
+
+        self.mark_inputs_spent(&signed, &tx_hash);
 
         TxResult { tx_hash, fee }
     }
@@ -743,7 +850,6 @@ impl<'a> TestTransactor<'a> {
 
         let inputs = self.prepare_inputs(sweep_amount, estimated_fee, fork).await;
 
-        let keys = self.wallet.keys();
         let mut builder = TransactionBuilder::new();
         for input in inputs {
             builder = builder.add_input(input);
@@ -759,8 +865,8 @@ impl<'a> TestTransactor<'a> {
                 is_subaddress: false,
             })
             .set_change_address(
-                keys.carrot.account_spend_pubkey,
-                keys.carrot.account_view_pubkey,
+                change_keys(self.wallet, fork).0,
+                change_keys(self.wallet, fork).1,
             )
             .set_asset_types(fork.asset, fork.asset)
             .set_rct_type(fork.rct_type)
@@ -783,6 +889,8 @@ impl<'a> TestTransactor<'a> {
             "sweep TX rejected: {} (reason: {})",
             result.status, result.reason
         );
+
+        self.mark_inputs_spent(&signed, &tx_hash);
 
         println!("    sweep amount: {} SAL", fmt_sal(sweep_amount));
         TxResult { tx_hash, fee }
@@ -836,6 +944,14 @@ fn dest_keys(wallet: &Wallet, fork: &ForkSpec) -> ([u8; 32], [u8; 32]) {
     let addr_str = mining_address(wallet, fork);
     let parsed = parse_address(&addr_str).expect("failed to parse address");
     (parsed.spend_public_key, parsed.view_public_key)
+}
+
+fn change_keys(wallet: &Wallet, fork: &ForkSpec) -> ([u8; 32], [u8; 32]) {
+    let keys = wallet.keys();
+    match fork.addr_format {
+        AddrFormat::Legacy => (keys.cn.spend_public_key, keys.cn.view_public_key),
+        AddrFormat::Carrot => (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey),
+    }
 }
 
 // ─── TX Test Runners ─────────────────────────────────────────────────────────

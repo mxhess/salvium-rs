@@ -70,6 +70,8 @@ pub struct TxOutput {
     pub carrot_view_tag: Option<[u8; 3]>,
     /// CARROT ephemeral X25519 public key (from tx extra).
     pub carrot_ephemeral_pubkey: Option<[u8; 32]>,
+    /// Asset type string (e.g. "SAL", "SAL1") from the on-chain output.
+    pub asset_type: String,
 }
 
 /// A transaction with all data needed for scanning.
@@ -105,6 +107,7 @@ pub struct FoundOutput {
     pub carrot_shared_secret: Option<[u8; 32]>,
     pub carrot_enote_type: Option<u8>,
     pub output_public_key: [u8; 32],
+    pub asset_type: String,
 }
 
 /// Scan a transaction's outputs for owned ones.
@@ -212,6 +215,7 @@ fn try_cn_scan(
         carrot_shared_secret: None,
         carrot_enote_type: None,
         output_public_key: output.public_key,
+        asset_type: output.asset_type.clone(),
     })
 }
 
@@ -255,6 +259,7 @@ fn try_carrot_scan(
             carrot_shared_secret: Some(result.shared_secret),
             carrot_enote_type: Some(result.enote_type),
             output_public_key: output.public_key,
+            asset_type: output.asset_type.clone(),
         });
     }
 
@@ -283,6 +288,7 @@ fn try_carrot_scan(
             carrot_shared_secret: Some(result.shared_secret),
             carrot_enote_type: Some(result.enote_type),
             output_public_key: output.public_key,
+            asset_type: output.asset_type.clone(),
         });
     }
 

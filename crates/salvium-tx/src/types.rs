@@ -40,6 +40,17 @@ pub mod output_type {
     pub const CARROT_V1: u8 = 0x04;
 }
 
+/// Protocol-specific transaction data for v4 STAKE/AUDIT (CARROT era).
+/// Contains the CARROT return enote components.
+#[derive(Debug, Clone)]
+pub struct ProtocolTxData {
+    pub version: u64,
+    pub return_address: [u8; 32],
+    pub return_pubkey: [u8; 32],
+    pub return_view_tag: [u8; 3],
+    pub return_anchor_enc: [u8; 16],
+}
+
 // ─── Core Transaction Types ─────────────────────────────────────────────────
 
 /// Complete transaction (prefix + RingCT signatures).
@@ -64,6 +75,7 @@ pub struct TxPrefix {
     pub return_pubkey: Option<[u8; 32]>,
     pub return_address_list: Option<Vec<Vec<u8>>>,
     pub return_address_change_mask: Option<Vec<u8>>,
+    pub protocol_tx_data: Option<ProtocolTxData>,
     pub source_asset_type: String,
     pub destination_asset_type: String,
     pub amount_slippage_limit: u64,
@@ -341,6 +353,32 @@ impl TxPrefix {
             .and_then(|s| s.as_str())
             .and_then(|s| hex::decode(s).ok());
 
+        let protocol_tx_data = v.get("protocol_tx_data").and_then(|ptd| {
+            if ptd.is_null() {
+                return None;
+            }
+            let ver = ptd.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
+            let ra = ptd.get("return_address").and_then(|s| s.as_str()).and_then(|s| hex_to_32(s))?;
+            let rp = ptd.get("return_pubkey").and_then(|s| s.as_str()).and_then(|s| hex_to_32(s))?;
+            let vt_hex = ptd.get("return_view_tag").and_then(|s| s.as_str())?;
+            let vt_bytes = hex::decode(vt_hex).ok()?;
+            if vt_bytes.len() < 3 { return None; }
+            let mut vt = [0u8; 3];
+            vt.copy_from_slice(&vt_bytes[..3]);
+            let ae_hex = ptd.get("return_anchor_enc").and_then(|s| s.as_str())?;
+            let ae_bytes = hex::decode(ae_hex).ok()?;
+            if ae_bytes.len() < 16 { return None; }
+            let mut ae = [0u8; 16];
+            ae.copy_from_slice(&ae_bytes[..16]);
+            Some(ProtocolTxData {
+                version: ver,
+                return_address: ra,
+                return_pubkey: rp,
+                return_view_tag: vt,
+                return_anchor_enc: ae,
+            })
+        });
+
         Ok(Self {
             version,
             unlock_time,
@@ -353,6 +391,7 @@ impl TxPrefix {
             return_pubkey,
             return_address_list,
             return_address_change_mask,
+            protocol_tx_data,
             source_asset_type,
             destination_asset_type,
             amount_slippage_limit,
@@ -389,6 +428,15 @@ impl TxPrefix {
         }
         if let Some(ref mask) = self.return_address_change_mask {
             obj["return_address_change_mask"] = Value::String(hex::encode(mask));
+        }
+        if let Some(ref ptd) = self.protocol_tx_data {
+            obj["protocol_tx_data"] = serde_json::json!({
+                "version": ptd.version,
+                "return_address": hex::encode(ptd.return_address),
+                "return_pubkey": hex::encode(ptd.return_pubkey),
+                "return_view_tag": hex::encode(ptd.return_view_tag),
+                "return_anchor_enc": hex::encode(ptd.return_anchor_enc),
+            });
         }
 
         obj

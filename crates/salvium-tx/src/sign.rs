@@ -58,22 +58,32 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
     let bp_data =
         generate_bp_proof(&unsigned.output_amounts, &unsigned.output_masks)?;
 
-    // 4b. Compute p_r and PRProof (for SALVIUM_ZERO/ONE).
+    // 4b. Compute p_r and PRProof.
+    //     Required for FULL_PROOFS (7), SALVIUM_ZERO (8), SALVIUM_ONE (9).
     //     p_r = difference * G where difference = sum(pseudo_masks) - sum(output_masks).
     //     Since we balance pseudo_masks to match output_masks, difference = 0 → p_r = identity.
     let p_r = ED25519_IDENTITY;
-    let (pr_proof, salvium_data_bytes) = if unsigned.rct_type == rct_type::SALVIUM_ZERO
-        || unsigned.rct_type == rct_type::SALVIUM_ONE
-    {
+    let needs_proofs = unsigned.rct_type >= rct_type::FULL_PROOFS;
+    let (pr_proof, salvium_data_bytes) = if needs_proofs {
         let proof = generate_pr_proof(&[0u8; 32]);
-        // salvium_data_type: SalviumZero=0, SalviumZeroAudit=1, SalviumOne=2
-        let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
         let mut sd_bytes = Vec::new();
-        write_varint(&mut sd_bytes, sd_type);
-        sd_bytes.extend_from_slice(&proof.0); // pr_proof.R
-        sd_bytes.extend_from_slice(&proof.1); // pr_proof.z1
-        sd_bytes.extend_from_slice(&proof.2); // pr_proof.z2
-        sd_bytes.extend_from_slice(&[0u8; 96]); // sa_proof
+
+        if unsigned.rct_type == rct_type::FULL_PROOFS {
+            // FULL_PROOFS: just pr_proof + sa_proof (no type varint prefix).
+            sd_bytes.extend_from_slice(&proof.0); // pr_proof.R
+            sd_bytes.extend_from_slice(&proof.1); // pr_proof.z1
+            sd_bytes.extend_from_slice(&proof.2); // pr_proof.z2
+            sd_bytes.extend_from_slice(&[0u8; 96]); // sa_proof (zeroed)
+        } else {
+            // SALVIUM_ZERO/ONE: type varint + pr_proof + sa_proof.
+            let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
+            write_varint(&mut sd_bytes, sd_type);
+            sd_bytes.extend_from_slice(&proof.0); // pr_proof.R
+            sd_bytes.extend_from_slice(&proof.1); // pr_proof.z1
+            sd_bytes.extend_from_slice(&proof.2); // pr_proof.z2
+            sd_bytes.extend_from_slice(&[0u8; 96]); // sa_proof
+        }
+
         (Some(proof), Some(sd_bytes))
     } else {
         (None, None)
@@ -150,18 +160,33 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
     }
 
     // 8. Assemble the final signed transaction.
-    // SALVIUM_ZERO/ONE requires salvium_data with valid PRProof.
-    // salvium_data_type: SalviumZero=0, SalviumZeroAudit=1, SalviumOne=2
-    let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
     let salvium_data = if let Some((proof_r, proof_z1, proof_z2)) = pr_proof {
-        Some(serde_json::json!({
-            "salvium_data_type": sd_type_val,
-            "pr_proof": {
-                "R": hex::encode(proof_r),
-                "z1": hex::encode(proof_z1),
-                "z2": hex::encode(proof_z2)
-            }
-        }))
+        let pr_json = serde_json::json!({
+            "R": hex::encode(proof_r),
+            "z1": hex::encode(proof_z1),
+            "z2": hex::encode(proof_z2)
+        });
+        let sa_json = serde_json::json!({
+            "R": "00".repeat(32),
+            "z1": "00".repeat(32),
+            "z2": "00".repeat(32)
+        });
+
+        if unsigned.rct_type == rct_type::FULL_PROOFS {
+            // FULL_PROOFS: just pr_proof + sa_proof (no salvium_data_type).
+            Some(serde_json::json!({
+                "pr_proof": pr_json,
+                "sa_proof": sa_json
+            }))
+        } else {
+            // SALVIUM_ZERO/ONE: includes salvium_data_type.
+            let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
+            Some(serde_json::json!({
+                "salvium_data_type": sd_type_val,
+                "pr_proof": pr_json,
+                "sa_proof": sa_json
+            }))
+        }
     } else {
         None
     };
@@ -322,7 +347,7 @@ fn serialize_rct_base_bytes(
     buf
 }
 
-/// Serialize Bulletproofs+ proof components for message hash computation.
+/// Serialize prunable components for message hash computation.
 ///
 /// Matches C++ get_pre_mlsag_hash (rctSigs.cpp:830-843): flat concatenation
 /// of 32-byte keys with NO varint size prefixes.
@@ -331,6 +356,7 @@ fn serialize_rct_base_bytes(
 ///         + L[](32 each) + R[](32 each).
 ///
 /// V (commitments) are NOT included — they're already in rctSigBase via outPk.
+/// pseudoOuts are NOT included — the C++ daemon does not hash them here.
 fn serialize_bp_components(bp: &BpPlusData) -> Vec<u8> {
     let capacity = 6 * 32 + bp.l_vec.len() * 32 + bp.r_vec.len() * 32;
     let mut buf = Vec::with_capacity(capacity);

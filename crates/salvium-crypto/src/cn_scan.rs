@@ -79,7 +79,7 @@ fn generate_key_image(pub_key: &[u8; 32], sec_key: &Scalar) -> [u8; 32] {
 }
 
 /// CryptoNote view tag: keccak256("view_tag" || derivation || varint(index))[0]
-fn derive_view_tag(derivation: &[u8; 32], output_index: u32) -> u8 {
+pub fn derive_view_tag(derivation: &[u8; 32], output_index: u32) -> u8 {
     let salt = b"view_tag";
     let mut buf = Vec::with_capacity(salt.len() + 32 + 5);
     buf.extend_from_slice(salt);
@@ -114,6 +114,17 @@ fn gen_amount_encoding_factor(shared_secret: &[u8; 32]) -> [u8; 32] {
     keccak256_internal(&buf)
 }
 
+/// ECDH encode amount: XOR first 8 bytes of keccak256("amount" || sharedSecret)
+pub fn ecdh_encode_amount(amount: u64, shared_secret: &[u8; 32]) -> [u8; 8] {
+    let factor = gen_amount_encoding_factor(shared_secret);
+    let amount_le = amount.to_le_bytes();
+    let mut enc = [0u8; 8];
+    for i in 0..8 {
+        enc[i] = amount_le[i] ^ factor[i];
+    }
+    enc
+}
+
 /// ECDH decode amount: XOR first 8 bytes of keccak256("amount" || sharedSecret)
 fn ecdh_decode_amount(encrypted_amount: &[u8; 8], shared_secret: &[u8; 32]) -> u64 {
     let factor = gen_amount_encoding_factor(shared_secret);
@@ -125,7 +136,7 @@ fn ecdh_decode_amount(encrypted_amount: &[u8; 8], shared_secret: &[u8; 32]) -> u
 }
 
 /// Generate commitment mask: scReduce32(keccak256("commitment_mask" || sharedSecret))
-fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
+pub fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
     let prefix = b"commitment_mask";
     let mut buf = Vec::with_capacity(prefix.len() + 32);
     buf.extend_from_slice(prefix);
@@ -257,11 +268,14 @@ pub fn derive_output_spend_key(
 ) -> [u8; 32] {
     let view_scalar = Scalar::from_bytes_mod_order(to32(view_secret_key));
 
-    // derivation = view_secret * tx_pub_key
+    // derivation = 8 * (view_secret * tx_pub_key) — CryptoNote cofactor multiplication
     let tx_pub = CompressedEdwardsY(to32(tx_pub_key))
         .decompress()
         .expect("invalid tx pubkey");
-    let derivation = (view_scalar * tx_pub).compress().to_bytes();
+    let shared = view_scalar * tx_pub;
+    let t = shared + shared; // 2P
+    let t = t + t;           // 4P
+    let derivation = (t + t).compress().to_bytes(); // 8P
 
     let d2s = derivation_to_scalar(&derivation, output_index);
     let spend_scalar = Scalar::from_bytes_mod_order(to32(spend_secret_key));

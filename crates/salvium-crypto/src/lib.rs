@@ -310,6 +310,12 @@ pub fn derive_secret_key(derivation: &[u8], output_index: u32, base_sec: &[u8]) 
     (base + scalar).to_bytes().to_vec()
 }
 
+/// Derivation to scalar (bytes): H_s(derivation || varint(index))
+/// Returns the 32-byte little-endian scalar used in CryptoNote key derivation.
+pub fn derivation_to_scalar_bytes(derivation: &[u8], output_index: u32) -> Vec<u8> {
+    derivation_to_scalar(derivation, output_index).to_bytes().to_vec()
+}
+
 // ─── Phase 4: Pedersen Commitments ──────────────────────────────────────────
 
 /// H generator for Pedersen commitments: H = H_p(G)

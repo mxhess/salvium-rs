@@ -92,6 +92,8 @@ pub struct TransactionBuilder {
     amount_burnt: u64,
     amount_slippage_limit: u64,
     rct_type: u8,
+    /// Sender's view secret key (needed for STAKE/AUDIT return address derivation).
+    view_secret_key: Option<[u8; 32]>,
 }
 
 impl TransactionBuilder {
@@ -111,6 +113,7 @@ impl TransactionBuilder {
             amount_burnt: 0,
             amount_slippage_limit: 0,
             rct_type: rct_type::SALVIUM_ONE,
+            view_secret_key: None,
         }
     }
 
@@ -188,12 +191,19 @@ impl TransactionBuilder {
         self
     }
 
+    /// Set sender's view secret key (needed for STAKE/AUDIT return address derivation).
+    pub fn set_view_secret_key(mut self, key: [u8; 32]) -> Self {
+        self.view_secret_key = Some(key);
+        self
+    }
+
     /// Build an unsigned transaction.
     ///
     /// This computes the fee, creates outputs (including change), builds the
     /// transaction prefix, and returns an `UnsignedTransaction` ready for signing.
     pub fn build(self) -> Result<UnsignedTransaction, TxError> {
-        if self.destinations.is_empty() {
+        // STAKE/BURN: amount_burnt replaces destinations, only change output is created.
+        if self.destinations.is_empty() && self.amount_burnt == 0 {
             return Err(TxError::NoDestinations);
         }
 
@@ -233,13 +243,18 @@ impl TransactionBuilder {
         // Estimate fee if not explicitly set.
         let use_tclsag = fee::uses_tclsag(self.rct_type);
         let num_outputs = self.destinations.len() + 1; // +1 for change
+        let out_type = if self.rct_type >= rct_type::SALVIUM_ONE {
+            output_type::CARROT_V1
+        } else {
+            output_type::TAGGED_KEY
+        };
         let estimated_fee = self.fee.unwrap_or_else(|| {
             fee::estimate_tx_fee(
                 self.inputs.len(),
                 num_outputs,
                 ring_size,
                 use_tclsag,
-                output_type::CARROT_V1,
+                out_type,
                 self.priority,
             )
         });
@@ -346,10 +361,110 @@ impl TransactionBuilder {
                 }
             }
         } else {
-            // Legacy outputs (placeholder — would use CryptoNote derivation).
-            return Err(TxError::Other(
-                "legacy (non-CARROT) output construction not implemented".into(),
-            ));
+            // Legacy CryptoNote stealth address outputs (TaggedKey).
+            //
+            // Generate a random tx secret key r, then for each destination:
+            //   D = generate_key_derivation(dest.view_pubkey, r)
+            //   Ko = derive_public_key(D, output_index, dest.spend_pubkey)
+            //   shared_secret = derivation_to_scalar_bytes(D, output_index)
+            //   view_tag = derive_view_tag(D, output_index)
+            //   encrypted_amount = ecdh_encode_amount(amount, shared_secret)
+            //   mask = gen_commitment_mask(shared_secret)
+            //   commitment = pedersen_commit(amount_le, mask)
+
+            // Generate random tx secret key: 64 random bytes -> sc_reduce64.
+            let mut rng_bytes = [0u8; 64];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut rng_bytes);
+            let r_bytes = salvium_crypto::sc_reduce64(&rng_bytes);
+            let mut r = [0u8; 32];
+            r.copy_from_slice(&r_bytes[..32]);
+
+            let mut output_index = 0u32;
+            for dest in &self.destinations {
+                let d = salvium_crypto::generate_key_derivation(&dest.view_pubkey, &r);
+                let mut d_arr = [0u8; 32];
+                d_arr.copy_from_slice(&d[..32]);
+
+                let ko_vec = salvium_crypto::derive_public_key(&d_arr, output_index, &dest.spend_pubkey);
+                let mut ko = [0u8; 32];
+                ko.copy_from_slice(&ko_vec[..32]);
+
+                let ss_vec = salvium_crypto::derivation_to_scalar_bytes(&d_arr, output_index);
+                let mut shared_secret = [0u8; 32];
+                shared_secret.copy_from_slice(&ss_vec[..32]);
+
+                let view_tag = salvium_crypto::cn_scan::derive_view_tag(&d_arr, output_index);
+                let encrypted_amount = salvium_crypto::cn_scan::ecdh_encode_amount(dest.amount, &shared_secret);
+                let mask = salvium_crypto::cn_scan::gen_commitment_mask(&shared_secret);
+
+                let amount_le = dest.amount.to_le_bytes();
+                let mut amount_scalar = [0u8; 32];
+                amount_scalar[..8].copy_from_slice(&amount_le);
+                let commitment_vec = salvium_crypto::pedersen_commit(&amount_scalar, &mask);
+                let mut commitment = [0u8; 32];
+                commitment.copy_from_slice(&commitment_vec[..32]);
+
+                tx_outputs.push(TxOutput::TaggedKey {
+                    amount: 0,
+                    key: ko,
+                    asset_type: dest.asset_type.clone(),
+                    unlock_time: 0,
+                    view_tag,
+                });
+                output_masks.push(mask);
+                output_amounts.push(dest.amount);
+                encrypted_amounts.push(encrypted_amount);
+                output_commitments.push(commitment);
+
+                output_index += 1;
+            }
+
+            // Change output.
+            if change_amount > 0 {
+                if let (Some(change_spend), Some(change_view)) =
+                    (self.change_spend_pubkey, self.change_view_pubkey)
+                {
+                    let d = salvium_crypto::generate_key_derivation(&change_view, &r);
+                    let mut d_arr = [0u8; 32];
+                    d_arr.copy_from_slice(&d[..32]);
+
+                    let ko_vec = salvium_crypto::derive_public_key(&d_arr, output_index, &change_spend);
+                    let mut ko = [0u8; 32];
+                    ko.copy_from_slice(&ko_vec[..32]);
+
+                    let ss_vec = salvium_crypto::derivation_to_scalar_bytes(&d_arr, output_index);
+                    let mut shared_secret = [0u8; 32];
+                    shared_secret.copy_from_slice(&ss_vec[..32]);
+
+                    let view_tag = salvium_crypto::cn_scan::derive_view_tag(&d_arr, output_index);
+                    let encrypted_amount = salvium_crypto::cn_scan::ecdh_encode_amount(change_amount, &shared_secret);
+                    let mask = salvium_crypto::cn_scan::gen_commitment_mask(&shared_secret);
+
+                    let amount_le = change_amount.to_le_bytes();
+                    let mut amount_scalar = [0u8; 32];
+                    amount_scalar[..8].copy_from_slice(&amount_le);
+                    let commitment_vec = salvium_crypto::pedersen_commit(&amount_scalar, &mask);
+                    let mut commitment = [0u8; 32];
+                    commitment.copy_from_slice(&commitment_vec[..32]);
+
+                    tx_outputs.push(TxOutput::TaggedKey {
+                        amount: 0,
+                        key: ko,
+                        asset_type: self.source_asset_type.clone(),
+                        unlock_time: 0,
+                        view_tag,
+                    });
+                    output_masks.push(mask);
+                    output_amounts.push(change_amount);
+                    encrypted_amounts.push(encrypted_amount);
+                    output_commitments.push(commitment);
+                } else {
+                    return Err(TxError::Other("change address required".into()));
+                }
+            }
+
+            // Store the tx secret key for tx extra construction below.
+            ephemeral_key = Some(r);
         }
 
         // Sort outputs lexicographically by one-time key.
@@ -395,10 +510,16 @@ impl TransactionBuilder {
         if let Some(ref d_e) = ephemeral_key {
             // Tag 0x01 = tx public key.
             extra.push(0x01);
-            // For CARROT, the "tx pub key" in extra is d_e * B (X25519 base).
-            let base_u = [9u8; 32];
-            let d_e_pub = salvium_crypto::x25519_scalar_mult(d_e, &base_u);
-            extra.extend_from_slice(&d_e_pub[..32]);
+            if self.rct_type >= rct_type::SALVIUM_ONE {
+                // For CARROT, the "tx pub key" in extra is d_e * B (X25519 base).
+                let base_u = [9u8; 32];
+                let d_e_pub = salvium_crypto::x25519_scalar_mult(d_e, &base_u);
+                extra.extend_from_slice(&d_e_pub[..32]);
+            } else {
+                // For legacy CryptoNote, the tx pub key is r * G (Ed25519).
+                let r_pub = salvium_crypto::scalar_mult_base(d_e);
+                extra.extend_from_slice(&r_pub[..32]);
+            }
         }
 
         // Version 4 for CARROT transactions (rct_type >= SALVIUM_ONE), version 2 otherwise.
@@ -435,6 +556,105 @@ impl TransactionBuilder {
                 (None, None)
             };
 
+        // For STAKE/AUDIT transactions (pre-CARROT), derive return_address and return_pubkey
+        // from the change output key and sender's view secret key.
+        //   s = random_scalar()
+        //   return_pubkey = s * P_change
+        //   derivation = generate_key_derivation(return_pubkey, view_secret)
+        //   return_address = derive_public_key(derivation, 0, P_change)
+        let (return_address, return_pubkey) =
+            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT)
+                && version < 4
+            {
+                // Find the change output key. The change output was the last one added
+                // before sorting (at index = num destinations in pre-sort order).
+                let change_pre_sort_idx = self.destinations.len();
+                let change_key = if change_pre_sort_idx < output_order.len() {
+                    // Find where the change output ended up after sorting.
+                    output_order
+                        .iter()
+                        .position(|&old_idx| old_idx == change_pre_sort_idx)
+                        .map(|new_idx| *tx_outputs[new_idx].key())
+                } else if !tx_outputs.is_empty() {
+                    // No explicit destinations — all outputs are change (STAKE with amount_burnt).
+                    Some(*tx_outputs[0].key())
+                } else {
+                    None
+                };
+
+                if let (Some(p_change), Some(view_secret)) = (change_key, self.view_secret_key) {
+                    // Generate random secret s.
+                    let mut rng_bytes = [0u8; 64];
+                    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut rng_bytes);
+                    let s_bytes = salvium_crypto::sc_reduce64(&rng_bytes);
+                    let mut s = [0u8; 32];
+                    s.copy_from_slice(&s_bytes[..32]);
+
+                    // return_pubkey = s * P_change (raw scalar mult, no cofactor).
+                    let f_txkey_pub_vec = salvium_crypto::scalar_mult_point(&s, &p_change);
+                    let mut f_txkey_pub = [0u8; 32];
+                    f_txkey_pub.copy_from_slice(&f_txkey_pub_vec[..32]);
+
+                    // derivation = generate_key_derivation(return_pubkey, view_secret)
+                    //            = 8 * view_secret * return_pubkey
+                    let deriv_vec =
+                        salvium_crypto::generate_key_derivation(&f_txkey_pub, &view_secret);
+                    let mut derivation = [0u8; 32];
+                    derivation.copy_from_slice(&deriv_vec[..32]);
+
+                    // return_address = derive_public_key(derivation, 0, P_change)
+                    let f_vec =
+                        salvium_crypto::derive_public_key(&derivation, 0, &p_change);
+                    let mut return_addr = [0u8; 32];
+                    return_addr.copy_from_slice(&f_vec[..32]);
+
+                    (Some(return_addr.to_vec()), Some(f_txkey_pub))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
+        // For v4 STAKE (CARROT era), create protocol_tx_data with a CARROT return enote.
+        let protocol_tx_data =
+            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT)
+                && version >= 4
+            {
+                let chg_spend = self.change_spend_pubkey.unwrap_or([0u8; 32]);
+                let chg_view = self.change_view_pubkey.unwrap_or([0u8; 32]);
+                let return_params = CarrotOutputParams {
+                    recipient_spend_pubkey: &chg_spend,
+                    recipient_view_pubkey: &chg_view,
+                    amount: 0,
+                    input_context: &input_context,
+                    enote_type: carrot::enote_type::CHANGE,
+                    payment_id: [0u8; 8],
+                    is_subaddress: false,
+                };
+                let (return_enote, return_d_e) = carrot::create_carrot_output(&return_params)
+                    .map_err(|e| TxError::CarrotOutput(format!("return enote: {}", e)))?;
+                let base_u = [9u8; 32];
+                let return_ephem = salvium_crypto::x25519_scalar_mult(&return_d_e, &base_u);
+                let mut return_pubkey_arr = [0u8; 32];
+                let len = return_ephem.len().min(32);
+                return_pubkey_arr[..len].copy_from_slice(&return_ephem[..len]);
+                Some(ProtocolTxData {
+                    version: 1,
+                    return_address: return_enote.onetime_address,
+                    return_pubkey: return_pubkey_arr,
+                    return_view_tag: return_enote.view_tag,
+                    return_anchor_enc: {
+                        let mut arr = [0u8; 16];
+                        let len = return_enote.encrypted_anchor.len().min(16);
+                        arr[..len].copy_from_slice(&return_enote.encrypted_anchor[..len]);
+                        arr
+                    },
+                })
+            } else {
+                None
+            };
+
         let prefix = TxPrefix {
             version,
             unlock_time: self.unlock_time,
@@ -443,10 +663,11 @@ impl TransactionBuilder {
             extra,
             tx_type: self.tx_type,
             amount_burnt: self.amount_burnt,
-            return_address: None,
-            return_pubkey: None,
+            return_address,
+            return_pubkey,
             return_address_list,
             return_address_change_mask,
+            protocol_tx_data,
             source_asset_type: self.source_asset_type,
             destination_asset_type: self.destination_asset_type,
             amount_slippage_limit: self.amount_slippage_limit,

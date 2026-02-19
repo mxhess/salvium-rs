@@ -216,6 +216,9 @@ async fn sync_block(
             if let Ok(tx_bytes) = hex::decode(tx_hex) {
                 let tx_json_str = salvium_crypto::parse_transaction_bytes(&tx_bytes);
                 if let Ok(tx_json) = serde_json::from_str::<serde_json::Value>(&tx_json_str) {
+                    // Detect spent outputs: check if any inputs spend our UTXOs.
+                    detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
+
                     if let Some(scan_data) =
                         parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
                     {
@@ -410,6 +413,28 @@ fn parse_tx_for_scanning(
             .and_then(|v| v.as_str())
             .and_then(hex_to_32);
 
+        // Asset type from on-chain output (e.g. "SAL", "SAL1").
+        // New format: flat field at vout level ("assetType" or "asset_type").
+        // Legacy format: nested inside target sub-object
+        //   (target.tagged_key.asset_type, target.to_tagged_key.asset_type,
+        //    target.to_key.asset_type, target.to_carrot_v1.asset_type).
+        let asset_type = out
+            .get("assetType")
+            .or_else(|| out.get("asset_type"))
+            .or_else(|| {
+                out.get("target").and_then(|t| {
+                    t.get("tagged_key")
+                        .or_else(|| t.get("to_tagged_key"))
+                        .or_else(|| t.get("key"))
+                        .or_else(|| t.get("to_key"))
+                        .or_else(|| t.get("to_carrot_v1"))
+                        .and_then(|inner| inner.get("asset_type"))
+                })
+            })
+            .and_then(|v| v.as_str())
+            .unwrap_or("SAL")
+            .to_string();
+
         outputs.push(TxOutput {
             index: i as u32,
             public_key,
@@ -420,6 +445,7 @@ fn parse_tx_for_scanning(
             commitment,
             carrot_view_tag,
             carrot_ephemeral_pubkey,
+            asset_type,
         });
     }
 
@@ -520,6 +546,74 @@ fn extract_first_key_image(prefix: &serde_json::Value) -> Option<[u8; 32]> {
     None
 }
 
+/// Extract ALL key images from transaction inputs.
+fn extract_all_key_images(prefix: &serde_json::Value) -> Vec<String> {
+    let mut key_images = Vec::new();
+    let vin = match prefix.get("vin").and_then(|v| v.as_array()) {
+        Some(v) => v,
+        None => return key_images,
+    };
+
+    for input in vin {
+        // New format: { "keyImage": "hex", ... }
+        if let Some(ki) = input.get("keyImage").and_then(|v| v.as_str()) {
+            if ki.len() == 64 {
+                key_images.push(ki.to_string());
+            }
+        }
+        // Legacy format: { "key": { "k_image": "hex" } }
+        else if let Some(key) = input.get("key") {
+            if let Some(ki) = key
+                .get("k_image")
+                .or_else(|| key.get("keyImage"))
+                .and_then(|v| v.as_str())
+            {
+                if ki.len() == 64 {
+                    key_images.push(ki.to_string());
+                }
+            }
+        }
+    }
+
+    key_images
+}
+
+/// Check transaction inputs for key images that belong to our wallet and mark
+/// the corresponding outputs as spent.
+#[cfg(not(target_arch = "wasm32"))]
+fn detect_spent_outputs(
+    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    tx_json: &serde_json::Value,
+    tx_hash_hex: &str,
+    block_height: u64,
+) -> Result<usize, WalletError> {
+    let prefix = tx_json.get("prefix").unwrap_or(tx_json);
+    let key_images = extract_all_key_images(prefix);
+
+    if key_images.is_empty() {
+        return Ok(0);
+    }
+
+    let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+    let mut spent_count = 0;
+
+    for ki_hex in &key_images {
+        // Check if this key image belongs to one of our outputs.
+        let output = db
+            .get_output(ki_hex)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        if let Some(row) = output {
+            if !row.is_spent {
+                db.mark_spent(ki_hex, tx_hash_hex, block_height as i64)
+                    .map_err(|e| WalletError::Storage(e.to_string()))?;
+                spent_count += 1;
+            }
+        }
+    }
+
+    Ok(spent_count)
+}
+
 /// Store found outputs in the database.
 #[cfg(not(target_arch = "wasm32"))]
 fn store_found_outputs(
@@ -545,7 +639,7 @@ fn store_found_outputs(
             block_height: Some(tx.block_height as i64),
             block_timestamp: Some(block_timestamp as i64),
             amount: output.amount.to_string(),
-            asset_type: "SAL".to_string(),
+            asset_type: output.asset_type.clone(),
             commitment: None,
             mask: Some(hex::encode(output.mask)),
             subaddress_index: salvium_crypto::storage::SubaddressIndex {
