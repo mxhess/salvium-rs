@@ -1894,6 +1894,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "salvium-miner-gr"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "clap",
+ "hex",
+ "libc",
+ "num_cpus",
+ "salvium-miner",
+]
+
+[[package]]
+name = "salvium-miner-v2"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "clap",
+ "cmake",
+ "hex",
+ "libc",
+ "num_cpus",
+ "salvium-miner",
+]
+
+[[package]]
 name = "salvium-multisig"
 version = "0.1.0"
 dependencies = [

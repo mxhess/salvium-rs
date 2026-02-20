@@ -2,13 +2,8 @@ use clap::Parser;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-mod daemon;
-mod ipc;
-mod miner;
-mod stratum;
-
-use daemon::DaemonClient;
-use miner::{MiningEngine, MiningJob};
+use salvium_miner::daemon::DaemonClient;
+use salvium_miner::miner::{MiningEngine, MiningJob};
 
 #[derive(Parser)]
 #[command(name = "salvium-miner")]
@@ -61,7 +56,7 @@ fn main() {
     let args = Args::parse();
 
     if args.ipc {
-        ipc::run_ipc(args.threads, args.light, !args.no_large_pages);
+        salvium_miner::ipc::run_ipc(args.threads, args.light, !args.no_large_pages);
         return;
     }
 
@@ -132,7 +127,7 @@ fn main() {
         }
     };
 
-    let difficulty = miner::parse_difficulty(
+    let difficulty = salvium_miner::miner::parse_difficulty(
         template.difficulty,
         template.wide_difficulty.as_deref(),
     );
@@ -179,6 +174,8 @@ fn main() {
         template_blob: template_blob.clone(),
         difficulty,
         height: template.height,
+        nonce_offset: None,
+        target: None,
     });
 
     let start_time = Instant::now();
@@ -223,7 +220,7 @@ fn main() {
             while engine.try_recv_block().is_some() {}
 
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff = miner::parse_difficulty(
+                let new_diff = salvium_miner::miner::parse_difficulty(
                     tmpl.difficulty,
                     tmpl.wide_difficulty.as_deref(),
                 );
@@ -251,6 +248,8 @@ fn main() {
                     template_blob: tb,
                     difficulty: new_diff,
                     height: tmpl.height,
+                    nonce_offset: None,
+                    target: None,
                 });
 
                 eprintln!("Template: height={} diff={} prev={:.16}...",
@@ -262,7 +261,7 @@ fn main() {
         // Refresh template every 5 seconds (routine poll)
         if !block_found && last_template_fetch.elapsed() > Duration::from_secs(5) {
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff = miner::parse_difficulty(
+                let new_diff = salvium_miner::miner::parse_difficulty(
                     tmpl.difficulty,
                     tmpl.wide_difficulty.as_deref(),
                 );
@@ -289,6 +288,8 @@ fn main() {
                         template_blob: tb,
                         difficulty: new_diff,
                         height: tmpl.height,
+                        nonce_offset: None,
+                        target: None,
                     });
                 }
             }

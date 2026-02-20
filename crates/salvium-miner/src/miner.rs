@@ -75,6 +75,12 @@ pub struct MiningJob {
     pub template_blob: Vec<u8>,
     pub difficulty: u128,
     pub height: u64,
+    /// When Some, use this fixed nonce offset instead of varint-parsing the blob.
+    /// Used by stratum where the nonce is always at byte 76 in the 80-byte header.
+    pub nonce_offset: Option<usize>,
+    /// When Some, use big-endian target comparison instead of CryptoNote difficulty check.
+    /// Used by stratum pools (Bitcoin-style target).
+    pub target: Option<[u8; 32]>,
 }
 
 /// Wrapper to send raw pointers across threads.
@@ -277,7 +283,7 @@ impl MiningEngine {
                         Err(_) => break,
                     };
 
-                    let nonce_offset = find_nonce_offset(&job.hashing_blob);
+                    let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                     let mut current_job = job;
                     while let Some(new_job) = mine_job_rust(
                         &mut vm, &current_job, &running, &hash_count,
@@ -338,7 +344,7 @@ fn worker_loop(
             Err(_) => break,
         };
 
-        let mut nonce_offset = find_nonce_offset(&job.hashing_blob);
+        let mut nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
 
         // Double-buffered blobs for pipelined hashing
@@ -361,7 +367,11 @@ fn worker_loop(
                     randomx_calculate_hash_last(vm_ptr, hash_out.as_mut_ptr());
                 }
                 hash_count.fetch_add(1, Ordering::Relaxed);
-                if check_hash(&hash_out, job.difficulty) {
+                let meets = match job.target {
+                    Some(ref t) => check_hash_target(&hash_out, t),
+                    None => check_hash(&hash_out, job.difficulty),
+                };
+                if meets {
                     submit_block(&job, prev_nonce, &hash_out, result_tx);
                 }
                 break;
@@ -374,13 +384,17 @@ fn worker_loop(
                     randomx_calculate_hash_last(vm_ptr, hash_out.as_mut_ptr());
                 }
                 hash_count.fetch_add(1, Ordering::Relaxed);
-                if check_hash(&hash_out, job.difficulty) {
+                let meets = match job.target {
+                    Some(ref t) => check_hash_target(&hash_out, t),
+                    None => check_hash(&hash_out, job.difficulty),
+                };
+                if meets {
                     submit_block(&job, prev_nonce, &hash_out, result_tx);
                 }
 
                 // Switch to new job and re-prime pipeline
                 job = new_job;
-                nonce_offset = find_nonce_offset(&job.hashing_blob);
+                nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                 nonce = nonce_start;
                 blob_a = job.hashing_blob.clone();
                 blob_b = job.hashing_blob.clone();
@@ -407,7 +421,11 @@ fn worker_loop(
             }
             hash_count.fetch_add(1, Ordering::Relaxed);
 
-            if check_hash(&hash_out, job.difficulty) {
+            let meets = match job.target {
+                Some(ref t) => check_hash_target(&hash_out, t),
+                None => check_hash(&hash_out, job.difficulty),
+            };
+            if meets {
                 submit_block(&job, prev_nonce, &hash_out, result_tx);
             }
 
@@ -457,9 +475,13 @@ fn mine_job_rust(
 
         hash_count.fetch_add(1, Ordering::Relaxed);
 
-        if check_hash(&hash, job.difficulty) {
+        let meets = match job.target {
+            Some(ref t) => check_hash_target(&hash, t),
+            None => check_hash(&hash, job.difficulty),
+        };
+        if meets {
             let mut template = job.template_blob.clone();
-            let tmpl_offset = find_nonce_offset(&template);
+            let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
             set_nonce(&mut template, tmpl_offset, nonce);
 
             let _ = result_tx.send(FoundBlock {
@@ -484,7 +506,7 @@ fn submit_block(
     result_tx: &mpsc::Sender<FoundBlock>,
 ) {
     let mut template = job.template_blob.clone();
-    let tmpl_offset = find_nonce_offset(&template);
+    let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
     set_nonce(&mut template, tmpl_offset, nonce);
     let _ = result_tx.send(FoundBlock {
         nonce,
@@ -494,7 +516,7 @@ fn submit_block(
     });
 }
 
-fn set_nonce(blob: &mut [u8], offset: usize, nonce: u32) {
+pub fn set_nonce(blob: &mut [u8], offset: usize, nonce: u32) {
     blob[offset] = (nonce & 0xff) as u8;
     blob[offset + 1] = ((nonce >> 8) & 0xff) as u8;
     blob[offset + 2] = ((nonce >> 16) & 0xff) as u8;
@@ -520,7 +542,7 @@ pub fn find_nonce_offset(blob: &[u8]) -> usize {
 /// Check if hash meets difficulty target.
 /// CryptoNote convention: interpret hash as little-endian 256-bit integer,
 /// block is valid if hash * difficulty < 2^256.
-fn check_hash(hash: &[u8], difficulty: u128) -> bool {
+pub fn check_hash(hash: &[u8], difficulty: u128) -> bool {
     if difficulty == 0 {
         return false;
     }
@@ -543,6 +565,20 @@ fn check_hash(hash: &[u8], difficulty: u128) -> bool {
     };
     let carry = if lo_overflow { difficulty } else { 0 };
     hi_prod.checked_add(carry).is_some()
+}
+
+/// Check hash against big-endian target (Bitcoin/stratum-style).
+/// Valid if hash (interpreted as big-endian 256-bit) <= target.
+pub fn check_hash_target(hash: &[u8], target: &[u8; 32]) -> bool {
+    for i in 0..32 {
+        if hash[i] < target[i] {
+            return true;
+        }
+        if hash[i] > target[i] {
+            return false;
+        }
+    }
+    true // equal
 }
 
 /// Parse difficulty from wide_difficulty hex string or u64

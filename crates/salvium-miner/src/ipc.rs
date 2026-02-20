@@ -307,6 +307,8 @@ pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
                     template_blob,
                     difficulty,
                     height: msg.height,
+                    nonce_offset: None,
+                    target: None,
                 });
 
                 eprintln!("[IPC] Job {} started (height={}, diff={})", current_job_id, msg.height, difficulty);

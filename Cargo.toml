@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/salvium-crypto",
     "crates/salvium-miner",
+    "crates/salvium-miner-v2",
+    "crates/salvium-miner-gr",
     "crates/salvium-types",
     "crates/salvium-consensus",
     "crates/salvium-rpc",

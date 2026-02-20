@@ -1,0 +1,19 @@
+[package]
+name = "salvium-miner-gr"
+version = "0.1.0"
+edition = "2021"
+description = "GhostRider CPU miner for Salvium cryptocurrency (experimental)"
+
+[[bin]]
+name = "salvium-miner-gr"
+path = "src/main.rs"
+
+[dependencies]
+salvium-miner = { path = "../salvium-miner" }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+num_cpus = "1"
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"
