@@ -65,6 +65,9 @@ pub enum ValidationError {
     #[error("source asset ({src_asset}) must match destination ({dest_asset}) for TX type {tx_type}")]
     AssetMismatch { src_asset: String, dest_asset: String, tx_type: String },
 
+    #[error("must spend {expected} coins at HF {hf_version}, got {actual}")]
+    WrongSourceAssetForHf { expected: String, actual: String, hf_version: u8 },
+
     #[error("MINER/PROTOCOL must have RCTTypeNull")]
     CoinbaseRctNotNull,
 
@@ -79,6 +82,15 @@ pub enum ValidationError {
 
     #[error("input {index} ring size must be {expected}, got {actual}")]
     WrongRingSize { index: usize, expected: usize, actual: usize },
+
+    #[error("ring sizes must be consistent: got {min} and {max}")]
+    InconsistentRingSizes { min: usize, max: usize },
+
+    #[error("ring size {ring_size} too low with no unmixable inputs")]
+    LowRingSizeNoUnmixable { ring_size: usize },
+
+    #[error("ring size {ring_size} too low with {n_mixable} mixable inputs (max 1 allowed with unmixable)")]
+    LowRingSizeTooManyMixable { ring_size: usize, n_mixable: usize },
 
     #[error("key images must be sorted in strictly increasing order")]
     KeyImagesUnsorted,
@@ -224,12 +236,16 @@ fn is_valid_asset(s: &str) -> bool {
 
 /// Validate asset types for a transaction.
 ///
-/// Reference: blockchain.cpp:3852-3860
+/// Reference: blockchain.cpp:3838-3860
+///
+/// Enforces hardfork-dependent asset segregation:
+/// - Before HF6 (SALVIUM_ONE_PROOFS): source must be "SAL"
+/// - From HF6 onwards: source must be "SAL1" (non-AUDIT) or per AUDIT_HARD_FORKS
 pub fn validate_asset_types(
     tx_type: TxType,
     source_asset: &str,
     dest_asset: &str,
-    _hf_version: u8,
+    hf_version: u8,
 ) -> Result<(), ValidationError> {
     if !is_valid_asset(source_asset) {
         return Err(ValidationError::InvalidSourceAsset(source_asset.to_string()));
@@ -246,7 +262,7 @@ pub fn validate_asset_types(
         if source_asset != "SAL" && source_asset != "SAL1" {
             return Err(ValidationError::BurnSourceInvalid);
         }
-        return Ok(());
+        // Fall through to HF-dependent source check below
     }
 
     // Cannot spend BURN coins
@@ -254,18 +270,48 @@ pub fn validate_asset_types(
         return Err(ValidationError::SpendBurn);
     }
 
-    // CONVERT allows different source and dest
-    if tx_type == TxType::Convert {
-        return Ok(());
-    }
+    // CONVERT allows different source and dest (but still subject to HF asset check)
+    // AUDIT has special rules (handled below)
 
-    // AUDIT has special rules
+    // ── Hardfork-dependent source asset enforcement ──
+    // Reference: blockchain.cpp:3838-3850
+    // AUDIT TXs use the AUDIT_HARD_FORKS config; at both HF6 and HF8
+    // the audit source asset is "SAL" converting to "SAL1".
     if tx_type == TxType::Audit {
+        // AUDIT source asset comes from AUDIT_HARD_FORKS config.
+        // HF6 (AUDIT1): source = "SAL", dest = "SAL1"
+        // HF8 (AUDIT2): source = "SAL", dest = "SAL1"
+        if source_asset != "SAL" {
+            return Err(ValidationError::WrongSourceAssetForHf {
+                expected: "SAL".to_string(),
+                actual: source_asset.to_string(),
+                hf_version,
+            });
+        }
         return Ok(());
     }
 
-    // For all other types, source must equal dest
-    if source_asset != dest_asset {
+    // Non-AUDIT: enforce SAL before HF6, SAL1 from HF6+
+    if tx_type != TxType::Miner && tx_type != TxType::Protocol {
+        let expected = if hf_version >= HfVersion::SALVIUM_ONE_PROOFS {
+            "SAL1"
+        } else {
+            "SAL"
+        };
+        if source_asset != expected {
+            return Err(ValidationError::WrongSourceAssetForHf {
+                expected: expected.to_string(),
+                actual: source_asset.to_string(),
+                hf_version,
+            });
+        }
+    }
+
+    // For non-CONVERT, non-BURN types: source must equal dest
+    if tx_type != TxType::Convert
+        && tx_type != TxType::Burn
+        && source_asset != dest_asset
+    {
         return Err(ValidationError::AssetMismatch {
             src_asset: source_asset.to_string(),
             dest_asset: dest_asset.to_string(),
@@ -345,18 +391,77 @@ pub fn validate_rct_type(
 
 /// Validate input ring sizes.
 ///
-/// Each input must use exactly `DEFAULT_RING_SIZE` (16) ring members.
-pub fn validate_input_ring_sizes(ring_sizes: &[usize]) -> Result<(), ValidationError> {
-    for (i, &size) in ring_sizes.iter().enumerate() {
-        if size != DEFAULT_RING_SIZE {
-            return Err(ValidationError::WrongRingSize {
-                index: i,
-                expected: DEFAULT_RING_SIZE,
-                actual: size,
+/// Reference: blockchain.cpp:4026-4103
+///
+/// Only enforced from HF2 onwards (C++: `if (hf_version >= 2)`).
+/// All inputs must have the same ring size. The default ring size is 16
+/// (mixin 15). Lower ring sizes are allowed **only** when spending
+/// unmixable non-RCT outputs:
+///
+/// - `n_unmixable > 0` AND `n_mixable <= 1` → ring size < 16 OK
+/// - `n_unmixable == 0` → ring size must be exactly 16
+/// - Ring size > 16 → always rejected
+///
+/// The caller must classify inputs as mixable/unmixable by checking the
+/// UTXO database: RCT inputs (amount == 0) are always mixable; non-RCT
+/// inputs with ≤ MINIMUM_MIXIN available outputs for their denomination
+/// are unmixable.
+pub fn validate_input_ring_sizes(
+    ring_sizes: &[usize],
+    n_unmixable: usize,
+    n_mixable: usize,
+    hf_version: u8,
+) -> Result<(), ValidationError> {
+    // C++: entire check gated behind hf_version >= 2
+    if hf_version < 2 || ring_sizes.is_empty() {
+        return Ok(());
+    }
+
+    // All ring sizes must be identical.
+    let min_size = *ring_sizes.iter().min().unwrap();
+    let max_size = *ring_sizes.iter().max().unwrap();
+    if min_size != max_size {
+        return Err(ValidationError::InconsistentRingSizes {
+            min: min_size,
+            max: max_size,
+        });
+    }
+
+    let actual_mixin = min_size.saturating_sub(1);
+
+    if actual_mixin < MINIMUM_MIXIN {
+        // Low ring size: only allowed for unmixable outputs
+        if n_unmixable == 0 {
+            return Err(ValidationError::LowRingSizeNoUnmixable {
+                ring_size: min_size,
             });
         }
+        if n_mixable > 1 {
+            return Err(ValidationError::LowRingSizeTooManyMixable {
+                ring_size: min_size,
+                n_mixable,
+            });
+        }
+    } else if actual_mixin > MINIMUM_MIXIN {
+        // Ring size above default is never allowed
+        return Err(ValidationError::WrongRingSize {
+            index: 0,
+            expected: DEFAULT_RING_SIZE,
+            actual: min_size,
+        });
     }
+
     Ok(())
+}
+
+/// Get the minimum transaction version based on input mixability.
+///
+/// Reference: blockchain.cpp:4096-4102
+///
+/// Transactions spending unmixable outputs may use version 1;
+/// all-mixable transactions must use version 2+.
+pub fn min_tx_version_for_inputs(n_unmixable: usize) -> u8 {
+    if n_unmixable > 0 { 1 } else { 2 }
 }
 
 /// Validate that key images are sorted in strictly increasing lexicographic order.
@@ -371,19 +476,25 @@ pub fn validate_key_image_sorting(key_images: &[[u8; 32]]) -> Result<(), Validat
     Ok(())
 }
 
-/// Validate that output public keys are sorted (Carrot fork requirement).
+/// Validate that output public keys are sorted in strictly increasing order.
 ///
-/// Only enforced from CARROT hard fork onwards.
+/// Reference: blockchain.cpp:3870-3878, tx_verification_utils.cpp:153-168
+///
+/// Enforced when `hf_version > CARROT` (HF 11+) OR the transaction uses
+/// CARROT output format. Uses strictly-greater comparison (no duplicate keys).
 pub fn validate_output_key_sorting(
     output_keys: &[[u8; 32]],
     hf_version: u8,
+    is_carrot: bool,
 ) -> Result<(), ValidationError> {
-    if hf_version < HfVersion::CARROT || output_keys.len() < 2 {
+    // C++: should_enforce = hf_version > HF_VERSION_CARROT || tx_is_carrot
+    let should_enforce = hf_version > HfVersion::CARROT || is_carrot;
+    if !should_enforce || output_keys.len() < 2 {
         return Ok(());
     }
 
     for i in 1..output_keys.len() {
-        if output_keys[i] < output_keys[i - 1] {
+        if output_keys[i] <= output_keys[i - 1] {
             return Err(ValidationError::OutputKeysUnsorted);
         }
     }
@@ -728,10 +839,20 @@ mod tests {
 
     #[test]
     fn test_validate_asset_burn() {
-        let result = validate_asset_types(TxType::Burn, "SAL", "BURN", 6);
+        // HF5: BURN with source SAL is OK
+        let result = validate_asset_types(TxType::Burn, "SAL", "BURN", 5);
         assert!(result.is_ok());
 
-        let result = validate_asset_types(TxType::Burn, "SAL", "SAL", 6);
+        // HF6+: BURN with source SAL1 is OK
+        let result = validate_asset_types(TxType::Burn, "SAL1", "BURN", 6);
+        assert!(result.is_ok());
+
+        // HF6+: BURN with source SAL is rejected (must be SAL1)
+        let result = validate_asset_types(TxType::Burn, "SAL", "BURN", 6);
+        assert!(result.is_err());
+
+        // BURN with wrong dest is always rejected
+        let result = validate_asset_types(TxType::Burn, "SAL", "SAL", 5);
         assert!(result.is_err());
     }
 
@@ -743,8 +864,42 @@ mod tests {
 
     #[test]
     fn test_validate_asset_mismatch() {
+        // At HF6, Transfer with source SAL is rejected (wrong source for HF)
         let result = validate_asset_types(TxType::Transfer, "SAL", "SAL1", 6);
         assert!(result.is_err());
+
+        // At HF6, Transfer with SAL1 -> SAL1 is OK
+        let result = validate_asset_types(TxType::Transfer, "SAL1", "SAL1", 6);
+        assert!(result.is_ok());
+
+        // At HF5, Transfer with SAL -> SAL is OK
+        let result = validate_asset_types(TxType::Transfer, "SAL", "SAL", 5);
+        assert!(result.is_ok());
+
+        // At HF5, Transfer with SAL1 is rejected (must be SAL)
+        let result = validate_asset_types(TxType::Transfer, "SAL1", "SAL1", 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_asset_hf_segregation() {
+        // Pre-HF6: must use SAL
+        assert!(validate_asset_types(TxType::Transfer, "SAL", "SAL", 1).is_ok());
+        assert!(validate_asset_types(TxType::Transfer, "SAL", "SAL", 5).is_ok());
+        assert!(validate_asset_types(TxType::Transfer, "SAL1", "SAL1", 5).is_err());
+
+        // HF6+: must use SAL1
+        assert!(validate_asset_types(TxType::Transfer, "SAL1", "SAL1", 6).is_ok());
+        assert!(validate_asset_types(TxType::Transfer, "SAL1", "SAL1", 10).is_ok());
+        assert!(validate_asset_types(TxType::Transfer, "SAL", "SAL", 6).is_err());
+
+        // AUDIT: source must be SAL (per AUDIT_HARD_FORKS config)
+        assert!(validate_asset_types(TxType::Audit, "SAL", "SAL1", 6).is_ok());
+        assert!(validate_asset_types(TxType::Audit, "SAL1", "SAL1", 6).is_err());
+
+        // MINER/PROTOCOL: exempt from source check (they set asset in coinbase)
+        assert!(validate_asset_types(TxType::Miner, "SAL", "SAL", 1).is_ok());
+        assert!(validate_asset_types(TxType::Miner, "SAL1", "SAL1", 6).is_ok());
     }
 
     #[test]
@@ -767,11 +922,49 @@ mod tests {
 
     #[test]
     fn test_validate_ring_size() {
-        let sizes = vec![16, 16, 16];
-        assert!(validate_input_ring_sizes(&sizes).is_ok());
+        // All ring size 16, all mixable → OK
+        assert!(validate_input_ring_sizes(&[16, 16, 16], 0, 3, 2).is_ok());
 
-        let sizes = vec![16, 11, 16];
-        assert!(validate_input_ring_sizes(&sizes).is_err());
+        // Inconsistent ring sizes → rejected
+        assert!(validate_input_ring_sizes(&[16, 11, 16], 0, 3, 2).is_err());
+
+        // Ring size > 16 → rejected even if all mixable
+        assert!(validate_input_ring_sizes(&[17, 17], 0, 2, 2).is_err());
+
+        // Empty inputs → OK
+        assert!(validate_input_ring_sizes(&[], 0, 0, 2).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ring_size_unmixable() {
+        // Low ring size with unmixable inputs and ≤1 mixable → OK
+        assert!(validate_input_ring_sizes(&[4, 4], 2, 0, 2).is_ok());
+        assert!(validate_input_ring_sizes(&[8, 8], 1, 1, 2).is_ok());
+
+        // Low ring size with no unmixable → rejected
+        assert!(validate_input_ring_sizes(&[4, 4], 0, 2, 2).is_err());
+
+        // Low ring size with >1 mixable → rejected
+        assert!(validate_input_ring_sizes(&[4, 4, 4], 1, 2, 2).is_err());
+
+        // Ring size 16 always OK regardless of unmixable count
+        assert!(validate_input_ring_sizes(&[16], 1, 0, 2).is_ok());
+        assert!(validate_input_ring_sizes(&[16, 16], 0, 2, 2).is_ok());
+    }
+
+    #[test]
+    fn test_validate_ring_size_hf1_skipped() {
+        // Before HF2, ring size check is skipped entirely
+        assert!(validate_input_ring_sizes(&[1], 0, 1, 1).is_ok());
+        assert!(validate_input_ring_sizes(&[4, 8], 0, 2, 1).is_ok());
+        assert!(validate_input_ring_sizes(&[100], 0, 1, 1).is_ok());
+    }
+
+    #[test]
+    fn test_min_tx_version_for_inputs() {
+        assert_eq!(min_tx_version_for_inputs(0), 2);
+        assert_eq!(min_tx_version_for_inputs(1), 1);
+        assert_eq!(min_tx_version_for_inputs(3), 1);
     }
 
     #[test]
