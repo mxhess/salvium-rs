@@ -116,6 +116,16 @@ CREATE TABLE IF NOT EXISTS stakes (
 );
 CREATE INDEX IF NOT EXISTS idx_stakes_status ON stakes(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_stakes_output_key ON stakes(change_output_key) WHERE change_output_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS address_book (
+  row_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  address         TEXT NOT NULL,
+  label           TEXT NOT NULL DEFAULT '',
+  description     TEXT NOT NULL DEFAULT '',
+  payment_id      TEXT NOT NULL DEFAULT '',
+  created_at      INTEGER,
+  updated_at      INTEGER
+);
 ";
 
 // ─── Data Models ────────────────────────────────────────────────────────────
@@ -267,6 +277,21 @@ pub struct StakeRow {
     pub return_timestamp: Option<i64>,
     #[serde(default = "default_zero_str")]
     pub return_amount: String,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddressBookEntry {
+    pub row_id: i64,
+    pub address: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub payment_id: String,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
@@ -669,7 +694,8 @@ impl WalletDb {
             "DELETE FROM outputs;
              DELETE FROM transactions;
              DELETE FROM key_images;
-             DELETE FROM meta;"
+             DELETE FROM meta;
+             DELETE FROM address_book;"
         )
     }
 
@@ -954,6 +980,124 @@ impl WalletDb {
         )?;
         Ok(())
     }
+
+    // ── Transaction Notes ────────────────────────────────────────────────
+
+    /// Set a user-provided note on a transaction.
+    pub fn set_tx_note(&self, tx_hash: &str, note: &str) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "UPDATE transactions SET note = ?1, updated_at = ?2 WHERE tx_hash = ?3",
+            params![note, now, tx_hash],
+        )?;
+        Ok(())
+    }
+
+    /// Get notes for a list of transaction hashes.
+    /// Returns a map of tx_hash → note (only for txs that exist).
+    pub fn get_tx_notes(&self, tx_hashes: &[&str]) -> Result<HashMap<String, String>, rusqlite::Error> {
+        let mut result = HashMap::new();
+        for hash in tx_hashes {
+            if let Some(row) = self.get_tx(hash)? {
+                result.insert(row.tx_hash, row.note);
+            }
+        }
+        Ok(result)
+    }
+
+    // ── Address Book ─────────────────────────────────────────────────────
+
+    /// Add an entry to the address book. Returns the row_id.
+    pub fn add_address_book_entry(
+        &self,
+        address: &str,
+        label: &str,
+        description: &str,
+        payment_id: &str,
+    ) -> Result<i64, rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "INSERT INTO address_book (address, label, description, payment_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![address, label, description, payment_id, now, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get all address book entries.
+    pub fn get_address_book(&self) -> Result<Vec<AddressBookEntry>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT row_id, address, label, description, payment_id, created_at, updated_at
+             FROM address_book ORDER BY row_id"
+        )?;
+        let rows = stmt.query_map([], |r| Ok(row_to_address_book(r)))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    /// Get a single address book entry by row_id.
+    pub fn get_address_book_entry(&self, row_id: i64) -> Result<Option<AddressBookEntry>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT row_id, address, label, description, payment_id, created_at, updated_at
+             FROM address_book WHERE row_id = ?1",
+            params![row_id],
+            |r| Ok(row_to_address_book(r)),
+        ).optional()
+    }
+
+    /// Edit an address book entry.
+    pub fn edit_address_book_entry(
+        &self,
+        row_id: i64,
+        address: Option<&str>,
+        label: Option<&str>,
+        description: Option<&str>,
+        payment_id: Option<&str>,
+    ) -> Result<bool, rusqlite::Error> {
+        let now = now_millis();
+        let mut sets = vec!["updated_at = ?1".to_string()];
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+
+        if let Some(addr) = address {
+            param_values.push(Box::new(addr.to_string()));
+            sets.push(format!("address = ?{}", param_values.len()));
+        }
+        if let Some(lbl) = label {
+            param_values.push(Box::new(lbl.to_string()));
+            sets.push(format!("label = ?{}", param_values.len()));
+        }
+        if let Some(desc) = description {
+            param_values.push(Box::new(desc.to_string()));
+            sets.push(format!("description = ?{}", param_values.len()));
+        }
+        if let Some(pid) = payment_id {
+            param_values.push(Box::new(pid.to_string()));
+            sets.push(format!("payment_id = ?{}", param_values.len()));
+        }
+
+        param_values.push(Box::new(row_id));
+        let sql = format!(
+            "UPDATE address_book SET {} WHERE row_id = ?{}",
+            sets.join(", "),
+            param_values.len()
+        );
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+        let changed = self.conn.execute(&sql, params_ref.as_slice())?;
+        Ok(changed > 0)
+    }
+
+    /// Delete an address book entry by row_id.
+    pub fn delete_address_book_entry(&self, row_id: i64) -> Result<bool, rusqlite::Error> {
+        let changed = self.conn.execute(
+            "DELETE FROM address_book WHERE row_id = ?1",
+            params![row_id],
+        )?;
+        Ok(changed > 0)
+    }
 }
 
 // ─── Unlock Logic ───────────────────────────────────────────────────────────
@@ -1050,6 +1194,18 @@ fn row_to_tx(r: &rusqlite::Row<'_>) -> TransactionRow {
         note: r.get::<_, String>(21).unwrap_or_default(),
         created_at: r.get(22).ok(),
         updated_at: r.get(23).ok(),
+    }
+}
+
+fn row_to_address_book(r: &rusqlite::Row<'_>) -> AddressBookEntry {
+    AddressBookEntry {
+        row_id: r.get(0).unwrap_or(0),
+        address: r.get::<_, String>(1).unwrap_or_default(),
+        label: r.get::<_, String>(2).unwrap_or_default(),
+        description: r.get::<_, String>(3).unwrap_or_default(),
+        payment_id: r.get::<_, String>(4).unwrap_or_default(),
+        created_at: r.get(5).ok(),
+        updated_at: r.get(6).ok(),
     }
 }
 

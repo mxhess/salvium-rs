@@ -344,6 +344,87 @@ impl Wallet {
         db.get_stakes(status, None)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
+
+    // ── Transaction Notes ────────────────────────────────────────────────
+
+    /// Set a user note on a transaction.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_tx_note(&self, tx_hash: &str, note: &str) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_tx_note(tx_hash, note)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Get notes for a list of transaction hashes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_tx_notes(
+        &self,
+        tx_hashes: &[&str],
+    ) -> Result<std::collections::HashMap<String, String>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_tx_notes(tx_hashes)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    // ── Address Book ─────────────────────────────────────────────────────
+
+    /// Add an entry to the address book. Returns the row_id.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn add_address_book_entry(
+        &self,
+        address: &str,
+        label: &str,
+        description: &str,
+        payment_id: &str,
+    ) -> Result<i64, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.add_address_book_entry(address, label, description, payment_id)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Get all address book entries.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_address_book(
+        &self,
+    ) -> Result<Vec<salvium_crypto::storage::AddressBookEntry>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_address_book()
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Get a single address book entry by row_id.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_address_book_entry(
+        &self,
+        row_id: i64,
+    ) -> Result<Option<salvium_crypto::storage::AddressBookEntry>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_address_book_entry(row_id)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Edit an address book entry. Returns true if the entry was found and updated.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn edit_address_book_entry(
+        &self,
+        row_id: i64,
+        address: Option<&str>,
+        label: Option<&str>,
+        description: Option<&str>,
+        payment_id: Option<&str>,
+    ) -> Result<bool, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.edit_address_book_entry(row_id, address, label, description, payment_id)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Delete an address book entry. Returns true if the entry existed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn delete_address_book_entry(&self, row_id: i64) -> Result<bool, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.delete_address_book_entry(row_id)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
 }
 
 /// Check if an output is unlocked (spendable) at the given height.

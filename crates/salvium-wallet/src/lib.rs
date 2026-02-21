@@ -29,5 +29,5 @@ pub use js_import::{JsWalletSecrets, decrypt_js_wallet};
 #[cfg(not(target_arch = "wasm32"))]
 pub use salvium_crypto::storage::{
     OutputRow, TransactionRow, StakeRow, SubaddressIndex,
-    OutputQuery, TxQuery, BalanceResult, WalletDb,
+    OutputQuery, TxQuery, BalanceResult, WalletDb, AddressBookEntry,
 };
