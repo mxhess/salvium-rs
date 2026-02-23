@@ -1,0 +1,204 @@
+name: Build & Publish Libraries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Android (arm64-v8a, armeabi-v7a, x86_64) ─────────────────────────────
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build Android libraries
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: ./scripts/build-android.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: prebuilt/android/
+
+  # ── Linux x86_64 ──────────────────────────────────────────────────────────
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Linux libraries
+        run: ./scripts/build-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: prebuilt/linux-x86_64/
+
+  # ── macOS (universal arm64 + x86_64) ──────────────────────────────────────
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build macOS libraries
+        run: ./scripts/build-macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: prebuilt/macos/
+
+  # ── iOS (device + simulator xcframework) ──────────────────────────────────
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: Build iOS frameworks
+        run: ./scripts/build-ios.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: prebuilt/ios/
+
+  # ── Windows x86_64 (cross-compiled from Linux) ───────────────────────────
+  windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install MinGW
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build Windows libraries
+        run: ./scripts/build-windows.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: prebuilt/windows-x86_64/
+
+  # ── Publish to salvium-rs-release ─────────────────────────────────────────
+  publish:
+    needs: [android, linux, macos, ios, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package platform archives
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          mkdir -p release
+
+          # Android
+          cd artifacts/android
+          tar czf "../../release/salvium-libs-android-${TAG}.tar.gz" .
+          cd ../..
+
+          # Linux
+          cd artifacts/linux-x86_64
+          tar czf "../../release/salvium-libs-linux-x86_64-${TAG}.tar.gz" .
+          cd ../..
+
+          # macOS
+          cd artifacts/macos
+          tar czf "../../release/salvium-libs-macos-universal-${TAG}.tar.gz" .
+          cd ../..
+
+          # iOS
+          cd artifacts/ios
+          tar czf "../../release/salvium-libs-ios-${TAG}.tar.gz" .
+          cd ../..
+
+          # Windows
+          cd artifacts/windows-x86_64
+          zip -r "../../release/salvium-libs-windows-x86_64-${TAG}.zip" .
+          cd ../..
+
+          ls -lh release/
+
+      - name: Push to salvium-rs-release
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          REPO="salvium-project/salvium-rs-releases"
+
+          # Create release via GitHub API
+          RELEASE_ID=$(curl -s -X POST \
+            -H "Authorization: token $RELEASE_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/releases" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Pre-built Salvium Rust libraries for all platforms.\n\nBuilt from salvium-rs ${TAG}.\",\"draft\":false}" \
+            | jq -r '.id')
+
+          echo "Release ID: $RELEASE_ID"
+
+          # Upload each archive as a release asset
+          for file in release/*; do
+            filename=$(basename "$file")
+            echo "Uploading $filename..."
+            curl -s -X POST \
+              -H "Authorization: token $RELEASE_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" \
+              --data-binary "@$file"
+          done
+
+          echo "==> Published to https://github.com/${REPO}/releases/tag/${TAG}"

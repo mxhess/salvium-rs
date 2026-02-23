@@ -1285,10 +1285,13 @@ fn detect_spent_outputs(
             .get_output(ki_hex)
             .map_err(|e| WalletError::Storage(e.to_string()))?;
         if let Some(row) = output {
+            // Count all outputs that belong to us, even if already marked spent
+            // (e.g. by mark_inputs_spent after TX submission). This ensures
+            // stake recording still triggers when the block is later synced.
+            spent_count += 1;
             if !row.is_spent {
                 db.mark_spent(ki_hex, tx_hash_hex, block_height as i64)
                     .map_err(|e| WalletError::Storage(e.to_string()))?;
-                spent_count += 1;
             }
         }
     }

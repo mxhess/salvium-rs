@@ -1,6 +1,6 @@
 [package]
 name = "salvium-tx"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "Transaction construction, parsing, and analysis for Salvium"
 

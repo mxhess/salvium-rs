@@ -1,99 +1,96 @@
-                                 Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
+Salvium-RS Source-Available License
+Version 1.0, February 2026
 
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+Copyright (c) 2024-2026 The Salvium Project. All rights reserved.
 
-   1. Definitions.
 
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
+TERMS AND CONDITIONS
 
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
+1. Definitions.
 
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
+   "Software" means the source code, object code, documentation, and
+   any associated files contained in this repository.
 
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
+   "Author" means The Salvium Project and its principal copyright holders.
 
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
+   "Designee" means any individual, organization, or entity that has
+   received express written authorization from the Author to use the
+   Software under the terms of Section 2.
 
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
+   "Commercial License" means a separate written agreement between the
+   Author and a licensee, executed under the terms described in Section 3
+   and the accompanying LICENSE-COMMERCIAL file.
 
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
+2. Author and Designee Rights.
 
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
+   The Author and all Designees are granted a perpetual, worldwide,
+   royalty-free, irrevocable license to use, copy, modify, distribute,
+   sublicense, and create derivative works of the Software, without
+   restriction, for any purpose including commercial use.
 
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner.
+3. Non-Commercial Use — Free.
 
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
+   Any individual or entity that is not the Author or a Designee may
+   use, copy, modify, and create derivative works of the Software free
+   of charge, provided that ALL of the following conditions are met:
 
-   2. Grant of Copyright License.
-      Subject to the terms and conditions of this License, each Contributor
-      hereby grants to You a perpetual, worldwide, non-exclusive,
-      no-charge, royalty-free, irrevocable copyright license to reproduce,
-      prepare Derivative Works of, publicly display, publicly perform,
-      sublicense, and distribute the Work and such Derivative Works in
-      Source or Object form.
+     (a) The Software and any derivative works are used solely for
+         non-commercial purposes. "Non-commercial" means the user does
+         not charge fees, generate revenue, accept donations, or derive
+         any direct or indirect monetary benefit from any product or
+         service that incorporates the Software.
 
-   3. Grant of Patent License.
-      Subject to the terms and conditions of this License, each Contributor
-      hereby grants to You a perpetual, worldwide, non-exclusive,
-      no-charge, royalty-free, irrevocable (except as stated in this section)
-      patent license to make, have made, use, offer to sell, sell, import,
-      and otherwise transfer the Work.
+     (b) Any public distribution of the Software or derivative works
+         must retain this license notice in its entirety and clearly
+         attribute The Salvium Project as the original author.
 
-   4. Redistribution.
-      You may reproduce and distribute copies of the Work or Derivative
-      Works thereof in any medium, with or without modifications.
+     (c) The Software is not sublicensed to any third party for
+         commercial use.
 
-   5. Submission of Contributions.
-      Unless You explicitly state otherwise, any Contribution intentionally
-      submitted for inclusion in the Work shall be under the terms of this
-      License.
+   If at any time the user begins to derive monetary benefit from a
+   product or service incorporating the Software, they must obtain a
+   Commercial License within 30 days or cease all use. There is no
+   revenue threshold — any monetary benefit triggers this requirement.
 
-   6. Trademarks.
-      This License does not grant permission to use the trade names,
-      trademarks, service marks, or product names of the Licensor.
+4. Commercial Use — License Required.
 
-   7. Disclaimer of Warranty.
-      Unless required by applicable law or agreed to in writing, Licensor
-      provides the Work on an "AS IS" BASIS.
+   Any use of the Software that does not qualify under Section 2
+   (Author/Designee) or Section 3 (Non-Commercial) requires a
+   Commercial License obtained directly from the Author. This includes
+   but is not limited to:
 
-   8. Limitation of Liability.
-      In no event shall any Contributor be liable for damages.
+     (a) incorporating the Software into any product or service that
+         generates revenue, directly or indirectly,
+     (b) distributing compiled libraries or binaries of the Software
+         as part of a commercial offering,
+     (c) offering paid services built on the Software, or
+     (d) using the Software within an organization that charges
+         customers for products or services that depend on it.
 
-   9. Accepting Warranty or Additional Liability.
-      While redistributing the Work, You may choose to offer support or
-      warranty obligations on Your own behalf.
+   See the LICENSE-COMMERCIAL file for details on obtaining a
+   Commercial License.
 
-END OF TERMS AND CONDITIONS
+5. Third-Party Components.
+
+   This Software incorporates open-source dependencies governed by their
+   own licenses (MIT, Apache-2.0, BSD, ISC, etc.). Those licenses apply
+   solely to their respective components and are unaffected by this
+   license. Run `cargo license` for a full list of third-party licenses.
+
+6. No Warranty.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+   ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+   OR OTHER DEALINGS IN THE SOFTWARE.
+
+7. Termination.
+
+   Any use of the Software that violates the terms of this license
+   automatically and immediately terminates all rights granted herein.
+   Upon termination, the violating party must cease all use and destroy
+   all copies of the Software in their possession.
 

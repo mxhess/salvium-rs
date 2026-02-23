@@ -1,6 +1,6 @@
 [package]
 name = "salvium-consensus"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "Blockchain validation rules, tree hash, oracle pricing, and mining utilities for Salvium"
 

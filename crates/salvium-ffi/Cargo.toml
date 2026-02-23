@@ -1,6 +1,6 @@
 [package]
 name = "salvium-ffi"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "C FFI shim for wallet, daemon, and transaction operations"
 

@@ -1,16 +1,70 @@
-Commercial License Notice
+Salvium-RS Commercial License
 
-This software is available under a commercial license for proprietary use,
-closed-source redistribution, or other use cases not compatible with the
-Apache License, Version 2.0.
+Copyright (c) 2024-2026 The Salvium Project. All rights reserved.
 
-Commercial licenses are offered by the Salvium project authors and may
-include alternative terms, warranties, indemnification, or support.
 
-For commercial licensing inquiries, contact:
+OVERVIEW
 
-    mxhess@proton.me
+The Salvium-RS Software is source-available under the terms described
+in the LICENSE file. Use beyond personal educational study of the source
+code requires a Commercial License from the Author.
 
-Use of this software without a commercial license is governed solely by
-the Apache License, Version 2.0.
+This file describes the terms under which a Commercial License may be
+obtained.
+
+
+WHO NEEDS A COMMERCIAL LICENSE
+
+You need a Commercial License if you are not the Author or a Designee
+(as defined in the LICENSE file) and you intend to:
+
+  - Use the Software or its compiled libraries in any application,
+    product, or service (whether commercial or non-commercial)
+  - Distribute the Software or derivative works to third parties
+  - Deploy the Software's compiled binaries (libsalvium_crypto,
+    libsalvium_ffi, or any other build artifact) in any environment
+  - Integrate the Software's APIs into your own software
+
+
+COMMERCIAL LICENSE TERMS
+
+Commercial licenses are issued on an annual basis and must be renewed
+each year for continued use. A lapsed license requires the licensee to
+cease all use of the Software until renewed or renegotiated.
+
+License terms are negotiated individually and may include, at the
+Author's discretion:
+
+  - An annual license fee (the specific amount is set by contract)
+  - Per-seat, per-deployment, or revenue-based pricing
+  - Scope restrictions (single product, single organization, etc.)
+  - Source code access and modification rights
+  - Technical support and maintenance
+  - Warranty and indemnification provisions
+
+There are no free commercial licenses. Any use that generates revenue,
+directly or indirectly, requires a paid annual license from the Author.
+
+
+HOW TO OBTAIN A COMMERCIAL LICENSE
+
+Contact the Author:
+
+    The Salvium Project
+    Email: mxhess@proton.me
+    Web:   https://salvium.io
+
+Please include:
+
+  - Your name and organization
+  - A description of your intended use
+  - Expected scale (users, deployments, revenue)
+
+
+DESIGNEE STATUS
+
+The Author may grant Designee status in writing, which confers the
+same rights as the Author under the LICENSE file. Designee status
+is granted at the Author's sole discretion and may be revoked with
+reasonable written notice.
 

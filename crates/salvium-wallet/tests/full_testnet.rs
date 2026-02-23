@@ -136,6 +136,23 @@ fn resume_from_hf() -> u8 {
         .unwrap_or(0)
 }
 
+/// Auto-detect the appropriate resume HF based on the daemon's current height.
+///
+/// If the chain has already progressed past a fork boundary, the daemon will
+/// reject transactions built with that fork's parameters (wrong rct_type, etc.).
+/// Find the latest fork whose height the chain has passed, and resume from there.
+fn auto_resume_hf(daemon_height: u64) -> u8 {
+    let mut resume = 0u8;
+    for (i, fork) in FORKS.iter().enumerate() {
+        let next_height = FORKS.get(i + 1).map(|f| f.height).unwrap_or(u64::MAX);
+        if daemon_height >= next_height {
+            // Chain is past this fork AND the next one — skip this fork
+            resume = fork.hf + 1;
+        }
+    }
+    resume
+}
+
 async fn get_daemon_height(daemon: &DaemonRpc) -> u64 {
     let info = daemon.get_info().await.expect("failed to get daemon info");
     info.height
@@ -1265,7 +1282,7 @@ async fn full_testnet_hardfork_progression() {
     println!("=== Phase 0: Setup ===\n");
 
     let url = daemon_url();
-    let resume_hf = resume_from_hf();
+    let env_resume_hf = resume_from_hf();
     let daemon = DaemonRpc::new(&url);
 
     let info = daemon.get_info().await.expect("cannot connect to daemon");
@@ -1276,8 +1293,16 @@ async fn full_testnet_hardfork_progression() {
     );
     assert!(info.synchronized, "daemon is not synchronized");
 
+    // Auto-detect resume point from chain state if not explicitly set.
+    // If the chain has already advanced past fork boundaries, skip those
+    // forks — the daemon will reject TXs built with outdated parameters.
+    let resume_hf = if env_resume_hf > 0 {
+        env_resume_hf
+    } else {
+        auto_resume_hf(info.height)
+    };
     if resume_hf > 0 {
-        println!("  Resuming from HF{}", resume_hf);
+        println!("  Resuming from HF{} (chain already at height {})", resume_hf, info.height);
     }
 
     let fixture = TestFixture::create();

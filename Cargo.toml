@@ -17,8 +17,9 @@ members = [
 ]
 
 [workspace.package]
+version = "1.0.7-r001"
 edition = "2021"
-license = "MIT"
+license = "LicenseRef-Salvium-RS"
 repository = "https://github.com/salvium/salvium-rs"
 
 [workspace.dependencies]

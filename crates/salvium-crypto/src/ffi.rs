@@ -2140,6 +2140,674 @@ pub unsafe extern "C" fn salvium_storage_delete_stakes_above(
     })
 }
 
+// ─── Storage: Output Freeze / Thaw / Unspend ────────────────────────────────
+
+/// Mark an output as unspent (reverse a previous mark_spent).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_mark_unspent(
+    handle: u32,
+    key_image: *const u8,
+    ki_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ki_str = match std::str::from_utf8(slice::from_raw_parts(key_image, ki_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.mark_unspent(ki_str)) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_mark_unspent: {e}"); -1 }
+        }
+    })
+}
+
+/// Freeze an output (exclude from selection).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_freeze_output(
+    handle: u32,
+    key_image: *const u8,
+    ki_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ki_str = match std::str::from_utf8(slice::from_raw_parts(key_image, ki_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.freeze_output(ki_str)) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_freeze_output: {e}"); -1 }
+        }
+    })
+}
+
+/// Thaw a previously frozen output.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_thaw_output(
+    handle: u32,
+    key_image: *const u8,
+    ki_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let ki_str = match std::str::from_utf8(slice::from_raw_parts(key_image, ki_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.thaw_output(ki_str)) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_thaw_output: {e}"); -1 }
+        }
+    })
+}
+
+/// Look up an output by its one-time public key (hex).
+/// Returns JSON OutputRow or -1 if not found.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_output_by_public_key(
+    handle: u32,
+    public_key: *const u8,
+    pk_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let pk_str = match std::str::from_utf8(slice::from_raw_parts(public_key, pk_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.get_output_by_public_key(pk_str)) {
+            Ok(Some(row)) => {
+                let json = match serde_json::to_vec(&row) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(e) => { log::error!("salvium_storage_get_output_by_public_key: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Storage: Transaction Notes ─────────────────────────────────────────────
+
+/// Set a note on a transaction.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_set_tx_note(
+    handle: u32,
+    tx_hash: *const u8,
+    th_len: usize,
+    note: *const u8,
+    note_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let hash_str = match std::str::from_utf8(slice::from_raw_parts(tx_hash, th_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let note_str = match std::str::from_utf8(slice::from_raw_parts(note, note_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.set_tx_note(hash_str, note_str)) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_set_tx_note: {e}"); -1 }
+        }
+    })
+}
+
+/// Get notes for multiple transactions.
+/// Input: JSON array of tx hashes: ["hash1","hash2"]
+/// Returns JSON object: {"hash1":"note1","hash2":"note2"}
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_tx_notes(
+    handle: u32,
+    json_buf: *const u8,
+    json_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let hashes: Vec<String> = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let hash_refs: Vec<&str> = hashes.iter().map(|s| s.as_str()).collect();
+        match crate::storage::with_db(handle, |db| db.get_tx_notes(&hash_refs)) {
+            Ok(notes) => {
+                let json = match serde_json::to_vec(&notes) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_storage_get_tx_notes: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Storage: Address Book ──────────────────────────────────────────────────
+
+/// Add an address book entry. Returns the new row_id on success (as i32), -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_add_address_book_entry(
+    handle: u32,
+    json_buf: *const u8,
+    json_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
+            Ok(s) => s,
+            Err(e) => { log::error!("salvium_storage_add_address_book_entry: invalid UTF-8: {e}"); return -1; }
+        };
+        let data: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(e) => { log::error!("salvium_storage_add_address_book_entry: JSON parse error: {e}"); return -1; }
+        };
+        let address = data["address"].as_str().unwrap_or("");
+        let label = data["label"].as_str().unwrap_or("");
+        let description = data["description"].as_str().unwrap_or("");
+        let payment_id = data["paymentId"].as_str().unwrap_or("");
+        match crate::storage::with_db(handle, |db| {
+            db.add_address_book_entry(address, label, description, payment_id)
+        }) {
+            Ok(row_id) => row_id as i32,
+            Err(e) => { log::error!("salvium_storage_add_address_book_entry: DB error: {e}"); -1 }
+        }
+    })
+}
+
+/// Get all address book entries. Returns JSON array.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_address_book(
+    handle: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_address_book()) {
+            Ok(entries) => {
+                let json = match serde_json::to_vec(&entries) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_storage_get_address_book: {e}"); -1 }
+        }
+    })
+}
+
+/// Get a single address book entry by row_id. Returns JSON object or -1 if not found.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_address_book_entry(
+    handle: u32,
+    row_id: i64,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_address_book_entry(row_id)) {
+            Ok(Some(entry)) => {
+                let json = match serde_json::to_vec(&entry) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(e) => { log::error!("salvium_storage_get_address_book_entry: {e}"); -1 }
+        }
+    })
+}
+
+/// Edit an address book entry. Input: JSON with "rowId" and optional "address","label","description","paymentId".
+/// Returns 1 if updated, 0 if not found, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_edit_address_book_entry(
+    handle: u32,
+    json_buf: *const u8,
+    json_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let data: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return -1,
+        };
+        let row_id = data["rowId"].as_i64().unwrap_or(-1);
+        if row_id < 0 { return -1; }
+        let address = data.get("address").and_then(|v| v.as_str());
+        let label = data.get("label").and_then(|v| v.as_str());
+        let description = data.get("description").and_then(|v| v.as_str());
+        let payment_id = data.get("paymentId").and_then(|v| v.as_str());
+        match crate::storage::with_db(handle, |db| {
+            db.edit_address_book_entry(row_id, address, label, description, payment_id)
+        }) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(e) => { log::error!("salvium_storage_edit_address_book_entry: {e}"); -1 }
+        }
+    })
+}
+
+/// Delete an address book entry by row_id. Returns 1 if deleted, 0 if not found, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_delete_address_book_entry(
+    handle: u32,
+    row_id: i64,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.delete_address_book_entry(row_id)) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(e) => { log::error!("salvium_storage_delete_address_book_entry: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Storage: Key-Value Attributes ──────────────────────────────────────────
+
+/// Set a wallet attribute (key-value pair).
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_set_attribute(
+    handle: u32,
+    key: *const u8,
+    key_len: usize,
+    value: *const u8,
+    value_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let key_str = match std::str::from_utf8(slice::from_raw_parts(key, key_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        let val_str = match std::str::from_utf8(slice::from_raw_parts(value, value_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.set_attribute(key_str, val_str)) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_set_attribute: {e}"); -1 }
+        }
+    })
+}
+
+/// Get a wallet attribute by key. Returns the value string or -1 if not found.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_attribute(
+    handle: u32,
+    key: *const u8,
+    key_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let key_str = match std::str::from_utf8(slice::from_raw_parts(key, key_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.get_attribute(key_str)) {
+            Ok(Some(value)) => {
+                let bytes = value.into_bytes().into_boxed_slice();
+                let len = bytes.len();
+                let raw = Box::into_raw(bytes);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(e) => { log::error!("salvium_storage_get_attribute: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Storage: Staked Balance ────────────────────────────────────────────────
+
+/// Get total staked balance for a specific asset type.
+/// Returns JSON: {"stakedBalance":"<atomic_units>"}
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_staked_balance(
+    handle: u32,
+    asset_type: *const u8,
+    at_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let at_str = match std::str::from_utf8(slice::from_raw_parts(asset_type, at_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.get_staked_balance(at_str)) {
+            Ok(balance) => {
+                let result = serde_json::json!({ "stakedBalance": balance.to_string() });
+                let json = serde_json::to_vec(&result).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_storage_get_staked_balance: {e}"); -1 }
+        }
+    })
+}
+
+/// Get staked balances for all asset types.
+/// Returns JSON: {"SAL1":"<amount>", ...}
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_all_staked_balances(
+    handle: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        match crate::storage::with_db(handle, |db| db.get_all_staked_balances()) {
+            Ok(balances) => {
+                let string_map: std::collections::HashMap<String, String> = balances
+                    .into_iter()
+                    .map(|(k, v)| (k, v.to_string()))
+                    .collect();
+                let json = serde_json::to_vec(&string_map).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_storage_get_all_staked_balances: {e}"); -1 }
+        }
+    })
+}
+
+/// Look up a locked stake by its expected return output key.
+/// Returns JSON StakeRow or -1 if not found.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_get_locked_stake_by_return_output_key(
+    handle: u32,
+    key_buf: *const u8,
+    key_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let key_str = match std::str::from_utf8(slice::from_raw_parts(key_buf, key_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match crate::storage::with_db(handle, |db| db.get_locked_stake_by_return_output_key(key_str)) {
+            Ok(Some(stake)) => {
+                let json = match serde_json::to_vec(&stake) {
+                    Ok(j) => j,
+                    Err(_) => return -1,
+                };
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Ok(None) => -1,
+            Err(e) => { log::error!("salvium_storage_get_locked_stake_by_return_output_key: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Storage: Rekey ─────────────────────────────────────────────────────────
+
+/// Change the database encryption key. new_key must be exactly 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_storage_rekey(
+    handle: u32,
+    new_key: *const u8,
+    key_len: usize,
+) -> i32 {
+    catch_ffi(|| {
+        let key = slice::from_raw_parts(new_key, key_len);
+        match crate::storage::with_db(handle, |db| {
+            db.rekey(key).map_err(|e| e)
+        }) {
+            Ok(()) => 0,
+            Err(e) => { log::error!("salvium_storage_rekey: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Wallet Key Derivation ──────────────────────────────────────────────────
+
+/// Derive full wallet keys (CryptoNote + CARROT) from a 32-byte seed.
+///
+/// Output: 416 bytes (13 × 32):
+///   [  0.. 32] cn_spend_secret_key
+///   [ 32.. 64] cn_spend_public_key
+///   [ 64.. 96] cn_view_secret_key
+///   [ 96..128] cn_view_public_key
+///   [128..416] CARROT keys (288 bytes = 9 × 32, same layout as derive_carrot_keys_batch)
+#[no_mangle]
+pub unsafe extern "C" fn salvium_derive_wallet_keys_from_seed(
+    seed: *const u8,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let seed_bytes = crate::to32(slice::from_raw_parts(seed, 32));
+
+        // CryptoNote key derivation
+        let spend_secret = crate::sc_reduce32(&seed_bytes);
+        let spend_secret_32 = crate::to32(&spend_secret);
+        let spend_public = crate::scalar_mult_base(&spend_secret_32);
+        let view_secret = crate::sc_reduce32(&crate::keccak256(&spend_secret_32));
+        let view_secret_32 = crate::to32(&view_secret);
+        let view_public = crate::scalar_mult_base(&view_secret_32);
+
+        // CARROT key derivation (master_secret = spend_secret)
+        let carrot = crate::carrot_keys::derive_carrot_keys(&spend_secret_32);
+
+        // Write CN keys (128 bytes)
+        ptr::copy_nonoverlapping(spend_secret.as_ptr(), out, 32);
+        ptr::copy_nonoverlapping(spend_public.as_ptr(), out.add(32), 32);
+        ptr::copy_nonoverlapping(view_secret.as_ptr(), out.add(64), 32);
+        ptr::copy_nonoverlapping(view_public.as_ptr(), out.add(96), 32);
+        // Write CARROT keys (288 bytes)
+        ptr::copy_nonoverlapping(carrot.as_ptr(), out.add(128), 288);
+        0
+    })
+}
+
+// ─── Address Generation & Parsing ───────────────────────────────────────────
+
+/// Create an address string from components.
+///
+/// Parameters:
+///   network: 0 = mainnet, 1 = testnet, 2 = stagenet
+///   format: 0 = legacy, 1 = carrot
+///   addr_type: 0 = standard, 1 = integrated, 2 = subaddress
+///   spend_pub: 32 bytes
+///   view_pub: 32 bytes
+///   payment_id: 16 bytes (only for integrated), null otherwise
+///   payment_id_len: 0 or 16
+///
+/// Returns the address string via out_ptr/out_len.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_create_address(
+    network: u8,
+    format: u8,
+    addr_type: u8,
+    spend_pub: *const u8,
+    view_pub: *const u8,
+    payment_id: *const u8,
+    payment_id_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        use salvium_types::constants::{AddressFormat, AddressType, Network};
+
+        let net = match network {
+            0 => Network::Mainnet,
+            1 => Network::Testnet,
+            2 => Network::Stagenet,
+            _ => return -1,
+        };
+        let fmt = match format {
+            0 => AddressFormat::Legacy,
+            1 => AddressFormat::Carrot,
+            _ => return -1,
+        };
+        let at = match addr_type {
+            0 => AddressType::Standard,
+            1 => AddressType::Integrated,
+            2 => AddressType::Subaddress,
+            _ => return -1,
+        };
+
+        let spend = slice::from_raw_parts(spend_pub, 32);
+        let view = slice::from_raw_parts(view_pub, 32);
+        let pid = if payment_id_len > 0 && !payment_id.is_null() {
+            Some(slice::from_raw_parts(payment_id, payment_id_len))
+        } else {
+            None
+        };
+
+        match salvium_types::address::create_address_raw(net, fmt, at, spend, view, pid) {
+            Ok(addr) => {
+                let bytes = addr.into_bytes().into_boxed_slice();
+                let len = bytes.len();
+                let raw = Box::into_raw(bytes);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_create_address: {e}"); -1 }
+        }
+    })
+}
+
+/// Parse an address string into its components.
+///
+/// Returns JSON:
+/// {
+///   "network": "mainnet"|"testnet"|"stagenet",
+///   "format": "legacy"|"carrot",
+///   "addressType": "standard"|"integrated"|"subaddress",
+///   "spendPublicKey": "hex...",
+///   "viewPublicKey": "hex...",
+///   "paymentId": "hex..." | null
+/// }
+#[no_mangle]
+pub unsafe extern "C" fn salvium_parse_address(
+    addr: *const u8,
+    addr_len: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let addr_str = match std::str::from_utf8(slice::from_raw_parts(addr, addr_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match salvium_types::address::parse_address(addr_str) {
+            Ok(parsed) => {
+                let pid = parsed.payment_id.map(|p| hex::encode(p));
+                let result = serde_json::json!({
+                    "network": format!("{:?}", parsed.network).to_lowercase(),
+                    "format": format!("{:?}", parsed.format).to_lowercase(),
+                    "addressType": format!("{:?}", parsed.address_type).to_lowercase(),
+                    "spendPublicKey": hex::encode(parsed.spend_public_key),
+                    "viewPublicKey": hex::encode(parsed.view_public_key),
+                    "paymentId": pid,
+                });
+                let json = serde_json::to_vec(&result).unwrap();
+                let len = json.len();
+                let buf = json.into_boxed_slice();
+                let raw = Box::into_raw(buf);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_parse_address: {e}"); -1 }
+        }
+    })
+}
+
+// ─── Mnemonic Seed Encoding ─────────────────────────────────────────────────
+
+/// Convert a 32-byte seed to a 25-word mnemonic (English).
+/// Returns the mnemonic string via out_ptr/out_len.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_seed_to_mnemonic(
+    seed: *const u8,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    catch_ffi(|| {
+        let seed_arr = crate::to32(slice::from_raw_parts(seed, 32));
+        match salvium_types::mnemonic::seed_to_mnemonic(&seed_arr, Some("english")) {
+            Ok(words) => {
+                let bytes = words.into_bytes().into_boxed_slice();
+                let len = bytes.len();
+                let raw = Box::into_raw(bytes);
+                *out_ptr = (*raw).as_mut_ptr();
+                *out_len = len;
+                0
+            }
+            Err(e) => { log::error!("salvium_seed_to_mnemonic: {e}"); -1 }
+        }
+    })
+}
+
+/// Convert a mnemonic string to a 32-byte seed.
+/// out: must be at least 32 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_mnemonic_to_seed(
+    mnemonic: *const u8,
+    mnemonic_len: usize,
+    out: *mut u8,
+) -> i32 {
+    catch_ffi(|| {
+        let words = match std::str::from_utf8(slice::from_raw_parts(mnemonic, mnemonic_len)) {
+            Ok(s) => s,
+            Err(_) => return -1,
+        };
+        match salvium_types::mnemonic::mnemonic_to_seed(words, None) {
+            Ok(result) => {
+                ptr::copy_nonoverlapping(result.seed.as_ptr(), out, 32);
+                0
+            }
+            Err(e) => { log::error!("salvium_mnemonic_to_seed: {e}"); -1 }
+        }
+    })
+}
+
 /// Free Rust-allocated result buffer.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_free_buf(buf_ptr: *mut u8, len: usize) {
