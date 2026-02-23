@@ -25,7 +25,7 @@ use salvium_tx::fee::{self, FeePriority};
 use salvium_tx::sign::sign_transaction;
 use salvium_tx::types::{output_type, tx_type, Transaction, TxInput};
 use salvium_wallet::utxo::SelectionStrategy;
-use salvium_wallet::{decrypt_js_wallet, Wallet};
+use salvium_wallet::{decrypt_js_wallet, SyncEvent, Wallet, WalletKeys};
 use salvium_types::address::parse_address;
 use salvium_types::constants::Network;
 
@@ -649,6 +649,7 @@ impl<'a> TestTransactor<'a> {
         dest_view: [u8; 32],
         amount: u64,
         fork: &ForkSpec,
+        is_subaddress: bool,
     ) -> TxResult {
         let estimated_fee = self.estimate_fee(1, 2, fork).await;
         let inputs = self.prepare_inputs(amount, estimated_fee, fork).await;
@@ -666,7 +667,7 @@ impl<'a> TestTransactor<'a> {
                 amount,
                 asset_type: fork.asset.to_string(),
                 payment_id: [0u8; 8],
-                is_subaddress: false,
+                is_subaddress,
             })
             .set_change_address(chg_spend, chg_view)
             .set_asset_types(fork.asset, fork.asset)
@@ -899,20 +900,66 @@ impl<'a> TestTransactor<'a> {
 
 // ─── Wallet Helpers ──────────────────────────────────────────────────────────
 
-async fn sync_wallet(wallet: &Wallet, daemon: &DaemonRpc, label: &str) {
+#[allow(dead_code)]
+struct SyncStats {
+    sync_height: u64,
+    parse_errors: usize,
+    empty_blobs: usize,
+    outputs_found: usize,
+}
+
+async fn sync_wallet_checked(wallet: &Wallet, daemon: &DaemonRpc, label: &str) -> SyncStats {
     println!("  Syncing wallet {}...", label);
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<SyncEvent>(256);
+
+    let stats_task = tokio::spawn(async move {
+        let mut parse_errors = 0usize;
+        let mut empty_blobs = 0usize;
+        let mut outputs_found = 0usize;
+        while let Some(event) = event_rx.recv().await {
+            if let SyncEvent::Progress {
+                parse_errors: pe,
+                empty_blobs: eb,
+                outputs_found: of,
+                ..
+            } = event
+            {
+                parse_errors = pe;
+                empty_blobs = eb;
+                outputs_found = of;
+            }
+        }
+        (parse_errors, empty_blobs, outputs_found)
+    });
+
     let t0 = Instant::now();
     let sync_height = wallet
-        .sync(daemon, None)
+        .sync(daemon, Some(&event_tx))
         .await
-        .expect("wallet sync failed");
+        .expect("sync failed");
+    drop(event_tx);
+    let (parse_errors, empty_blobs, outputs_found) = stats_task.await.unwrap();
     let elapsed = t0.elapsed().as_secs_f64();
+
     println!(
-        "  Wallet {} synced to height {} ({})",
+        "  {} synced to {} ({}, {} outputs, {} parse errors, {} empty blobs)",
         label,
         sync_height,
-        fmt_duration(elapsed)
+        fmt_duration(elapsed),
+        outputs_found,
+        parse_errors,
+        empty_blobs,
     );
+
+    assert_eq!(parse_errors, 0, "{} had parse errors during sync", label);
+    assert_eq!(empty_blobs, 0, "{} had empty blobs during sync", label);
+
+    SyncStats {
+        sync_height,
+        parse_errors,
+        empty_blobs,
+        outputs_found,
+    }
 }
 
 fn print_balance(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
@@ -930,6 +977,12 @@ fn print_balance(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
         fmt_sal(unlocked),
         fmt_sal(locked),
     );
+    (total, unlocked)
+}
+
+fn assert_balance_positive(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
+    let (total, unlocked) = print_balance(wallet, label, asset_type);
+    assert!(total > 0, "{} {} total balance should be positive", label, asset_type);
     (total, unlocked)
 }
 
@@ -1011,7 +1064,7 @@ async fn run_full_tests(
             fork.asset
         );
         let result =
-            transactor_a.transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork).await;
+            transactor_a.transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
     }
@@ -1027,13 +1080,13 @@ async fn run_full_tests(
     .await;
     stats.record_mining(&ms);
 
-    sync_wallet(&fixture.wallet_a, daemon, "A").await;
-    sync_wallet(&fixture.wallet_b, daemon, "B").await;
+    sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+    sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
 
     // Transfer B→A
     println!("\n  TX 4: Transfer B->A 0.5 {} SAL", fork.asset);
     let result = transactor_b
-        .transfer(dest_a_spend, dest_a_view, sal(0.5), fork)
+        .transfer(dest_a_spend, dest_a_view, sal(0.5), fork, false)
         .await;
     println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
     stats.record_tx(&result);
@@ -1049,12 +1102,39 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 5: Stake 10 {} SAL", fork.asset);
         let result = transactor_a.stake(sal(10.0), fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
+
+        // Mine past stake lock period (20 blocks on testnet) + maturity
+        println!("\n  Mining past stake lock period...");
+        let ms = mine_to(daemon, get_daemon_height(daemon).await + 30, &addr_a, daemon_url).await;
+        stats.record_mining(&ms);
+
+        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+
+        // Verify stake return was detected via TX-ID matching
+        let stakes = fixture.wallet_a.get_stakes(None).unwrap();
+        assert!(!stakes.is_empty(), "should have at least one stake");
+        let returned = stakes.iter().filter(|s| s.status == "returned").count();
+        let txid_matched = stakes
+            .iter()
+            .filter(|s| s.status == "returned" && s.return_output_key.is_some())
+            .count();
+        println!(
+            "  Stakes: {} total, {} returned, {} via TX-ID match",
+            stakes.len(),
+            returned,
+            txid_matched
+        );
+        assert!(returned > 0, "stake should have been returned after lock period");
+        assert_eq!(
+            returned, txid_matched,
+            "all returns should use TX-ID matching (not height fallback)"
+        );
     }
 
     // Burn + Sweep (HF10+)
@@ -1068,7 +1148,7 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 6: Burn 0.1 {} SAL", fork.asset);
         let result = transactor_a.burn(sal(0.1), fork).await;
@@ -1084,7 +1164,7 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet(&fixture.wallet_b, daemon, "B").await;
+        sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
 
         println!("\n  TX 7: Sweep B->B");
         let result = transactor_b
@@ -1092,6 +1172,63 @@ async fn run_full_tests(
             .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
+
+        // TX 8: Send to Wallet B subaddress (0,1)
+        println!("\n  Mining {} maturity blocks for subaddress test...", MATURITY_BLOCKS);
+        let ms = mine_to(
+            daemon,
+            get_daemon_height(daemon).await + MATURITY_BLOCKS,
+            &addr_a,
+            daemon_url,
+        )
+        .await;
+        stats.record_mining(&ms);
+        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+
+        println!("\n  TX 8: Transfer A->B subaddress (0,1)");
+        let b_maps = fixture.wallet_b.subaddress_maps();
+        let sub_01 = b_maps
+            .cn
+            .iter()
+            .find(|(_, maj, min)| *maj == 0 && *min == 1)
+            .expect("subaddress (0,1) not found in wallet B's CN map");
+        let sub_spend = sub_01.0;
+        let sub_view = fixture.wallet_b.keys().cn.view_public_key;
+        let sub_result = transactor_a
+            .transfer(sub_spend, sub_view, sal(0.5), fork, true)
+            .await;
+        println!("    hash={} fee={}", sub_result.tx_hash, fmt_sal(sub_result.fee));
+        stats.record_tx(&sub_result);
+
+        // Mine + sync, then verify B detected the output at subaddress (0,1)
+        println!("\n  Mining {} maturity blocks...", MATURITY_BLOCKS);
+        let ms = mine_to(
+            daemon,
+            get_daemon_height(daemon).await + MATURITY_BLOCKS,
+            &addr_a,
+            daemon_url,
+        )
+        .await;
+        stats.record_mining(&ms);
+        sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
+
+        // Verify B has an output with subaddress major=0, minor=1
+        let b_query = salvium_crypto::storage::OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: Some(1),
+            min_amount: None,
+            max_amount: None,
+        };
+        let sub_outputs = fixture.wallet_b.get_outputs(&b_query).unwrap();
+        assert!(
+            !sub_outputs.is_empty(),
+            "wallet B should have detected output at subaddress (0,1)"
+        );
+        println!("  Subaddress (0,1) output detected: {} output(s)", sub_outputs.len());
     }
 }
 
@@ -1107,7 +1244,7 @@ async fn run_lightweight_test(
 
     println!("\n  TX: Transfer A->B 0.5 {} SAL (lightweight)", fork.asset);
     let result = transactor_a
-        .transfer(dest_b_spend, dest_b_view, sal(0.5), fork)
+        .transfer(dest_b_spend, dest_b_view, sal(0.5), fork, false)
         .await;
     println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
     stats.record_tx(&result);
@@ -1197,8 +1334,8 @@ async fn full_testnet_hardfork_progression() {
         }
 
         // Sync wallets
-        sync_wallet(&fixture.wallet_a, &daemon, "A").await;
-        sync_wallet(&fixture.wallet_b, &daemon, "B").await;
+        sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
+        sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
 
         // Print pre-test balances
         print_balance(&fixture.wallet_a, "A", fork.asset);
@@ -1237,10 +1374,17 @@ async fn full_testnet_hardfork_progression() {
         stats.record_mining(&ms);
 
         // Sync and print post-test balances
-        sync_wallet(&fixture.wallet_a, &daemon, "A").await;
-        sync_wallet(&fixture.wallet_b, &daemon, "B").await;
-        print_balance(&fixture.wallet_a, "A", fork.asset);
-        print_balance(&fixture.wallet_b, "B", fork.asset);
+        sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
+        sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
+
+        // Wallet A should always have a positive balance (mined many blocks)
+        assert_balance_positive(&fixture.wallet_a, "A", fork.asset);
+        // After Full tests, wallet B should also have positive balance (received transfers)
+        if fork.test_mode == TestMode::Full {
+            assert_balance_positive(&fixture.wallet_b, "B", fork.asset);
+        } else {
+            print_balance(&fixture.wallet_b, "B", fork.asset);
+        }
 
         println!("\n  HF{} complete.", fork.hf);
     }
@@ -1250,30 +1394,40 @@ async fn full_testnet_hardfork_progression() {
     println!("  Phase 7: Final Reconciliation");
     println!("{}", "=".repeat(60));
 
-    sync_wallet(&fixture.wallet_a, &daemon, "A").await;
-    sync_wallet(&fixture.wallet_b, &daemon, "B").await;
+    sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
+    sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
 
     let final_height = get_daemon_height(&daemon).await;
     println!("\n  Chain height: {}", final_height);
 
-    // Print balances for all asset types
+    // Print and assert balances for all asset types
     println!("\n  --- Wallet A ---");
-    print_balance(&fixture.wallet_a, "A", "SAL");
+    let (a_sal, _) = print_balance(&fixture.wallet_a, "A", "SAL");
+    let mut a_total = a_sal;
     if let Ok(bal) = fixture.wallet_a.get_balance("SAL1", 0) {
         let total: u64 = bal.balance.parse().unwrap_or(0);
         if total > 0 {
             print_balance(&fixture.wallet_a, "A", "SAL1");
+            a_total += total;
         }
     }
+    assert!(a_total > 0, "Wallet A total balance (SAL+SAL1) should be positive");
 
     println!("\n  --- Wallet B ---");
-    print_balance(&fixture.wallet_b, "B", "SAL");
+    let (b_sal, _) = print_balance(&fixture.wallet_b, "B", "SAL");
+    let mut b_total = b_sal;
     if let Ok(bal) = fixture.wallet_b.get_balance("SAL1", 0) {
         let total: u64 = bal.balance.parse().unwrap_or(0);
         if total > 0 {
             print_balance(&fixture.wallet_b, "B", "SAL1");
+            b_total += total;
         }
     }
+    assert!(b_total > 0, "Wallet B total balance (SAL+SAL1) should be positive");
+
+    // Verify no overflow/negative values
+    assert!(a_total < u64::MAX / 2, "Wallet A balance looks like overflow: {}", a_total);
+    assert!(b_total < u64::MAX / 2, "Wallet B balance looks like overflow: {}", b_total);
 
     // TX summary
     println!("\n  Transactions: {} succeeded, {} failed", stats.tx_succeeded, stats.tx_failed);
@@ -1283,6 +1437,47 @@ async fn full_testnet_hardfork_progression() {
         "  Total mining time: {}",
         fmt_duration(stats.total_mining_secs)
     );
+
+    // ── Phase 7b: View-Only Wallet Verification ────────────────────────
+    println!("\n  Phase 7b: View-only wallet verification...");
+    {
+        let keys_a = fixture.wallet_a.keys();
+        let view_keys = WalletKeys::view_only_carrot(
+            keys_a.cn.view_secret_key,
+            keys_a.cn.spend_public_key,
+            keys_a.carrot.view_balance_secret,
+            keys_a.carrot.account_spend_pubkey,
+            Network::Testnet,
+        );
+        let tmp_vo = tempfile::tempdir().unwrap();
+        let wallet_vo = Wallet::open(
+            view_keys,
+            tmp_vo.path().join("vo.db").to_str().unwrap(),
+            &[0u8; 32],
+        )
+        .unwrap();
+        sync_wallet_checked(&wallet_vo, &daemon, "A-ViewOnly").await;
+
+        // Compare SAL balance
+        let bal_full_sal = fixture.wallet_a.get_balance("SAL", 0).unwrap();
+        let bal_vo_sal = wallet_vo.get_balance("SAL", 0).unwrap();
+        assert_eq!(
+            bal_full_sal.balance, bal_vo_sal.balance,
+            "view-only wallet should see same SAL total balance as full wallet"
+        );
+
+        // Compare SAL1 balance if present
+        if let (Ok(bf), Ok(bv)) = (
+            fixture.wallet_a.get_balance("SAL1", 0),
+            wallet_vo.get_balance("SAL1", 0),
+        ) {
+            assert_eq!(
+                bf.balance, bv.balance,
+                "view-only wallet should see same SAL1 total balance as full wallet"
+            );
+        }
+        println!("  View-only balance matches full wallet.");
+    }
 
     // ── Phase 8: Gap Sync ───────────────────────────────────────────────
     println!("\n{}", "=".repeat(60));
@@ -1316,24 +1511,31 @@ async fn full_testnet_hardfork_progression() {
         &wallet_c.cn_address().unwrap()[..30]
     );
     println!("  Syncing from genesis...");
-
-    let t0 = Instant::now();
-    let sync_height = wallet_c
-        .sync(&daemon, None)
-        .await
-        .expect("wallet C sync failed");
-    let elapsed = t0.elapsed().as_secs_f64();
-    println!(
-        "  Wallet C synced to height {} in {}",
-        sync_height,
-        fmt_duration(elapsed)
-    );
+    sync_wallet_checked(&wallet_c, &daemon, "C").await;
 
     // Verify zero balance
     let hf_info = daemon.hard_fork_info().await.unwrap();
     let at = if hf_info.version >= 6 { "SAL1" } else { "SAL" };
     let (total_c, _) = print_balance(&wallet_c, "C", at);
     assert_eq!(total_c, 0, "fresh wallet C should have zero balance");
+
+    // ── Phase 8b: Sync Idempotency ─────────────────────────────────────
+    println!("\n  Phase 8b: Sync idempotency...");
+    let pre_height = fixture.wallet_a.sync_height().unwrap();
+    let pre_bal = fixture.wallet_a.get_balance(at, 0).unwrap();
+    sync_wallet_checked(&fixture.wallet_a, &daemon, "A-idempotent").await;
+    let post_height = fixture.wallet_a.sync_height().unwrap();
+    let post_bal = fixture.wallet_a.get_balance(at, 0).unwrap();
+    assert_eq!(pre_height, post_height, "sync height should be unchanged");
+    assert_eq!(
+        pre_bal.balance, post_bal.balance,
+        "balance should be unchanged after re-sync"
+    );
+    assert_eq!(
+        pre_bal.unlocked_balance, post_bal.unlocked_balance,
+        "unlocked balance should be unchanged after re-sync"
+    );
+    println!("  Idempotency check passed.");
 
     // ── Summary ─────────────────────────────────────────────────────────
     let total_elapsed = overall_start.elapsed().as_secs_f64();
