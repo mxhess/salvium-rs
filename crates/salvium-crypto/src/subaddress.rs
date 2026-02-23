@@ -47,6 +47,25 @@ fn cn_subaddress_spend_pubkey(
     spend_pubkey + m_g
 }
 
+/// Derive a single CryptoNote subaddress spend public key.
+///
+/// For (0,0) returns the original spend_pubkey unchanged.
+/// For other indices: D = K_spend + H_s("SubAddr\0" || view_key || major || minor) * G
+pub fn cn_derive_subaddress_spend_pubkey(
+    spend_pubkey: &[u8; 32],
+    view_secret_key: &[u8; 32],
+    major: u32,
+    minor: u32,
+) -> [u8; 32] {
+    let spend_pt = match CompressedEdwardsY(*spend_pubkey).decompress() {
+        Some(pt) => pt,
+        None => return *spend_pubkey,
+    };
+    cn_subaddress_spend_pubkey(&spend_pt, view_secret_key, major, minor)
+        .compress()
+        .to_bytes()
+}
+
 /// Generate the full CryptoNote subaddress map as a flat binary buffer.
 ///
 /// Iterates major 0..=major_count, minor 0..=minor_count.

@@ -2090,6 +2090,7 @@ name = "salvium-tx"
 version = "1.0.7-r001"
 dependencies = [
  "curve25519-dalek",
+ "getrandom 0.2.17",
  "hex",
  "rand 0.8.5",
  "salvium-consensus",

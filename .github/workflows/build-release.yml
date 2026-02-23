@@ -121,9 +121,32 @@ jobs:
           name: windows-x86_64
           path: prebuilt/windows-x86_64/
 
-  # ── Publish to salvium-rs-release ─────────────────────────────────────────
+  # ── WASM (Cloudflare Workers / Browser) ────────────────────────────────
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM package
+        run: ./scripts/build-wasm.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: prebuilt/wasm/
+
+  # ── Publish to salvium-rs-releases ────────────────────────────────────────
   publish:
-    needs: [android, linux, macos, ios, windows]
+    needs: [android, linux, macos, ios, windows, wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -169,6 +192,11 @@ jobs:
           # Windows
           cd artifacts/windows-x86_64
           zip -r "../../release/salvium-libs-windows-x86_64-${TAG}.zip" .
+          cd ../..
+
+          # WASM
+          cd artifacts/wasm
+          tar czf "../../release/salvium-libs-wasm-${TAG}.tar.gz" .
           cd ../..
 
           ls -lh release/

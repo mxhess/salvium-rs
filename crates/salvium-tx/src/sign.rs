@@ -680,7 +680,7 @@ mod tests {
             inputs: vec![input],
             rct_type: rct_type::CLSAG,
             fee,
-            ephemeral_key: None,
+            ephemeral_keys: vec![],
         };
 
         let tx = sign_transaction(unsigned).unwrap();
@@ -796,7 +796,7 @@ mod tests {
             inputs: vec![input],
             rct_type: rct_type::SALVIUM_ONE,
             fee,
-            ephemeral_key: None,
+            ephemeral_keys: vec![],
         };
 
         let tx = sign_transaction(unsigned).unwrap();
@@ -891,7 +891,7 @@ mod tests {
             inputs: vec![input1, input2],
             rct_type: rct_type::CLSAG,
             fee,
-            ephemeral_key: None,
+            ephemeral_keys: vec![],
         };
 
         let tx = sign_transaction(unsigned).unwrap();
@@ -972,7 +972,7 @@ mod tests {
             inputs: vec![input],
             rct_type: rct_type::CLSAG,
             fee,
-            ephemeral_key: None,
+            ephemeral_keys: vec![],
         };
 
         let tx = sign_transaction(unsigned).unwrap();
@@ -1082,7 +1082,7 @@ mod tests {
             inputs: vec![input],
             rct_type: rct_type::SALVIUM_ONE,
             fee,
-            ephemeral_key: None,
+            ephemeral_keys: vec![],
         };
 
         let tx = sign_transaction(unsigned).unwrap();

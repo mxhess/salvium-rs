@@ -30,6 +30,6 @@ pub use pqc::{WalletSecrets, PqcEnvelope, encrypt_envelope, decrypt_envelope};
 // Re-export storage types from salvium-crypto for convenience.
 #[cfg(not(target_arch = "wasm32"))]
 pub use salvium_crypto::storage::{
-    OutputRow, TransactionRow, StakeRow, SubaddressIndex,
+    OutputRow, TransactionRow, StakeRow, SubaddressIndex, SubaddressRow,
     OutputQuery, TxQuery, BalanceResult, WalletDb, AddressBookEntry,
 };

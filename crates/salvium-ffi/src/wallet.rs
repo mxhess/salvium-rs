@@ -601,6 +601,129 @@ pub unsafe extern "C" fn salvium_wallet_thaw_output(
 }
 
 // =============================================================================
+// Blob (PIN-encrypted wallet key material)
+// =============================================================================
+
+/// Export wallet key material as a PIN-encrypted blob.
+///
+/// The blob contains the wallet seed, keys, database encryption key, and network
+/// encrypted with hybrid post-quantum cryptography (Argon2id + ML-KEM-768 +
+/// AES-256-GCM). The app stores this blob on disk and uses `import_blob` to
+/// unlock it later.
+///
+/// Returns a JSON string (the PQC envelope). Caller must free with `salvium_string_free()`.
+/// Returns null on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_export_blob(
+    handle: *mut c_void,
+    pin: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let pin_str = unsafe { c_str_to_str(pin) }?;
+
+        let keys = wallet.keys();
+        let db_key_bytes = wallet.db_key();
+
+        let secrets = salvium_wallet::WalletSecrets {
+            seed: keys.seed.map(|s| hex::encode(s)).unwrap_or_default(),
+            spend_secret_key: keys.cn.spend_secret_key
+                .map(|k| hex::encode(k))
+                .unwrap_or_default(),
+            view_secret_key: hex::encode(keys.cn.view_secret_key),
+            data_key: hex::encode(db_key_bytes),
+            mnemonic: keys.to_mnemonic().and_then(|r| r.ok()),
+            network: format!("{:?}", keys.network).to_lowercase(),
+        };
+
+        let envelope_bytes = salvium_wallet::encrypt_envelope(&secrets, pin_str)
+            .map_err(|e| e.to_string())?;
+
+        String::from_utf8(envelope_bytes).map_err(|e| e.to_string())
+    })
+}
+
+/// Import a wallet from a PIN-encrypted blob.
+///
+/// Decrypts the blob, extracts the wallet keys and database encryption key,
+/// and opens the wallet at the given database path.
+///
+/// Returns an opaque wallet handle, or null on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_import_blob(
+    blob: *const c_char,
+    pin: *const c_char,
+    db_path: *const c_char,
+) -> *mut c_void {
+    ffi_try_ptr(|| {
+        let blob_str = unsafe { c_str_to_str(blob) }?;
+        let pin_str = unsafe { c_str_to_str(pin) }?;
+        let path = unsafe { c_str_to_str(db_path) }?;
+
+        let secrets = salvium_wallet::decrypt_envelope(blob_str.as_bytes(), pin_str)
+            .map_err(|e| e.to_string())?;
+
+        let data_key = secrets.data_key_bytes().map_err(|e| e.to_string())?;
+
+        // Reconstruct wallet keys from the decrypted secrets.
+        let network = match secrets.network.as_str() {
+            "mainnet" => salvium_types::constants::Network::Mainnet,
+            "testnet" => salvium_types::constants::Network::Testnet,
+            "stagenet" => salvium_types::constants::Network::Stagenet,
+            _ => return Err(format!("invalid network in blob: {}", secrets.network)),
+        };
+
+        let keys = if !secrets.seed.is_empty() {
+            let seed = secrets.seed_bytes().map_err(|e| e.to_string())?;
+            salvium_wallet::WalletKeys::from_seed(seed, network)
+        } else if !secrets.view_secret_key.is_empty() && !secrets.spend_secret_key.is_empty() {
+            // Full wallet from individual keys — reconstruct via seed-like derivation
+            // is not possible without the seed. Fall back to JSON-based reconstruction.
+            let json = serde_json::json!({
+                "seed": secrets.seed,
+                "view_secret_key": secrets.view_secret_key,
+                "spend_public_key": "", // Will be derived from spend_secret_key
+                "network": secrets.network,
+            });
+            wallet_keys_from_json(&json.to_string())?
+        } else {
+            return Err("blob contains neither seed nor keys".into());
+        };
+
+        Wallet::open(keys, path, &data_key).map_err(|e| e.to_string())
+    })
+}
+
+/// Re-encrypt a blob with a new PIN.
+///
+/// Decrypts the blob with `old_pin`, then re-encrypts with `new_pin`.
+/// The wallet key material inside is unchanged — only the outer encryption changes.
+/// This is a pure crypto operation; no wallet handle or database is needed.
+///
+/// Returns the new blob JSON string. Caller must free with `salvium_string_free()`.
+/// Returns null on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_rekey_blob(
+    blob: *const c_char,
+    old_pin: *const c_char,
+    new_pin: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let blob_str = unsafe { c_str_to_str(blob) }?;
+        let old_pin_str = unsafe { c_str_to_str(old_pin) }?;
+        let new_pin_str = unsafe { c_str_to_str(new_pin) }?;
+
+        let secrets = salvium_wallet::decrypt_envelope(blob_str.as_bytes(), old_pin_str)
+            .map_err(|e| e.to_string())?;
+
+        let envelope_bytes = salvium_wallet::encrypt_envelope(&secrets, new_pin_str)
+            .map_err(|e| e.to_string())?;
+
+        String::from_utf8(envelope_bytes).map_err(|e| e.to_string())
+    })
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

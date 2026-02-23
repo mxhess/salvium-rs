@@ -128,6 +128,16 @@ CREATE TABLE IF NOT EXISTS address_book (
   created_at      INTEGER,
   updated_at      INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS subaddresses (
+  major           INTEGER NOT NULL,
+  minor           INTEGER NOT NULL,
+  address         TEXT NOT NULL DEFAULT '',
+  label           TEXT NOT NULL DEFAULT '',
+  used            INTEGER NOT NULL DEFAULT 0,
+  created_at      INTEGER,
+  PRIMARY KEY (major, minor)
+);
 ";
 
 // ─── Data Models ────────────────────────────────────────────────────────────
@@ -300,6 +310,21 @@ pub struct AddressBookEntry {
     pub payment_id: String,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+}
+
+/// A subaddress entry (account + minor index with optional label).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubaddressRow {
+    pub major: i64,
+    pub minor: i64,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub used: bool,
+    pub created_at: Option<i64>,
 }
 
 fn default_zero_str() -> String { "0".to_string() }
@@ -1212,6 +1237,123 @@ impl WalletDb {
             params![row_id],
         )?;
         Ok(changed > 0)
+    }
+
+    // ── Subaddress management ─────────────────────────────────────────
+
+    /// Add or update a subaddress entry.
+    pub fn upsert_subaddress(
+        &self,
+        major: i64,
+        minor: i64,
+        address: &str,
+        label: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO subaddresses (major, minor, address, label, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(major, minor) DO UPDATE SET label = ?4",
+            params![major, minor, address, label, now],
+        )?;
+        Ok(())
+    }
+
+    /// Get all subaddresses for an account (major index).
+    pub fn get_subaddresses(&self, major: i64) -> Result<Vec<SubaddressRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT major, minor, address, label, used, created_at
+             FROM subaddresses WHERE major = ?1 ORDER BY minor"
+        )?;
+        let rows = stmt.query_map(params![major], |r| {
+            Ok(SubaddressRow {
+                major: r.get(0)?,
+                minor: r.get(1)?,
+                address: r.get(2)?,
+                label: r.get::<_, String>(3)?,
+                used: r.get::<_, i64>(4)? != 0,
+                created_at: r.get(5).ok(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Get a single subaddress by indices.
+    pub fn get_subaddress(&self, major: i64, minor: i64) -> Result<Option<SubaddressRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT major, minor, address, label, used, created_at
+             FROM subaddresses WHERE major = ?1 AND minor = ?2"
+        )?;
+        let mut rows = stmt.query_map(params![major, minor], |r| {
+            Ok(SubaddressRow {
+                major: r.get(0)?,
+                minor: r.get(1)?,
+                address: r.get(2)?,
+                label: r.get::<_, String>(3)?,
+                used: r.get::<_, i64>(4)? != 0,
+                created_at: r.get(5).ok(),
+            })
+        })?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Get the next unused minor index for an account.
+    pub fn next_subaddress_minor(&self, major: i64) -> Result<i64, rusqlite::Error> {
+        let max: Option<i64> = self.conn.query_row(
+            "SELECT MAX(minor) FROM subaddresses WHERE major = ?1",
+            params![major],
+            |r| r.get(0),
+        )?;
+        Ok(max.map(|m| m + 1).unwrap_or(0))
+    }
+
+    /// Get all accounts (distinct major indices with their primary label).
+    pub fn get_accounts(&self) -> Result<Vec<SubaddressRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT major, minor, address, label, used, created_at
+             FROM subaddresses WHERE minor = 0 ORDER BY major"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SubaddressRow {
+                major: r.get(0)?,
+                minor: r.get(1)?,
+                address: r.get(2)?,
+                label: r.get::<_, String>(3)?,
+                used: r.get::<_, i64>(4)? != 0,
+                created_at: r.get(5).ok(),
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Set a label on a subaddress.
+    pub fn label_subaddress(
+        &self,
+        major: i64,
+        minor: i64,
+        label: &str,
+    ) -> Result<bool, rusqlite::Error> {
+        let changed = self.conn.execute(
+            "UPDATE subaddresses SET label = ?3 WHERE major = ?1 AND minor = ?2",
+            params![major, minor, label],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Mark a subaddress as used (received funds).
+    pub fn mark_subaddress_used(
+        &self,
+        major: i64,
+        minor: i64,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE subaddresses SET used = 1 WHERE major = ?1 AND minor = ?2",
+            params![major, minor],
+        )?;
+        Ok(())
     }
 
     // ── Output freeze/thaw ──────────────────────────────────────────────

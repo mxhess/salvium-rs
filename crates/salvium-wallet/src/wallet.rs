@@ -13,7 +13,10 @@ use crate::utxo::{self, SelectionStrategy, UtxoCandidate};
 use salvium_types::constants::Network;
 
 /// Default number of subaddresses to pre-generate per account.
-const DEFAULT_SUBADDRESS_COUNT: u32 = 50;
+///
+/// Subaddresses are deterministic and the lookup map is a flat hashmap
+/// (~40 bytes per entry), so 10 000 entries ≈ 400 KB — negligible.
+const DEFAULT_SUBADDRESS_COUNT: u32 = 10_000;
 
 /// High-level wallet.
 ///
@@ -25,6 +28,10 @@ pub struct Wallet {
 
     #[cfg(not(target_arch = "wasm32"))]
     db: std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+
+    /// Retained copy of the database encryption key (needed for blob export).
+    #[cfg(not(target_arch = "wasm32"))]
+    db_key: Vec<u8>,
 }
 
 impl Wallet {
@@ -80,6 +87,7 @@ impl Wallet {
             subaddress_maps: maps,
             scan_context,
             db: std::sync::Mutex::new(db),
+            db_key: db_key.to_vec(),
         })
     }
 
@@ -93,6 +101,12 @@ impl Wallet {
     /// Get the network (Mainnet / Testnet / Stagenet).
     pub fn network(&self) -> Network {
         self.keys.network
+    }
+
+    /// Get the database encryption key.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn db_key(&self) -> &[u8] {
+        &self.db_key
     }
 
     /// Get the primary CryptoNote address.
@@ -511,6 +525,146 @@ impl Wallet {
         let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.set_sync_height(height as i64)
             .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    // ── Subaddress / Account management ─────────────────────────────────
+
+    /// Create a new account (major index) with an optional label.
+    /// Returns the new major index.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_account(&self, label: &str) -> Result<(i64, String), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let accounts = db.get_accounts().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let major = if accounts.is_empty() { 0 } else { accounts.last().unwrap().major + 1 };
+
+        // Derive the primary address (minor=0) for this account.
+        let address = self.derive_subaddress(major as u32, 0)?;
+        let lbl = if label.is_empty() && major == 0 { "Primary account" } else { label };
+
+        db.upsert_subaddress(major, 0, &address, lbl)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        Ok((major, address))
+    }
+
+    /// Get all accounts.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_accounts(&self) -> Result<Vec<salvium_crypto::storage::SubaddressRow>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_accounts().map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Create a new subaddress in an existing account.
+    /// Returns the new (major, minor) index and address string.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_subaddress(
+        &self,
+        major: i64,
+        label: &str,
+    ) -> Result<(i64, i64, String), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let minor = db.next_subaddress_minor(major)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        // Ensure minor starts at 1 if 0 already exists (0 = account primary address).
+        let minor = if minor == 0 { 1 } else { minor };
+
+        let address = self.derive_subaddress(major as u32, minor as u32)?;
+        db.upsert_subaddress(major, minor, &address, label)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        Ok((major, minor, address))
+    }
+
+    /// Get all subaddresses for an account.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_subaddresses(
+        &self,
+        major: i64,
+    ) -> Result<Vec<salvium_crypto::storage::SubaddressRow>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_subaddresses(major).map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Set a label on a subaddress.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn label_subaddress(
+        &self,
+        major: i64,
+        minor: i64,
+        label: &str,
+    ) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.label_subaddress(major, minor, label)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Derive the address string for a subaddress at (major, minor).
+    fn derive_subaddress(&self, major: u32, minor: u32) -> Result<String, WalletError> {
+        use salvium_types::address::create_address_raw;
+        use salvium_types::constants::{AddressFormat, AddressType};
+
+        if major == 0 && minor == 0 {
+            // Primary address.
+            return self.keys.cn_address()
+                .map_err(|e| WalletError::InvalidAddress(e.to_string()));
+        }
+
+        // Derive the subaddress spend public key.
+        let spend_pub = salvium_crypto::subaddress::cn_derive_subaddress_spend_pubkey(
+            &self.keys.cn.spend_public_key,
+            &self.keys.cn.view_secret_key,
+            major,
+            minor,
+        );
+
+        // Subaddresses use the main view public key.
+        let addr = create_address_raw(
+            self.keys.network,
+            AddressFormat::Legacy,
+            AddressType::Subaddress,
+            &spend_pub,
+            &self.keys.cn.view_public_key,
+            None,
+        ).map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+
+        Ok(addr)
+    }
+
+    // ── Integrated addresses ────────────────────────────────────────────
+
+    /// Create an integrated address from the primary address + 8-byte payment ID.
+    pub fn make_integrated_address(
+        &self,
+        payment_id: &[u8; 8],
+    ) -> Result<String, WalletError> {
+        use salvium_types::address::create_address_raw;
+        use salvium_types::constants::{AddressFormat, AddressType};
+        create_address_raw(
+            self.keys.network,
+            AddressFormat::Legacy,
+            AddressType::Integrated,
+            &self.keys.cn.spend_public_key,
+            &self.keys.cn.view_public_key,
+            Some(payment_id.as_slice()),
+        ).map_err(|e| WalletError::InvalidAddress(e.to_string()))
+    }
+
+    /// Split an integrated address into standard address + payment ID.
+    pub fn split_integrated_address(
+        &self,
+        address: &str,
+    ) -> Result<(String, [u8; 8]), WalletError> {
+        use salvium_types::address::{parse_address, to_standard_address};
+        use salvium_types::constants::AddressType;
+        let parsed = parse_address(address)
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+        if parsed.address_type != AddressType::Integrated {
+            return Err(WalletError::InvalidAddress("not an integrated address".into()));
+        }
+        let pid = parsed.payment_id
+            .ok_or_else(|| WalletError::InvalidAddress("integrated address has no payment ID".into()))?;
+        let standard = to_standard_address(address)
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+        Ok((standard, pid))
     }
 }
 

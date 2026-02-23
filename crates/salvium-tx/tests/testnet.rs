@@ -370,7 +370,7 @@ async fn test_build_and_sign_with_real_decoys() {
         inputs: vec![input],
         rct_type: rct_type::SALVIUM_ONE,
         fee,
-        ephemeral_key: None,
+        ephemeral_keys: vec![],
     };
 
     // 6. Sign!

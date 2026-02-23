@@ -73,8 +73,9 @@ pub struct UnsignedTransaction {
     pub rct_type: u8,
     /// Transaction fee.
     pub fee: u64,
-    /// Ephemeral private key (for CARROT tx extra).
-    pub ephemeral_key: Option<[u8; 32]>,
+    /// Ephemeral private keys (one per output, for CARROT tx extra).
+    /// Empty for legacy (pre-CARROT) transactions which use a single tx secret key.
+    pub ephemeral_keys: Vec<[u8; 32]>,
 }
 
 /// Builder for constructing Salvium transactions.
@@ -292,10 +293,10 @@ impl TransactionBuilder {
         let mut output_amounts = Vec::new();
         let mut encrypted_amounts = Vec::new();
         let mut output_commitments = Vec::new();
-        let mut ephemeral_key = None;
+        let mut ephemeral_keys: Vec<[u8; 32]> = Vec::new();
 
         if self.rct_type >= rct_type::SALVIUM_ONE {
-            // CARROT outputs.
+            // CARROT outputs — each output gets its own ephemeral key (d_e).
             for dest in &self.destinations {
                 let params = CarrotOutputParams {
                     recipient_spend_pubkey: &dest.spend_pubkey,
@@ -310,9 +311,7 @@ impl TransactionBuilder {
                 let (carrot_out, d_e) = carrot::create_carrot_output(&params)
                     .map_err(|e| TxError::CarrotOutput(e.to_string()))?;
 
-                if ephemeral_key.is_none() {
-                    ephemeral_key = Some(d_e);
-                }
+                ephemeral_keys.push(d_e);
 
                 tx_outputs.push(TxOutput::CarrotV1 {
                     amount: 0, // RCT: amount is encrypted
@@ -342,8 +341,10 @@ impl TransactionBuilder {
                         is_subaddress: false,
                     };
 
-                    let (carrot_out, _) = carrot::create_carrot_output(&params)
+                    let (carrot_out, d_e) = carrot::create_carrot_output(&params)
                         .map_err(|e| TxError::CarrotOutput(e.to_string()))?;
+
+                    ephemeral_keys.push(d_e);
 
                     tx_outputs.push(TxOutput::CarrotV1 {
                         amount: 0,
@@ -464,7 +465,8 @@ impl TransactionBuilder {
             }
 
             // Store the tx secret key for tx extra construction below.
-            ephemeral_key = Some(r);
+            // Legacy TXs use a single shared key (tag 0x01).
+            ephemeral_keys.push(r);
         }
 
         // Sort outputs lexicographically by one-time key.
@@ -475,6 +477,8 @@ impl TransactionBuilder {
         let output_amounts: Vec<_> = output_order.iter().map(|&i| output_amounts[i]).collect();
         let encrypted_amounts: Vec<_> = output_order.iter().map(|&i| encrypted_amounts[i]).collect();
         let output_commitments: Vec<_> = output_order.iter().map(|&i| output_commitments[i]).collect();
+        // Sort ephemeral keys to match the output order.
+        let ephemeral_keys: Vec<_> = output_order.iter().map(|&i| ephemeral_keys[i]).collect();
 
         // Build sorted inputs (sort by key image, descending).
         let mut sorted_inputs = self.inputs;
@@ -505,19 +509,26 @@ impl TransactionBuilder {
             })
             .collect();
 
-        // Build tx extra (ephemeral public key).
+        // Build tx extra (ephemeral public key(s)).
         let mut extra = Vec::new();
-        if let Some(ref d_e) = ephemeral_key {
-            // Tag 0x01 = tx public key.
-            extra.push(0x01);
+        if !ephemeral_keys.is_empty() {
             if self.rct_type >= rct_type::SALVIUM_ONE {
-                // For CARROT, the "tx pub key" in extra is d_e * B (X25519 base).
+                // CARROT: per-output ephemeral pubkeys via tag 0x04.
+                // Each output has its own d_e; the scanner needs one D_e per output.
+                // Format: 0x04 + 1-byte count + count * 32-byte X25519 pubkeys.
                 let base_u = [9u8; 32];
-                let d_e_pub = salvium_crypto::x25519_scalar_mult(d_e, &base_u);
-                extra.extend_from_slice(&d_e_pub[..32]);
+                extra.push(0x04);
+                extra.push(ephemeral_keys.len() as u8);
+                for d_e in &ephemeral_keys {
+                    let d_e_pub = salvium_crypto::x25519_scalar_mult(d_e, &base_u);
+                    extra.extend_from_slice(&d_e_pub[..32]);
+                }
             } else {
-                // For legacy CryptoNote, the tx pub key is r * G (Ed25519).
-                let r_pub = salvium_crypto::scalar_mult_base(d_e);
+                // Legacy CryptoNote: single shared tx secret key via tag 0x01.
+                // All outputs share the same r; derivation uses output index.
+                let r = &ephemeral_keys[0];
+                extra.push(0x01);
+                let r_pub = salvium_crypto::scalar_mult_base(r);
                 extra.extend_from_slice(&r_pub[..32]);
             }
         }
@@ -682,7 +693,7 @@ impl TransactionBuilder {
             inputs: sorted_inputs,
             rct_type: self.rct_type,
             fee: estimated_fee,
-            ephemeral_key,
+            ephemeral_keys,
         })
     }
 }
