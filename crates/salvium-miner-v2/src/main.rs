@@ -52,8 +52,10 @@ fn format_hashrate(hr: f64) -> String {
 fn main() {
     let args = Args::parse();
 
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     if args.wallet.is_empty() {
-        eprintln!("Error: --wallet is required");
+        log::error!("--wallet is required");
         std::process::exit(1);
     }
 
@@ -76,7 +78,7 @@ fn main() {
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!("Cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
+                        log::warn!("cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -85,7 +87,7 @@ fn main() {
         match result {
             Some(i) => i,
             None => {
-                eprintln!("Cannot connect to daemon after 5 attempts: {}", last_err);
+                log::error!("cannot connect to daemon after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -103,7 +105,7 @@ fn main() {
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!("Failed to get block template (attempt {}/5): {}", attempt, last_err);
+                        log::warn!("failed to get block template (attempt {}/5): {}", attempt, last_err);
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -112,7 +114,7 @@ fn main() {
         match tmpl {
             Some(t) => t,
             None => {
-                eprintln!("Failed to get block template after 5 attempts: {}", last_err);
+                log::error!("failed to get block template after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -134,7 +136,7 @@ fn main() {
     let dataset = match SharedDataset::new(&seed_bytes, args.threads, use_large_pages) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Failed to initialize RandomX v2: {}", e);
+            log::error!("failed to initialize RandomX v2: {}", e);
             std::process::exit(1);
         }
     };
@@ -151,7 +153,7 @@ fn main() {
     let mining_loop = match mining_loop {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("Failed to create mining loop: {}", e);
+            log::error!("failed to create mining loop: {}", e);
             std::process::exit(1);
         }
     };
@@ -176,6 +178,8 @@ fn main() {
         template_blob: template_blob.clone(),
         difficulty,
         height: template.height,
+        nonce_offset: None,
+        target: None,
     });
 
     let start_time = Instant::now();
@@ -206,11 +210,11 @@ fn main() {
                     eprintln!("Block accepted! Total: {}", blocks_found);
                 }
                 Err(e) => {
-                    eprintln!("Block rejected: {}", e);
+                    log::error!("block rejected: {}", e);
                 }
             }
             if drained > 0 {
-                eprintln!("(discarded {} stale blocks)", drained);
+                log::debug!("discarded {} stale blocks", drained);
             }
 
             while mining_loop.try_recv_block().is_some() {}
@@ -222,7 +226,7 @@ fn main() {
                 );
 
                 if tmpl.seed_hash != current_seed {
-                    eprintln!("Seed hash changed — need to restart with new dataset");
+                    log::warn!("seed hash changed — need to restart with new dataset");
                     mining_loop.stop();
                     break;
                 }
@@ -243,6 +247,8 @@ fn main() {
                     template_blob: tb,
                     difficulty: new_diff,
                     height: tmpl.height,
+                    nonce_offset: None,
+                    target: None,
                 });
             }
             last_template_fetch = Instant::now();
@@ -257,7 +263,7 @@ fn main() {
                 );
 
                 if tmpl.seed_hash != current_seed {
-                    eprintln!("\nSeed hash changed — need to restart with new dataset");
+                    log::warn!("seed hash changed — need to restart with new dataset");
                     mining_loop.stop();
                     break;
                 }
@@ -277,6 +283,8 @@ fn main() {
                         template_blob: tb,
                         difficulty: new_diff,
                         height: tmpl.height,
+                        nonce_offset: None,
+                        target: None,
                     });
                 }
             }

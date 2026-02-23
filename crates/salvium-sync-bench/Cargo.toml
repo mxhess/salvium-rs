@@ -1,0 +1,21 @@
+[package]
+name = "salvium-sync-bench"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "salvium-sync-bench"
+path = "src/main.rs"
+
+[dependencies]
+salvium-types = { path = "../salvium-types" }
+salvium-crypto = { path = "../salvium-crypto" }
+salvium-rpc = { path = "../salvium-rpc" }
+salvium-wallet = { path = "../salvium-wallet" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+log.workspace = true
+env_logger.workspace = true
+rand = "0.8"
+tempfile = "3"

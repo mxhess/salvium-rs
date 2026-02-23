@@ -10,6 +10,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// JSON-RPC 2.0 request envelope.
@@ -66,10 +67,13 @@ impl Default for RpcConfig {
 }
 
 /// Async RPC client for Salvium JSON-RPC and raw HTTP endpoints.
+///
+/// Cloning is cheap: the inner HTTP client and request counter are shared via `Arc`.
+#[derive(Clone)]
 pub struct RpcClient {
     client: reqwest::Client,
     config: RpcConfig,
-    request_id: AtomicU64,
+    request_id: Arc<AtomicU64>,
 }
 
 impl RpcClient {
@@ -85,14 +89,14 @@ impl RpcClient {
     pub fn with_config(config: RpcConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(config.timeout)
-            .pool_max_idle_per_host(4)
+            .pool_max_idle_per_host(16)
             .build()
             .expect("failed to create HTTP client");
 
         Self {
             client,
             config,
-            request_id: AtomicU64::new(0),
+            request_id: Arc::new(AtomicU64::new(0)),
         }
     }
 

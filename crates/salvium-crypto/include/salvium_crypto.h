@@ -460,6 +460,7 @@ int32_t salvium_cn_scan_output(
     uint8_t rct_type,
     uint64_t clear_text_amount,
     const uint8_t *ecdh_encrypted_amount /* 8 */,
+    const uint8_t *commitment /* 32, nullable - Pedersen commitment from outPk */,
     const uint8_t *spend_secret_key /* 32, nullable */,
     const uint8_t *view_secret_key /* 32 */,
     const uint8_t *subaddr_data,

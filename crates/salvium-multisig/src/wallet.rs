@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use rand::RngCore;
 
 use crate::account::MultisigAccount;
@@ -77,37 +76,43 @@ pub fn create_multisig_wallet(
 }
 
 // ---------------------------------------------------------------------------
-// Helper functions
+// Helper functions — now using real Ed25519 curve operations via salvium_crypto
 // ---------------------------------------------------------------------------
 
-/// Compute a blinded (hashed) version of a secret key.
+/// Compute a blinded (reduced) version of a secret key using keccak256 + sc_reduce32.
+///
+/// Matches the C++ `get_multisig_blinded_secret_key`:
+///   blinded = sc_reduce32(keccak256(key_bytes))
 ///
 /// This is deterministic: the same input always produces the same output.
 /// Returns a 32-byte hex string.
 pub fn get_multisig_blinded_secret_key(key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"multisig_blinded_key:");
-    hasher.update(key.as_bytes());
-    hex::encode(hasher.finalize())
+    let key_bytes = hex::decode(key).unwrap_or_else(|_| key.as_bytes().to_vec());
+    let hash = salvium_crypto::keccak256(&key_bytes);
+    let reduced = salvium_crypto::sc_reduce32(&hash);
+    hex::encode(&reduced)
 }
 
-/// Compute a Diffie-Hellman shared secret from a private key and a public key.
+/// Compute a Diffie-Hellman shared secret: derived = priv_key * pub_key (curve point).
 ///
+/// Matches the C++ DH derivation using `scalar_mult_point`.
 /// Both inputs are hex-encoded. Returns a 32-byte hex string.
-/// For arbitrary (non-curve-point) inputs this is a hash-based placeholder.
 pub fn compute_dh_secret(priv_key: &str, pub_key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"multisig_dh:");
-    hasher.update(priv_key.as_bytes());
-    hasher.update(pub_key.as_bytes());
-    hex::encode(hasher.finalize())
+    let priv_bytes = hex::decode(priv_key).unwrap_or_else(|_| priv_key.as_bytes().to_vec());
+    let pub_bytes = hex::decode(pub_key).unwrap_or_else(|_| pub_key.as_bytes().to_vec());
+
+    let reduced_priv = salvium_crypto::sc_reduce32(&priv_bytes);
+    let shared = salvium_crypto::scalar_mult_point(&reduced_priv, &pub_bytes);
+    hex::encode(&shared)
 }
 
-/// Generate `count` nonce pairs. Each nonce pair consists of
-/// `MULTISIG_NONCE_COMPONENTS` random 32-byte hex strings.
+/// Generate `count` nonce pairs for multisig signing.
+///
+/// Each nonce pair consists of `MULTISIG_NONCE_COMPONENTS` random scalars
+/// and their corresponding public points (scalar * G).
 ///
 /// Returns `Vec<Vec<String>>` where the outer length is `count` and each
-/// inner vector has `MULTISIG_NONCE_COMPONENTS` hex strings.
+/// inner vector has `MULTISIG_NONCE_COMPONENTS` hex strings (the secret scalars).
 pub fn generate_multisig_nonces(count: usize) -> Vec<Vec<String>> {
     let mut rng = rand::thread_rng();
     let mut result = Vec::with_capacity(count);
@@ -117,12 +122,21 @@ pub fn generate_multisig_nonces(count: usize) -> Vec<Vec<String>> {
         for _ in 0..MULTISIG_NONCE_COMPONENTS {
             let mut buf = [0u8; 32];
             rng.fill_bytes(&mut buf);
-            pair.push(hex::encode(buf));
+            // Reduce to a valid scalar.
+            let scalar = salvium_crypto::sc_reduce32(&buf);
+            pair.push(hex::encode(&scalar));
         }
         result.push(pair);
     }
 
     result
+}
+
+/// Compute the public nonce from a secret nonce scalar: pub_nonce = scalar * G.
+pub fn nonce_to_public(secret_nonce: &str) -> String {
+    let bytes = hex::decode(secret_nonce).unwrap_or_default();
+    let point = salvium_crypto::scalar_mult_base(&bytes);
+    hex::encode(&point)
 }
 
 #[cfg(test)]
@@ -208,17 +222,31 @@ mod tests {
         let key = "ab".repeat(32);
         let blinded = get_multisig_blinded_secret_key(&key);
         assert_eq!(blinded.len(), 64);
-        // Verify it is valid hex
         hex::decode(&blinded).expect("blinded key should be valid hex");
     }
 
     #[test]
     fn test_compute_dh_secret() {
         let priv_key = "01".repeat(32);
-        let pub_key = "02".repeat(32);
+        // Generate a valid curve point: scalar_mult_base([0x03; 32]) * G
+        let scalar = [0x03u8; 32];
+        let valid_point = salvium_crypto::scalar_mult_base(&scalar);
+        let pub_key = hex::encode(&valid_point);
         let secret = compute_dh_secret(&priv_key, &pub_key);
         assert_eq!(secret.len(), 64);
         hex::decode(&secret).expect("DH secret should be valid hex");
+    }
+
+    #[test]
+    fn test_dh_secret_deterministic() {
+        let priv_key = "aa".repeat(32);
+        // Use a valid curve point
+        let scalar = [0x05u8; 32];
+        let valid_point = salvium_crypto::scalar_mult_base(&scalar);
+        let pub_key = hex::encode(&valid_point);
+        let s1 = compute_dh_secret(&priv_key, &pub_key);
+        let s2 = compute_dh_secret(&priv_key, &pub_key);
+        assert_eq!(s1, s2);
     }
 
     #[test]
@@ -251,5 +279,13 @@ mod tests {
             assert_eq!(nonce.len(), 64);
             hex::decode(nonce).expect("nonce should be valid hex");
         }
+    }
+
+    #[test]
+    fn test_nonce_to_public_produces_point() {
+        let nonces = generate_multisig_nonces(1);
+        let pub_nonce = nonce_to_public(&nonces[0][0]);
+        assert_eq!(pub_nonce.len(), 64);
+        hex::decode(&pub_nonce).expect("public nonce should be valid hex");
     }
 }

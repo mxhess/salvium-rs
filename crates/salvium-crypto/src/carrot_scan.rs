@@ -242,7 +242,16 @@ fn scan_core(
     let s_sr_ctx = make_sender_receiver_secret(s_sr_unctx, d_e, input_context);
 
     // Step 4: Recover address spend pubkey
-    let commit_bytes = commitment.copied().unwrap_or([0u8; 32]);
+    // For coinbase (RCTTypeNull): no on-chain commitment exists, so we compute
+    // zeroCommit(amount) = 1*G + amount*H, matching the C++ rct::zeroCommit()
+    // used during coinbase scanning.
+    let commit_bytes = if let Some(c) = commitment {
+        *c
+    } else if let Some(ct) = clear_text_amount {
+        pedersen_commit(ct, &Scalar::from(1u64))
+    } else {
+        [0u8; 32]
+    };
     let recovered = recover_address_spend_pubkey(ko, &s_sr_ctx, &commit_bytes)?;
 
     // Step 5: Address matching
@@ -286,13 +295,16 @@ fn scan_core(
             if computed_change == *c {
                 (mask_change, 1u8)
             } else {
-                // Neither matched — fallback to PAYMENT (coinbase-like)
-                (mask_payment, 0u8)
+                // Neither PAYMENT nor CHANGE commitment matched — this output
+                // is not ours. Reject it to avoid storing garbage amounts.
+                return None;
             }
         }
     } else {
-        // No commitment to verify (coinbase) — PAYMENT
-        (mask_payment, 0u8)
+        // No on-chain commitment (coinbase): the actual blinding factor is scalar 1
+        // (zeroCommit uses mask=1). Override the CARROT-derived mask so that the
+        // stored mask matches the on-chain commitment (1*G + amount*H).
+        (Scalar::from(1u64), 0u8)
     };
 
     Some(CarrotScanResult {
@@ -391,6 +403,144 @@ pub fn derive_carrot_spend_keys(
     let secret_y = (psk + k_t).to_bytes();
 
     (secret_x, secret_y)
+}
+
+// ─── Janus Protection ────────────────────────────────────────────────────────
+
+// Domain separators for Janus anchor verification (matching C++ config.h).
+const DOMAIN_ENCRYPTION_MASK_ANCHOR: &[u8] = b"Carrot encryption mask anchor";
+const DOMAIN_JANUS_ANCHOR_SPECIAL: &[u8] = b"Carrot janus anchor special";
+const DOMAIN_SENDING_KEY_NORMAL: &[u8] = b"Carrot sending key normal";
+
+/// H_16: blake2b 16 bytes keyed.
+fn derive_bytes_16(key: &[u8], domain: &[u8], data: &[&[u8]]) -> [u8; 16] {
+    let transcript = build_transcript(domain, data);
+    let hash = blake2b_keyed(&transcript, 16, key);
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&hash[..16]);
+    out
+}
+
+/// Derive a secret scalar from an unkeyed Blake2b hash.
+/// Matches C++ `carrot::derive_scalar(data, len, key=nullptr, out)`:
+///   Blake2b(hash_length=64, data=transcript, no key) → sc_reduce → scalar
+/// C++ ref: carrot_core/hash_functions.cpp derive_scalar()
+fn derive_secret_unkeyed(domain: &[u8], data: &[&[u8]]) -> Scalar {
+    let transcript = build_transcript(domain, data);
+    let hash64 = blake2b_simd::Params::new()
+        .hash_length(64)
+        .hash(&transcript);
+    let mut wide = [0u8; 64];
+    wide.copy_from_slice(hash64.as_bytes());
+    Scalar::from_bytes_mod_order_wide(&wide)
+}
+
+/// Decrypt the Janus anchor from an encrypted CARROT output.
+///
+/// mask = H_16\[s_sr_ctx\]("Carrot encryption mask anchor", Ko)
+/// anchor = enc_anchor XOR mask
+pub fn decrypt_janus_anchor(
+    encrypted_anchor: &[u8; 16],
+    s_sr_ctx: &[u8; 32],
+    ko: &[u8; 32],
+) -> [u8; 16] {
+    let mask = derive_bytes_16(s_sr_ctx, DOMAIN_ENCRYPTION_MASK_ANCHOR, &[ko]);
+    let mut anchor = [0u8; 16];
+    for i in 0..16 {
+        anchor[i] = encrypted_anchor[i] ^ mask[i];
+    }
+    anchor
+}
+
+/// Verify special Janus protection.
+///
+/// expected = H_16\[k_vi\]("Carrot janus anchor special", D_e, input_context, Ko)
+/// Returns true if expected matches the decrypted anchor.
+fn verify_special_janus(
+    decrypted_anchor: &[u8; 16],
+    d_e: &[u8; 32],
+    input_context: &[u8],
+    ko: &[u8; 32],
+    k_vi: &[u8; 32],
+) -> bool {
+    let expected = derive_bytes_16(k_vi, DOMAIN_JANUS_ANCHOR_SPECIAL, &[d_e, input_context, ko]);
+    expected == *decrypted_anchor
+}
+
+/// Verify normal Janus protection.
+///
+/// Derives d_e' from the anchor, recomputes D_e', and checks if it matches.
+/// d_e' = H_n\[\]("Carrot sending key normal", anchor, input_context, K_s, pid)
+/// D_e' = d_e' * X25519_BASE (main address) or d_e' * conv(K_s) (subaddress)
+fn verify_normal_janus(
+    decrypted_anchor: &[u8; 16],
+    input_context: &[u8],
+    address_spend_pubkey: &[u8; 32],
+    is_subaddress: bool,
+    payment_id: &[u8; 8],
+    d_e: &[u8; 32],
+) -> bool {
+    // d_e' = derive_secret("Carrot sending key normal", anchor || input_context || K_s || pid)
+    let d_e_scalar = derive_secret_unkeyed(
+        DOMAIN_SENDING_KEY_NORMAL,
+        &[decrypted_anchor, input_context, address_spend_pubkey, payment_id],
+    );
+
+    // Apply Salvium clamping (only clear bit 255)
+    let mut d_e_bytes = d_e_scalar.to_bytes();
+    d_e_bytes[31] &= 0x7F;
+
+    // Recompute D_e'
+    let d_e_prime = if is_subaddress {
+        // D_e' = d_e * conv(K_s) where conv = ed25519 → X25519 (montgomery)
+        let u = crate::x25519::edwards_to_montgomery_u(address_spend_pubkey);
+        crate::x25519::montgomery_ladder(&d_e_bytes, &u)
+    } else {
+        // D_e' = d_e * X25519_BASE (u-coordinate = 9)
+        let mut base = [0u8; 32];
+        base[0] = 9;
+        crate::x25519::montgomery_ladder(&d_e_bytes, &base)
+    };
+
+    d_e_prime == *d_e
+}
+
+/// Full Janus protection verification for external CARROT outputs.
+///
+/// Decrypts the encrypted anchor, then tries:
+/// 1. Normal Janus with null payment_id
+/// 2. Special Janus (HMAC with view key)
+///
+/// Returns true if the output passes at least one check.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_janus_protection(
+    encrypted_anchor: &[u8; 16],
+    s_sr_ctx: &[u8; 32],
+    ko: &[u8; 32],
+    d_e: &[u8; 32],
+    input_context: &[u8],
+    address_spend_pubkey: &[u8; 32],
+    is_subaddress: bool,
+    k_vi: &[u8; 32],
+) -> bool {
+    // 1. Decrypt the anchor
+    let anchor = decrypt_janus_anchor(encrypted_anchor, s_sr_ctx, ko);
+
+    // 2. Try normal Janus with null payment_id
+    let null_pid = [0u8; 8];
+    if verify_normal_janus(
+        &anchor,
+        input_context,
+        address_spend_pubkey,
+        is_subaddress,
+        &null_pid,
+        d_e,
+    ) {
+        return true;
+    }
+
+    // 3. Try special Janus (uses view key)
+    verify_special_janus(&anchor, d_e, input_context, ko, k_vi)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

@@ -111,11 +111,13 @@ CREATE TABLE IF NOT EXISTS stakes (
   return_height     INTEGER,
   return_timestamp  INTEGER,
   return_amount     TEXT NOT NULL DEFAULT '0',
+  return_output_key TEXT,
   created_at        INTEGER,
   updated_at        INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_stakes_status ON stakes(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_stakes_output_key ON stakes(change_output_key) WHERE change_output_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stakes_return_output_key ON stakes(return_output_key) WHERE return_output_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS address_book (
   row_id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,6 +279,10 @@ pub struct StakeRow {
     pub return_timestamp: Option<i64>,
     #[serde(default = "default_zero_str")]
     pub return_amount: String,
+    /// Expected onetime address (Ko) of the return output.
+    /// Set from STAKE TX's protocol_tx_data.return_address (CARROT v4+ stakes).
+    /// Used for TX-ID-based stake return matching against protocol TX outputs.
+    pub return_output_key: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
@@ -361,7 +367,26 @@ impl WalletDb {
 
     fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(SCHEMA_DDL)?;
+        // Migration: add return_output_key column to existing stakes tables.
+        let _ = conn.execute_batch(
+            "ALTER TABLE stakes ADD COLUMN return_output_key TEXT;"
+        );
+        // Migration: add index on return_output_key.
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_stakes_return_output_key ON stakes(return_output_key) WHERE return_output_key IS NOT NULL;"
+        );
         Ok(())
+    }
+
+    /// Re-encrypt the database with a new key (SQLCipher PRAGMA rekey).
+    ///
+    /// This changes the encryption key without needing to re-create the database.
+    /// Used during legacy wallet migration and (in theory) password changes,
+    /// though the PQC scheme separates the data_key from the password so
+    /// password changes don't require rekey.
+    pub fn rekey(&self, new_key: &[u8]) -> Result<(), rusqlite::Error> {
+        let hex_key = hex::encode(new_key);
+        self.conn.execute_batch(&format!("PRAGMA rekey = \"x'{hex_key}'\";"))
     }
 
     // ── Output Operations ───────────────────────────────────────────────
@@ -416,6 +441,21 @@ impl WalletDb {
                     tx_pub_key, is_frozen, created_at, updated_at
              FROM outputs WHERE key_image = ?1",
             params![key_image],
+            |r| Ok(row_to_output(r)),
+        ).optional()
+    }
+
+    /// Look up an output by its onetime public key (for burning bug detection).
+    pub fn get_output_by_public_key(&self, public_key: &str) -> Result<Option<OutputRow>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT key_image, public_key, tx_hash, output_index, global_index,
+                    asset_type_index, block_height, block_timestamp, amount, asset_type,
+                    commitment, mask, subaddr_major, subaddr_minor, is_carrot,
+                    carrot_ephemeral_pubkey, carrot_shared_secret, carrot_enote_type,
+                    is_spent, spent_height, spent_tx_hash, unlock_time, tx_type,
+                    tx_pub_key, is_frozen, created_at, updated_at
+             FROM outputs WHERE public_key = ?1 LIMIT 1",
+            params![public_key],
             |r| Ok(row_to_output(r)),
         ).optional()
     }
@@ -758,6 +798,12 @@ impl WalletDb {
             }
         }
 
+        // Fix #4: Include locked (staked) amounts in total balance.
+        // C++ ref: wallet2.cpp m_locked_coins — staked funds count toward total
+        // but NOT toward unlocked balance.
+        let staked = self.get_staked_balance(asset_type)?;
+        total += staked;
+
         let locked = total - unlocked;
         Ok(BalanceResult {
             balance: total.to_string(),
@@ -809,6 +855,13 @@ impl WalletDb {
             }
         }
 
+        // Fix #4: Include locked (staked) amounts in total balance per asset.
+        let staked_balances = self.get_all_staked_balances()?;
+        for (asset_type, staked) in &staked_balances {
+            let entry = balances.entry(asset_type.clone()).or_insert((0, 0));
+            entry.0 += staked;
+        }
+
         let mut result = HashMap::new();
         for (asset_type, (total, unlocked)) in balances {
             result.insert(asset_type, BalanceResult {
@@ -829,15 +882,15 @@ impl WalletDb {
                 stake_tx_hash, stake_height, stake_timestamp,
                 amount_staked, fee, asset_type, change_output_key,
                 status, return_tx_hash, return_height, return_timestamp,
-                return_amount, created_at, updated_at
+                return_amount, return_output_key, created_at, updated_at
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
             )",
             params![
                 row.stake_tx_hash, row.stake_height, row.stake_timestamp,
                 row.amount_staked, row.fee, row.asset_type, row.change_output_key,
                 row.status, row.return_tx_hash, row.return_height, row.return_timestamp,
-                row.return_amount, row.created_at.unwrap_or(now), now
+                row.return_amount, row.return_output_key, row.created_at.unwrap_or(now), now
             ],
         )?;
         Ok(())
@@ -848,7 +901,7 @@ impl WalletDb {
             "SELECT stake_tx_hash, stake_height, stake_timestamp,
                     amount_staked, fee, asset_type, change_output_key,
                     status, return_tx_hash, return_height, return_timestamp,
-                    return_amount, created_at, updated_at
+                    return_amount, return_output_key, created_at, updated_at
              FROM stakes WHERE stake_tx_hash = ?1",
             params![stake_tx_hash],
             |r| Ok(StakeRow {
@@ -864,8 +917,9 @@ impl WalletDb {
                 return_height: r.get(9)?,
                 return_timestamp: r.get(10)?,
                 return_amount: r.get(11)?,
-                created_at: r.get(12)?,
-                updated_at: r.get(13)?,
+                return_output_key: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
             }),
         ).optional()
     }
@@ -875,7 +929,7 @@ impl WalletDb {
             "SELECT stake_tx_hash, stake_height, stake_timestamp,
                     amount_staked, fee, asset_type, change_output_key,
                     status, return_tx_hash, return_height, return_timestamp,
-                    return_amount, created_at, updated_at
+                    return_amount, return_output_key, created_at, updated_at
              FROM stakes WHERE 1=1"
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -907,8 +961,9 @@ impl WalletDb {
                 return_height: r.get(9)?,
                 return_timestamp: r.get(10)?,
                 return_amount: r.get(11)?,
-                created_at: r.get(12)?,
-                updated_at: r.get(13)?,
+                return_output_key: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
             })
         })?;
 
@@ -924,7 +979,7 @@ impl WalletDb {
             "SELECT stake_tx_hash, stake_height, stake_timestamp,
                     amount_staked, fee, asset_type, change_output_key,
                     status, return_tx_hash, return_height, return_timestamp,
-                    return_amount, created_at, updated_at
+                    return_amount, return_output_key, created_at, updated_at
              FROM stakes WHERE change_output_key = ?1",
             params![change_output_key],
             |r| Ok(StakeRow {
@@ -940,8 +995,39 @@ impl WalletDb {
                 return_height: r.get(9)?,
                 return_timestamp: r.get(10)?,
                 return_amount: r.get(11)?,
-                created_at: r.get(12)?,
-                updated_at: r.get(13)?,
+                return_output_key: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
+            }),
+        ).optional()
+    }
+
+    /// Look up a locked stake by its expected return output key (Ko).
+    /// Used for TX-ID-based stake return matching against protocol TX outputs.
+    pub fn get_locked_stake_by_return_output_key(&self, return_output_key: &str) -> Result<Option<StakeRow>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT stake_tx_hash, stake_height, stake_timestamp,
+                    amount_staked, fee, asset_type, change_output_key,
+                    status, return_tx_hash, return_height, return_timestamp,
+                    return_amount, return_output_key, created_at, updated_at
+             FROM stakes WHERE return_output_key = ?1 AND status = 'locked'",
+            params![return_output_key],
+            |r| Ok(StakeRow {
+                stake_tx_hash: r.get(0)?,
+                stake_height: r.get(1)?,
+                stake_timestamp: r.get(2)?,
+                amount_staked: r.get(3)?,
+                fee: r.get(4)?,
+                asset_type: r.get(5)?,
+                change_output_key: r.get(6)?,
+                status: r.get(7)?,
+                return_tx_hash: r.get(8)?,
+                return_height: r.get(9)?,
+                return_timestamp: r.get(10)?,
+                return_amount: r.get(11)?,
+                return_output_key: r.get(12)?,
+                created_at: r.get(13)?,
+                updated_at: r.get(14)?,
             }),
         ).optional()
     }
@@ -962,6 +1048,35 @@ impl WalletDb {
             params![return_tx_hash, return_height, return_timestamp, return_amount, now, stake_tx_hash],
         )?;
         Ok(())
+    }
+
+    /// Get total staked balance for a specific asset type (only 'locked' stakes).
+    /// Used by get_balance() to include staked amounts in the total.
+    pub fn get_staked_balance(&self, asset_type: &str) -> Result<u128, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(SUM(CAST(amount_staked AS INTEGER)), 0)
+             FROM stakes WHERE status = 'locked' AND asset_type = ?1"
+        )?;
+        let total: i64 = stmt.query_row(params![asset_type], |r| r.get(0))?;
+        Ok(total.max(0) as u128)
+    }
+
+    /// Get staked balances for all asset types (only 'locked' stakes).
+    /// Used by get_all_balances() to include staked amounts in totals.
+    pub fn get_all_staked_balances(&self) -> Result<HashMap<String, u128>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT asset_type, COALESCE(SUM(CAST(amount_staked AS INTEGER)), 0)
+             FROM stakes WHERE status = 'locked' GROUP BY asset_type"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        let mut result = HashMap::new();
+        for row in rows {
+            let (asset_type, total) = row?;
+            result.insert(asset_type, total.max(0) as u128);
+        }
+        Ok(result)
     }
 
     pub fn delete_stakes_above(&self, height: i64) -> Result<(), rusqlite::Error> {
@@ -1098,35 +1213,128 @@ impl WalletDb {
         )?;
         Ok(changed > 0)
     }
+
+    // ── Output freeze/thaw ──────────────────────────────────────────────
+
+    /// Freeze an output (exclude from coin selection).
+    pub fn freeze_output(&self, key_image: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE outputs SET is_frozen = 1 WHERE key_image = ?1",
+            params![key_image],
+        )?;
+        Ok(())
+    }
+
+    /// Thaw a frozen output.
+    pub fn thaw_output(&self, key_image: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE outputs SET is_frozen = 0 WHERE key_image = ?1",
+            params![key_image],
+        )?;
+        Ok(())
+    }
+
+    // ── Key-value attributes ────────────────────────────────────────────
+
+    /// Set a wallet attribute (stored in meta table).
+    pub fn set_attribute(&self, key: &str, value: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Get a wallet attribute.
+    pub fn get_attribute(&self, key: &str) -> Result<Option<String>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT value FROM meta WHERE key = ?1",
+        )?;
+        let mut rows = stmt.query(params![key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 // ─── Unlock Logic ───────────────────────────────────────────────────────────
 
+/// Determine if an output is unlocked and spendable.
+///
+/// Exactly matches C++ wallet2::is_transfer_unlocked + is_tx_spendtime_unlocked.
+///
+/// C++ flow (wallet2.cpp:7526-7567):
+///   1. Get per-output unlock_time (CARROT→0, CN→from target struct)
+///   2. If unlock_time == 0:
+///      - MINER/PROTOCOL → set to MINED_MONEY_UNLOCK_WINDOW (60)
+///      - Others → set to DEFAULT_TX_SPENDABLE_AGE (10)
+///   3. is_tx_spendtime_unlocked(effective_unlock_time, block_height):
+///      - If < MAX_BLOCK_NUMBER (relative offset from block_height):
+///        unlock_height = block_height + max(DEFAULT_TX_SPENDABLE_AGE, unlock_time)
+///        check: (current_height + delta) >= unlock_height
+///      - Else: check current_time + delta >= unlock_time (timestamp)
+///   4. block_height + DEFAULT_TX_SPENDABLE_AGE > daemon_height → locked
+///   5. Both checks must pass for unlocked.
+///
+/// Note: `current_height` here is the top block index (daemon_height - 1).
+/// C++ uses m_local_bc_height = daemon_height (block count), so we add 1
+/// where needed to match.
+/// Public wrapper for the unlock check, used by salvium-wallet's UTXO selection.
+pub fn is_output_unlocked_ext(current_height: i64, block_height: Option<i64>, unlock_time_str: &str, tx_type: i64, now_secs: u128) -> bool {
+    is_unlocked(current_height, block_height, unlock_time_str, tx_type, now_secs)
+}
+
 fn is_unlocked(current_height: i64, block_height: Option<i64>, unlock_time_str: &str, tx_type: i64, now_secs: u128) -> bool {
+    const MINED_MONEY_UNLOCK_WINDOW: u128 = 60;
+    const DEFAULT_TX_SPENDABLE_AGE: u128 = 10;
+    const LOCKED_TX_ALLOWED_DELTA_BLOCKS: u128 = 1;
+    const MAX_BLOCK_NUMBER: u128 = 500_000_000;
+
     let bh = match block_height {
         Some(h) => h,
         None => return false,
     };
 
-    // Coinbase (tx_type 1=miner, 2=protocol): requires 60 confirmations
-    if tx_type == 1 || tx_type == 2 {
-        return (current_height - bh) >= 60;
+    // Step 1-2: Get effective unlock_time (relative offset in blocks).
+    // Per-output unlock_time is stored in DB: CARROT=0, CN=from target struct.
+    // When 0, substitute a default based on tx type.
+    let raw_unlock_time: u128 = unlock_time_str.parse().unwrap_or(0);
+    let effective_unlock_time = if raw_unlock_time == 0 {
+        if tx_type == 1 || tx_type == 2 {
+            MINED_MONEY_UNLOCK_WINDOW // 60 blocks for MINER/PROTOCOL
+        } else {
+            DEFAULT_TX_SPENDABLE_AGE // 10 blocks for others
+        }
+    } else {
+        raw_unlock_time
+    };
+
+    // Step 3: is_tx_spendtime_unlocked(effective_unlock_time, block_height)
+    // C++ (wallet2.cpp:7556-7564):
+    //   unlock_height = block_height + max(DEFAULT_TX_SPENDABLE_AGE, unlock_time)
+    //   return (get_blockchain_current_height()-1 + DELTA) >= unlock_height
+    if effective_unlock_time < MAX_BLOCK_NUMBER {
+        let unlock_height = bh as u128 + effective_unlock_time.max(DEFAULT_TX_SPENDABLE_AGE);
+        if (current_height as u128 + LOCKED_TX_ALLOWED_DELTA_BLOCKS) < unlock_height {
+            return false;
+        }
+    } else {
+        // Timestamp threshold
+        if now_secs < effective_unlock_time {
+            return false;
+        }
     }
 
-    let unlock_time: u128 = unlock_time_str.parse().unwrap_or(0);
-
-    if unlock_time == 0 {
-        // Standard: 10 confirmations
-        return (current_height - bh) >= 10;
+    // Step 4: Minimum 10 confirmations for ALL outputs.
+    // C++: block_height + DEFAULT_TX_SPENDABLE_AGE > m_local_bc_height
+    // m_local_bc_height = daemon_height = current_height + 1
+    let daemon_height = current_height + 1;
+    if bh + DEFAULT_TX_SPENDABLE_AGE as i64 > daemon_height {
+        return false;
     }
 
-    if unlock_time < 500_000_000 {
-        // Block height threshold
-        return current_height >= unlock_time as i64;
-    }
-
-    // Unix timestamp threshold
-    now_secs >= unlock_time
+    true
 }
 
 // ─── Row Mapping Helpers ────────────────────────────────────────────────────
@@ -1548,9 +1756,12 @@ mod tests {
     }
 
     #[test]
-    fn test_balance_coinbase() {
+    fn test_balance_coinbase_cn() {
         let (handle, path) = test_db();
 
+        // CN coinbase output: per-output unlock_time = block_height + 60 = 160
+        // This is how CryptoNote miner_tx outputs work — unlock_time is set to
+        // the absolute block height at which the output becomes spendable.
         let output = OutputRow {
             key_image: Some("ki_cb".into()),
             public_key: None,
@@ -1572,7 +1783,7 @@ mod tests {
             is_spent: false,
             spent_height: None,
             spent_tx_hash: None,
-            unlock_time: "60".into(), // coinbase unlock
+            unlock_time: "60".into(), // Salvium miner TX: relative offset = MINED_MONEY_UNLOCK_WINDOW
             tx_type: 1, // miner
             tx_pub_key: None,
             is_frozen: false,
@@ -1581,13 +1792,62 @@ mod tests {
         };
         with_db(handle, |db| db.put_output(&output)).unwrap();
 
-        // Height 150: only 50 confs, coinbase needs 60
+        // unlock_height = block_height(100) + max(10, 60) = 160
+        // Height 150: spendtime fails (151 < 160) → locked
         let bal = with_db(handle, |db| db.get_balance(150, "SAL", -1)).unwrap();
         assert_eq!(bal.unlocked_balance, "0");
 
-        // Height 160: 60 confs → unlocked
+        // Height 160: spendtime passes (161 >= 160), 10 conf passes (110 <= 161) → unlocked
         let bal = with_db(handle, |db| db.get_balance(160, "SAL", -1)).unwrap();
         assert_eq!(bal.unlocked_balance, "5000000000");
+
+        cleanup(handle, &path);
+    }
+
+    #[test]
+    fn test_balance_coinbase_carrot() {
+        let (handle, path) = test_db();
+
+        // CARROT coinbase output: per-output unlock_time = 0
+        // C++ substitutes MINED_MONEY_UNLOCK_WINDOW (60) for PROTOCOL TXs.
+        // unlock_height = block_height(1000) + max(10, 60) = 1060
+        let output = OutputRow {
+            key_image: Some("ki_cb_carrot".into()),
+            public_key: None,
+            tx_hash: "tx_cb_carrot".into(),
+            output_index: 0,
+            global_index: None,
+            asset_type_index: None,
+            block_height: Some(1000),
+            block_timestamp: None,
+            amount: "3000000000".into(),
+            asset_type: "SAL".into(),
+            commitment: None,
+            mask: None,
+            subaddress_index: SubaddressIndex::default(),
+            is_carrot: true,
+            carrot_ephemeral_pubkey: None,
+            carrot_shared_secret: None,
+            carrot_enote_type: None,
+            is_spent: false,
+            spent_height: None,
+            spent_tx_hash: None,
+            unlock_time: "0".into(), // CARROT: always 0
+            tx_type: 2, // protocol
+            tx_pub_key: None,
+            is_frozen: false,
+            created_at: None,
+            updated_at: None,
+        };
+        with_db(handle, |db| db.put_output(&output)).unwrap();
+
+        // Height 1005: spendtime fails (1006 < 1060) → locked
+        let bal = with_db(handle, |db| db.get_balance(1005, "SAL", -1)).unwrap();
+        assert_eq!(bal.unlocked_balance, "0");
+
+        // Height 1059: spendtime passes (1060 >= 1060), 10 conf passes (1010 <= 1060) → unlocked
+        let bal = with_db(handle, |db| db.get_balance(1059, "SAL", -1)).unwrap();
+        assert_eq!(bal.unlocked_balance, "3000000000");
 
         cleanup(handle, &path);
     }
@@ -1766,6 +2026,7 @@ mod tests {
             return_height: None,
             return_timestamp: None,
             return_amount: "0".into(),
+            return_output_key: None,
             created_at: None,
             updated_at: None,
         }

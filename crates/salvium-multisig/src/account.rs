@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{MULTISIG_MAX_SIGNERS, MULTISIG_MIN_THRESHOLD, MultisigMsgType};
@@ -65,10 +64,11 @@ impl MultisigAccount {
 
     /// Initialize the key-exchange protocol using the provided secret keys.
     ///
-    /// Generates the first-round `KexMessage` containing derived public keys.
+    /// Derives public keys using real Ed25519 scalar-to-point multiplication
+    /// via salvium_crypto, then generates the first-round `KexMessage`.
     ///
     /// # Errors
-    /// Returns `Err` if the spend or view keys have not been set.
+    /// Returns `Err` if the spend or view keys are empty.
     pub fn initialize_kex(
         &mut self,
         spend_key: &str,
@@ -84,28 +84,26 @@ impl MultisigAccount {
         self.spend_key = Some(spend_key.to_string());
         self.view_key = Some(view_key.to_string());
 
-        // Derive a public key from the spend key via hashing (placeholder for real
-        // curve scalar-to-point multiplication).
-        let pub_spend = {
-            let mut hasher = Sha256::new();
-            hasher.update(b"multisig_pub_spend:");
-            hasher.update(spend_key.as_bytes());
-            hex::encode(hasher.finalize())
-        };
+        // Derive public keys from secret keys using real Ed25519 curve operations.
+        // spend_pub = sc_reduce32(keccak256(spend_key_bytes)) * G
+        let spend_bytes = hex::decode(spend_key)
+            .map_err(|e| format!("invalid spend key hex: {}", e))?;
+        let view_bytes = hex::decode(view_key)
+            .map_err(|e| format!("invalid view key hex: {}", e))?;
 
-        let pub_view = {
-            let mut hasher = Sha256::new();
-            hasher.update(b"multisig_pub_view:");
-            hasher.update(view_key.as_bytes());
-            hex::encode(hasher.finalize())
-        };
+        // Reduce the secret key to a valid scalar, then compute the public point.
+        let spend_scalar = salvium_crypto::sc_reduce32(&spend_bytes);
+        let pub_spend = salvium_crypto::scalar_mult_base(&spend_scalar);
+
+        let view_scalar = salvium_crypto::sc_reduce32(&view_bytes);
+        let pub_view = salvium_crypto::scalar_mult_base(&view_scalar);
 
         self.kex_round = 1;
 
         let msg = KexMessage {
             round: 1,
             signer_index: 0,
-            keys: vec![pub_spend, pub_view],
+            keys: vec![hex::encode(&pub_spend), hex::encode(&pub_view)],
             msg_type: MultisigMsgType::KexInit,
         };
 
@@ -187,9 +185,24 @@ mod tests {
     }
 
     #[test]
+    fn test_initialize_kex_produces_valid_pubkeys() {
+        let mut account = MultisigAccount::new(2, 2).unwrap();
+        let spend = "11".repeat(32);
+        let view = "22".repeat(32);
+        let msg = account.initialize_kex(&spend, &view).unwrap();
+
+        // Public keys should be 32 bytes (64 hex chars).
+        assert_eq!(msg.keys[0].len(), 64);
+        assert_eq!(msg.keys[1].len(), 64);
+        // They should be valid hex.
+        hex::decode(&msg.keys[0]).expect("spend pubkey should be valid hex");
+        hex::decode(&msg.keys[1]).expect("view pubkey should be valid hex");
+    }
+
+    #[test]
     fn test_initialize_kex_requires_spend_key() {
         let mut account = MultisigAccount::new(2, 2).unwrap();
-        let result = account.initialize_kex("", "22".repeat(32).as_str());
+        let result = account.initialize_kex("", &"22".repeat(32));
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(msg.contains("key") || msg.contains("Base"));
@@ -198,7 +211,7 @@ mod tests {
     #[test]
     fn test_initialize_kex_requires_view_key() {
         let mut account = MultisigAccount::new(2, 2).unwrap();
-        let result = account.initialize_kex("11".repeat(32).as_str(), "");
+        let result = account.initialize_kex(&"11".repeat(32), "");
         assert!(result.is_err());
     }
 

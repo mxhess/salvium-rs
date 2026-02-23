@@ -123,7 +123,7 @@ const DOMAIN_SUBADDRESS_SCALAR: &[u8] = b"Carrot subaddress scalar";
 
 /// CARROT address index extension generator:
 ///   s^j_gen = H_32[s_ga](domain || major_LE || minor_LE)
-fn carrot_index_extension_generator(
+pub fn carrot_index_extension_generator(
     generate_address_secret: &[u8; 32],
     major: u32,
     minor: u32,
@@ -139,7 +139,7 @@ fn carrot_index_extension_generator(
 
 /// CARROT subaddress scalar:
 ///   k^j_subscal = H_n(K_s, major, minor, s^j_gen)
-fn carrot_subaddress_scalar(
+pub fn carrot_subaddress_scalar(
     account_spend_pubkey: &[u8; 32],
     address_index_generator: &[u8; 32],
     major: u32,
@@ -152,6 +152,35 @@ fn carrot_subaddress_scalar(
         DOMAIN_SUBADDRESS_SCALAR,
         &[account_spend_pubkey, &major_le, &minor_le],
     )
+}
+
+/// Adjust CARROT base keys for a subaddress by multiplying by k^j_subscal.
+///
+/// For the main address (0,0), returns the keys unchanged.
+/// For subaddresses, returns:
+///   adjusted_gik = k_gi * k^j_subscal
+///   adjusted_psk = k_ps * k^j_subscal
+///
+/// Used before calling `derive_carrot_spend_keys` so that the key image
+/// computation matches the C++ wallet formula:
+///   x = k_gi * k^j_subscal + k^o_g
+///   y = k_ps * k^j_subscal + k^o_t
+pub fn carrot_adjust_keys_for_subaddress(
+    generate_image_key: &[u8; 32],
+    prove_spend_key: &[u8; 32],
+    generate_address_secret: &[u8; 32],
+    account_spend_pubkey: &[u8; 32],
+    major: u32,
+    minor: u32,
+) -> ([u8; 32], [u8; 32]) {
+    if major == 0 && minor == 0 {
+        return (*generate_image_key, *prove_spend_key);
+    }
+    let s_gen = carrot_index_extension_generator(generate_address_secret, major, minor);
+    let k_subscal = carrot_subaddress_scalar(account_spend_pubkey, &s_gen, major, minor);
+    let gik = Scalar::from_bytes_mod_order(*generate_image_key);
+    let psk = Scalar::from_bytes_mod_order(*prove_spend_key);
+    ((gik * k_subscal).to_bytes(), (psk * k_subscal).to_bytes())
 }
 
 /// CARROT subaddress spend public key:

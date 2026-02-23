@@ -23,6 +23,9 @@ pub struct ScanContext {
     pub carrot_prove_spend_key: Option<[u8; 32]>,
     pub carrot_generate_image_key: Option<[u8; 32]>,
 
+    /// CARROT generate-address secret (needed for subaddress scalar derivation).
+    pub carrot_generate_address_secret: [u8; 32],
+
     /// Whether CARROT scanning is enabled (keys are non-zero).
     pub carrot_enabled: bool,
 }
@@ -44,6 +47,7 @@ impl ScanContext {
             carrot_subaddress_map: carrot_subaddrs,
             carrot_prove_spend_key: keys.carrot.prove_spend_key,
             carrot_generate_image_key: Some(keys.carrot.generate_image_key),
+            carrot_generate_address_secret: keys.carrot.generate_address_secret,
             carrot_enabled: !keys.carrot.is_empty(),
         }
     }
@@ -72,6 +76,13 @@ pub struct TxOutput {
     pub carrot_ephemeral_pubkey: Option<[u8; 32]>,
     /// Asset type string (e.g. "SAL", "SAL1") from the on-chain output.
     pub asset_type: String,
+    /// Per-output unlock time (from output target struct, NOT tx prefix).
+    /// CARROT outputs (type 4) always have unlock_time = 0.
+    /// For txout_to_key/txout_to_tagged_key, this comes from the output's
+    /// own unlock_time field. Falls back to TX prefix unlock_time.
+    pub unlock_time: u64,
+    /// Encrypted Janus anchor (16 bytes, from CARROT output target).
+    pub encrypted_janus_anchor: Option<[u8; 16]>,
 }
 
 /// A transaction with all data needed for scanning.
@@ -81,6 +92,9 @@ pub struct ScanTxData {
     pub tx_hash: [u8; 32],
     /// Transaction public key (from tx extra).
     pub tx_pub_key: [u8; 32],
+    /// Per-output additional public keys (tag 0x04 from tx extra).
+    /// Used for per-output CN derivations when present.
+    pub additional_pubkeys: Vec<[u8; 32]>,
     /// All outputs in the transaction.
     pub outputs: Vec<TxOutput>,
     /// Whether this is a coinbase (miner) transaction.
@@ -92,6 +106,8 @@ pub struct ScanTxData {
     pub first_key_image: Option<[u8; 32]>,
     /// Transaction type (1=miner, 2=protocol, 3=transfer, etc.).
     pub tx_type: u8,
+    /// Unlock time from the transaction prefix (0 = no lock).
+    pub unlock_time: u64,
 }
 
 /// Result of detecting an owned output.
@@ -108,6 +124,8 @@ pub struct FoundOutput {
     pub carrot_enote_type: Option<u8>,
     pub output_public_key: [u8; 32],
     pub asset_type: String,
+    /// True if matched via the internal (self-send) CARROT scan path.
+    pub is_carrot_internal: bool,
 }
 
 /// Scan a transaction's outputs for owned ones.
@@ -141,7 +159,25 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
         vec![]
     };
 
-    for output in &tx.outputs {
+    // Pre-compute per-output CN derivations from additional_pubkeys (tag 0x04).
+    // C++ ref: wallet2.cpp uses per-output derivation when additional_pubkeys
+    // are present (common for protocol_tx and multi-output pre-CARROT TXs).
+    let per_output_derivations: Vec<Option<[u8; 32]>> = tx
+        .additional_pubkeys
+        .iter()
+        .map(|pk| {
+            let d = salvium_crypto::generate_key_derivation(pk, &ctx.cn_view_secret);
+            if d.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&d);
+                Some(arr)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (out_idx, output) in tx.outputs.iter().enumerate() {
         let is_carrot_output = output.carrot_view_tag.is_some();
 
         if is_carrot_output {
@@ -155,17 +191,31 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
                 }
             }
         } else {
-            // Non-CARROT output: try CN scan.
+            // Non-CARROT output: try CN scan with shared derivation first.
+            let mut cn_found = false;
             if let Some(ref derivation) = cn_derivation {
-                if let Some(result) = try_cn_scan(ctx, derivation, output, tx.is_coinbase) {
+                if let Some(result) = try_cn_scan(ctx, derivation, output, tx.is_coinbase, tx.tx_type) {
                     found.push(result);
-                    continue;
+                    cn_found = true;
+                }
+            }
+
+            // Fix #14: Try per-output derivation from additional_pubkeys.
+            // Protocol TXs and multi-output pre-CARROT TXs often use per-output
+            // keys (tag 0x04) for derivation instead of the shared tx_pub_key.
+            // C++ ref: wallet2.cpp tries both shared and per-output derivations.
+            if !cn_found {
+                if let Some(Some(ref per_output_deriv)) = per_output_derivations.get(out_idx) {
+                    if let Some(result) = try_cn_scan(ctx, per_output_deriv, output, tx.is_coinbase, tx.tx_type) {
+                        found.push(result);
+                        cn_found = true;
+                    }
                 }
             }
 
             // Fall back to CARROT scan for non-CARROT outputs too
             // (in case of misidentification).
-            if ctx.carrot_enabled && !input_context.is_empty() {
+            if !cn_found && ctx.carrot_enabled && !input_context.is_empty() {
                 if let Some(result) =
                     try_carrot_scan(ctx, output, &input_context, tx.is_coinbase)
                 {
@@ -183,6 +233,7 @@ fn try_cn_scan(
     derivation: &[u8; 32],
     output: &TxOutput,
     is_coinbase: bool,
+    tx_type: u8,
 ) -> Option<FoundOutput> {
     let rct_type = if is_coinbase { 0 } else { output.rct_type };
     let clear_amount = if is_coinbase && output.amount > 0 {
@@ -191,6 +242,7 @@ fn try_cn_scan(
         None
     };
 
+    // Try with actual output index first.
     let result = salvium_crypto::cn_scan::scan_cryptonote_output(
         &output.public_key,
         derivation,
@@ -199,10 +251,34 @@ fn try_cn_scan(
         rct_type,
         clear_amount,
         &output.ecdh_encrypted_amount,
+        output.commitment.as_ref(),
         ctx.cn_spend_secret.as_ref(),
         &ctx.cn_view_secret,
         &ctx.cn_subaddress_map,
-    )?;
+    ).or_else(|| {
+        // Fix #5: PROTOCOL_TX index-0 override.
+        // CONVERT/YIELD outputs in PROTOCOL TXs are derived with index 0
+        // by the protocol regardless of their actual position in the TX.
+        // The view tag and key derivation both use index 0.
+        // C++ ref: cryptonote_format_utils.cpp:1526-1531
+        if tx_type == 2 && output.index != 0 {
+            salvium_crypto::cn_scan::scan_cryptonote_output(
+                &output.public_key,
+                derivation,
+                0, // retry with index 0
+                output.target_view_tag,
+                rct_type,
+                clear_amount,
+                &output.ecdh_encrypted_amount,
+                output.commitment.as_ref(),
+                ctx.cn_spend_secret.as_ref(),
+                &ctx.cn_view_secret,
+                &ctx.cn_subaddress_map,
+            )
+        } else {
+            None
+        }
+    })?;
 
     Some(FoundOutput {
         output_index: output.index,
@@ -216,6 +292,7 @@ fn try_cn_scan(
         carrot_enote_type: None,
         output_public_key: output.public_key,
         asset_type: output.asset_type.clone(),
+        is_carrot_internal: false,
     })
 }
 
@@ -247,20 +324,61 @@ fn try_carrot_scan(
         &ctx.carrot_subaddress_map,
         clear_amount,
     ) {
-        let key_image = compute_carrot_key_image(ctx, &output.public_key, &result);
-        return Some(FoundOutput {
-            output_index: output.index,
-            amount: result.amount,
-            mask: result.mask,
-            key_image,
-            subaddress_major: result.subaddress_major,
-            subaddress_minor: result.subaddress_minor,
-            is_carrot: true,
-            carrot_shared_secret: Some(result.shared_secret),
-            carrot_enote_type: Some(result.enote_type),
-            output_public_key: output.public_key,
-            asset_type: output.asset_type.clone(),
-        });
+        // Janus protection: verify the encrypted anchor to reject false positives.
+        // C++ ref: scan.cpp try_scan_carrot_enote_external_receiver
+        if let Some(ref enc_anchor) = output.encrypted_janus_anchor {
+            let is_sub = result.subaddress_major != 0 || result.subaddress_minor != 0;
+            if !salvium_crypto::carrot_scan::verify_janus_protection(
+                enc_anchor,
+                &result.shared_secret,
+                &output.public_key,
+                d_e,
+                input_context,
+                &result.address_spend_pubkey,
+                is_sub,
+                &ctx.carrot_view_incoming,
+            ) {
+                log::debug!(
+                    "Janus protection rejected CARROT external match: out_idx={} amount={}",
+                    output.index, result.amount,
+                );
+                // Fall through to try internal scan
+            } else {
+                let key_image = compute_carrot_key_image(ctx, &output.public_key, &result);
+                return Some(FoundOutput {
+                    output_index: output.index,
+                    amount: result.amount,
+                    mask: result.mask,
+                    key_image,
+                    subaddress_major: result.subaddress_major,
+                    subaddress_minor: result.subaddress_minor,
+                    is_carrot: true,
+                    carrot_shared_secret: Some(result.shared_secret),
+                    carrot_enote_type: Some(result.enote_type),
+                    output_public_key: output.public_key,
+                    asset_type: output.asset_type.clone(),
+                    is_carrot_internal: false,
+                });
+            }
+        } else {
+            // No encrypted anchor available (shouldn't happen for CARROT outputs,
+            // but accept gracefully for backward compatibility).
+            let key_image = compute_carrot_key_image(ctx, &output.public_key, &result);
+            return Some(FoundOutput {
+                output_index: output.index,
+                amount: result.amount,
+                mask: result.mask,
+                key_image,
+                subaddress_major: result.subaddress_major,
+                subaddress_minor: result.subaddress_minor,
+                is_carrot: true,
+                carrot_shared_secret: Some(result.shared_secret),
+                carrot_enote_type: Some(result.enote_type),
+                output_public_key: output.public_key,
+                asset_type: output.asset_type.clone(),
+                is_carrot_internal: false,
+            });
+        }
     }
 
     // Try internal scanning (self-send: change outputs, etc.).
@@ -289,13 +407,20 @@ fn try_carrot_scan(
             carrot_enote_type: Some(result.enote_type),
             output_public_key: output.public_key,
             asset_type: output.asset_type.clone(),
+            is_carrot_internal: true,
         });
     }
 
     None
 }
 
-/// Compute the CARROT key image: KI = sk_x * H_p(Ko).
+/// Compute the CARROT key image: KI = x * H_p(Ko).
+///
+/// For the main address (0,0): x = k_gi + k^o_g
+/// For subaddresses:           x = k_gi * k^j_subscal + k^o_g
+///
+/// The subaddress scalar k^j_subscal is derived from the generate_address_secret,
+/// account_spend_pubkey, and the subaddress indices (major, minor).
 ///
 /// Requires prove_spend_key and generate_image_key in the scan context.
 /// Returns None for view-only wallets.
@@ -316,10 +441,23 @@ fn compute_carrot_key_image(
     let len = commitment.len().min(32);
     commit_32[..len].copy_from_slice(&commitment[..len]);
 
-    // Derive spend keys: (sk_x, sk_y).
-    let (sk_x, _sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-        prove_spend_key,
+    // For subaddresses, multiply the base keys by the subaddress scalar.
+    // C++ formula: x = k_gi * k^j_subscal + k^o_g
+    //              y = k_ps * k^j_subscal + k^o_t
+    // For main address (0,0), k^j_subscal = 1 (identity).
+    let (adj_gik, adj_psk) = salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
         generate_image_key,
+        prove_spend_key,
+        &ctx.carrot_generate_address_secret,
+        &ctx.carrot_account_spend_pubkey,
+        result.subaddress_major,
+        result.subaddress_minor,
+    );
+
+    // Derive spend keys with subaddress-adjusted base keys: (sk_x, sk_y).
+    let (sk_x, _sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
+        &adj_psk,
+        &adj_gik,
         &result.shared_secret,
         &commit_32,
     );
@@ -356,11 +494,13 @@ mod tests {
         let tx = ScanTxData {
             tx_hash: [0u8; 32],
             tx_pub_key: [1u8; 32],
+            additional_pubkeys: vec![],
             outputs: vec![],
             is_coinbase: false,
             block_height: 100,
             first_key_image: Some([2u8; 32]),
             tx_type: 3,
+            unlock_time: 0,
         };
 
         let found = scan_transaction(&ctx, &tx);
@@ -375,6 +515,7 @@ mod tests {
         let tx = ScanTxData {
             tx_hash: [0u8; 32],
             tx_pub_key: [1u8; 32],
+            additional_pubkeys: vec![],
             outputs: vec![TxOutput {
                 index: 0,
                 public_key: [99u8; 32],
@@ -386,11 +527,14 @@ mod tests {
                 carrot_view_tag: None,
                 carrot_ephemeral_pubkey: None,
                 asset_type: "SAL".to_string(),
+                unlock_time: 0,
+                encrypted_janus_anchor: None,
             }],
             is_coinbase: false,
             block_height: 100,
             first_key_image: Some([2u8; 32]),
             tx_type: 3,
+            unlock_time: 0,
         };
 
         // Random output should not match our wallet keys.

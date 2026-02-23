@@ -11,6 +11,7 @@ pub mod sync;
 pub mod utxo;
 pub mod encryption;
 pub mod js_import;
+pub mod pqc;
 pub mod wallet;
 pub mod stake;
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,6 +25,7 @@ pub use sync::{SyncEngine, SyncEvent};
 pub use utxo::{SelectionStrategy, SelectionOptions};
 pub use wallet::Wallet;
 pub use js_import::{JsWalletSecrets, decrypt_js_wallet};
+pub use pqc::{WalletSecrets, PqcEnvelope, encrypt_envelope, decrypt_envelope};
 
 // Re-export storage types from salvium-crypto for convenience.
 #[cfg(not(target_arch = "wasm32"))]

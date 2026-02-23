@@ -147,11 +147,11 @@ export class JsiCryptoBackend {
   // ─── CryptoNote Output Scanning ──────────────────────────────────────────
 
   scanCnOutput(outputPubkey, derivation, outputIndex, viewTag,
-      rctType, clearTextAmount, ecdhEncAmount,
+      rctType, clearTextAmount, ecdhEncAmount, commitment,
       spendSecretKey, viewSecretKey, subaddressMap) {
     return this.native.cnScanOutput(
       outputPubkey, derivation, outputIndex, viewTag,
-      rctType, clearTextAmount, ecdhEncAmount,
+      rctType, clearTextAmount, ecdhEncAmount, commitment,
       spendSecretKey, viewSecretKey, subaddressMap
     );
   }

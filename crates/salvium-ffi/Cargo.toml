@@ -1,0 +1,24 @@
+[package]
+name = "salvium-ffi"
+version = "0.1.0"
+edition.workspace = true
+description = "C FFI shim for wallet, daemon, and transaction operations"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+salvium-wallet = { path = "../salvium-wallet" }
+salvium-rpc = { path = "../salvium-rpc" }
+salvium-tx = { path = "../salvium-tx" }
+salvium-types = { path = "../salvium-types" }
+salvium-crypto = { path = "../salvium-crypto" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+log.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

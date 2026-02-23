@@ -2047,9 +2047,15 @@ export class WalletSync {
         ? (typeof ecdhEncAmount === 'string' ? hexToBytes(ecdhEncAmount) : ecdhEncAmount)
         : undefined;
 
+      // Pedersen commitment from outPk (for RCT outputs)
+      const outPk = rctType !== 0 ? tx.rct?.outPk?.[outputIndex] : undefined;
+      const commitBytes = outPk
+        ? (typeof outPk === 'string' ? hexToBytes(outPk) : outPk)
+        : undefined;
+
       const result = backend.scanCnOutput(
         outputPubKey, derivation, outputIndex, output.viewTag,
-        rctType, clearTextAmount, ecdhBytes,
+        rctType, clearTextAmount, ecdhBytes, commitBytes,
         this.keys.spendSecretKey, this.keys.viewSecretKey,
         this.subaddresses
       );

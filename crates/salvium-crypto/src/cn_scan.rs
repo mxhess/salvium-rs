@@ -145,11 +145,29 @@ pub fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
     Scalar::from_bytes_mod_order(hash).to_bytes()
 }
 
+/// Pedersen commitment: C = mask*G + amount*H
+///
+/// Matches the C++ rct::commit(amount, mask) which computes addKeys2(C, mask, d2h(amount), H).
+fn pedersen_commit_cn(amount: u64, mask: &[u8; 32]) -> [u8; 32] {
+    let h = CompressedEdwardsY(crate::H_POINT_BYTES).decompress().expect("invalid H");
+    let mut amount_bytes = [0u8; 32];
+    amount_bytes[..8].copy_from_slice(&amount.to_le_bytes());
+    let amount_scalar = Scalar::from_bytes_mod_order(amount_bytes);
+    let mask_scalar = Scalar::from_bytes_mod_order(*mask);
+    EdwardsPoint::vartime_multiscalar_mul(
+        &[mask_scalar, amount_scalar],
+        &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, h],
+    )
+    .compress()
+    .to_bytes()
+}
+
 // ─── Core scanning ──────────────────────────────────────────────────────────
 
 /// Scan a CryptoNote output in a single call.
 ///
 /// `subaddrs`: slice of (32-byte spend pubkey, major, minor) tuples.
+/// `commitment`: on-chain Pedersen commitment (outPk) for RCT outputs.
 ///
 /// Returns `Some(CnScanResult)` if the output belongs to us, `None` otherwise.
 #[allow(clippy::too_many_arguments)]
@@ -161,6 +179,7 @@ pub fn scan_cryptonote_output(
     rct_type: u8,
     clear_text_amount: Option<u64>,
     ecdh_encrypted_amount: &[u8; 8],
+    commitment: Option<&[u8; 32]>,
     spend_secret_key: Option<&[u8; 32]>,
     view_secret_key: &[u8; 32],
     subaddrs: &[([u8; 32], u32, u32)],
@@ -213,6 +232,17 @@ pub fn scan_cryptonote_output(
         let shared_secret = compute_shared_secret(derivation, output_index);
         amount = ecdh_decode_amount(ecdh_encrypted_amount, &shared_secret);
         mask = gen_commitment_mask(&shared_secret);
+
+        // Step 4.5: Verify Pedersen commitment — C' = mask*G + amount*H
+        // This is critical: without this check, outputs that happen to pass
+        // view tag + subaddress lookup by coincidence get accepted with
+        // garbage random amounts. The C++ wallet always does this check.
+        if let Some(expected) = commitment {
+            let computed = pedersen_commit_cn(amount, &mask);
+            if computed != *expected {
+                return None;
+            }
+        }
     }
 
     // Step 5: Key image generation (if spend key available)
@@ -358,6 +388,7 @@ mod tests {
             1,
             None,
             &enc_amount,
+            None, // commitment
             None,
             &view_key,
             &subaddrs,
@@ -382,6 +413,7 @@ mod tests {
             1,
             None,
             &enc_amount,
+            None, // commitment
             None,
             &view_key,
             &subaddrs,

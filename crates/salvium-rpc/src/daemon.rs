@@ -7,8 +7,10 @@
 
 use crate::client::{RpcClient, RpcConfig};
 use crate::error::RpcError;
+use crate::portable_storage::{self, PsValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::time::Duration;
 
 // =============================================================================
@@ -16,7 +18,7 @@ use std::time::Duration;
 // =============================================================================
 
 /// Daemon `/get_info` response.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonInfo {
     pub height: u64,
     pub target_height: u64,
@@ -178,7 +180,7 @@ pub struct OutputDistribution {
 }
 
 /// Fee estimate response.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeEstimate {
     pub fee: u64,
     #[serde(default)]
@@ -194,7 +196,7 @@ pub struct KeyImageSpentStatus {
 }
 
 /// Send raw transaction response.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendRawTxResult {
     pub status: String,
     #[serde(default)]
@@ -231,7 +233,7 @@ pub struct HardForkInfo {
 }
 
 /// Yield info (Salvium-specific).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YieldInfo {
     #[serde(default)]
     pub total_burnt: u64,
@@ -247,7 +249,7 @@ pub struct YieldInfo {
 }
 
 /// Supply info (Salvium-specific).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupplyInfo {
     pub status: String,
     #[serde(flatten)]
@@ -653,10 +655,29 @@ pub struct GenerateBlocksResult {
 }
 
 // =============================================================================
+// Binary Endpoint Types
+// =============================================================================
+
+/// A single block entry returned by `/get_blocks_by_height.bin`.
+///
+/// Contains the raw block blob (which includes the miner tx) and all
+/// regular transaction blobs, avoiding the need for separate RPC calls.
+#[derive(Debug, Clone)]
+pub struct BinBlockEntry {
+    /// Raw block blob (contains header + miner tx).
+    pub block: Vec<u8>,
+    /// Raw transaction blobs for all non-coinbase txs in this block.
+    pub txs: Vec<Vec<u8>>,
+}
+
+// =============================================================================
 // DaemonRpc
 // =============================================================================
 
 /// Async RPC client for the Salvium daemon.
+///
+/// Cloning is cheap: the inner HTTP connection pool and config are shared.
+#[derive(Clone)]
 pub struct DaemonRpc {
     client: RpcClient,
 }
@@ -790,6 +811,81 @@ impl DaemonRpc {
             .await?;
         let headers = val.get("headers").ok_or(RpcError::NoResult { context: "get_block_headers_range".into() })?;
         Ok(serde_json::from_value(headers.clone())?)
+    }
+
+    /// Fetch multiple blocks by height in a single binary RPC call.
+    ///
+    /// Uses the `/get_blocks_by_height.bin` endpoint with Epee portable storage
+    /// format. Returns the raw block blob (containing the miner tx) and all
+    /// regular transaction blobs for each requested height.
+    ///
+    /// This is far more efficient than calling `get_block()` per height — a
+    /// single HTTP round-trip fetches hundreds of blocks with their transactions.
+    pub async fn get_blocks_by_height_bin(
+        &self,
+        heights: &[u64],
+    ) -> Result<Vec<BinBlockEntry>, RpcError> {
+        // Serialize request: { heights: uint64[] }
+        let height_vals: Vec<PsValue> = heights.iter().map(|&h| PsValue::Uint64(h)).collect();
+        let mut req = HashMap::new();
+        req.insert("heights".to_string(), PsValue::Array(height_vals));
+        let body = portable_storage::serialize(&req);
+
+        let resp_bytes = self.client.post_binary("/get_blocks_by_height.bin", body).await?;
+        let root = portable_storage::deserialize(&resp_bytes)?;
+
+        // Check status.
+        if let Some(status) = root.get("status") {
+            let status_str = status
+                .as_str()
+                .or_else(|| status.as_bytes().and_then(|b| std::str::from_utf8(b).ok()))
+                .unwrap_or("");
+            if status_str != "OK" {
+                return Err(RpcError::Rpc {
+                    code: -1,
+                    message: format!("get_blocks_by_height.bin: {}", status_str),
+                    method: "get_blocks_by_height.bin".into(),
+                });
+            }
+        }
+
+        // Parse blocks array.
+        let blocks_arr = root
+            .get("blocks")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| RpcError::NoResult {
+                context: "get_blocks_by_height.bin: missing blocks".into(),
+            })?;
+
+        let mut entries = Vec::with_capacity(blocks_arr.len());
+        for block_obj in blocks_arr {
+            let obj = block_obj.as_object().ok_or_else(|| RpcError::NoResult {
+                context: "get_blocks_by_height.bin: block entry not an object".into(),
+            })?;
+
+            let block_blob = obj
+                .get("block")
+                .and_then(|v| v.as_bytes())
+                .unwrap_or(&[])
+                .to_vec();
+
+            let txs = obj
+                .get("txs")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_bytes().map(|b| b.to_vec()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            entries.push(BinBlockEntry {
+                block: block_blob,
+                txs,
+            });
+        }
+
+        Ok(entries)
     }
 
     /// Get a full block by height (header + miner tx hash + tx hashes).

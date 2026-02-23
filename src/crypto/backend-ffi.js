@@ -217,7 +217,7 @@ const FFI_SYMBOLS = {
   salvium_carrot_scan_internal: { args: [ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, usize, FFIType.u64, ptr, u32, ptr, ptr], returns: i32 },
 
   // CryptoNote scanning
-  salvium_cn_scan_output: { args: [ptr, ptr, u32, i32, FFIType.u8, FFIType.u64, ptr, ptr, ptr, ptr, u32, ptr, ptr], returns: i32 },
+  salvium_cn_scan_output: { args: [ptr, ptr, u32, i32, FFIType.u8, FFIType.u64, ptr, ptr, ptr, ptr, ptr, u32, ptr, ptr], returns: i32 },
 
   // Buffer management
   salvium_storage_free_buf: { args: [ptr, usize], returns: FFIType.void },
@@ -1041,7 +1041,7 @@ export class FfiCryptoBackend {
    * Returns scan result object or null if not owned.
    */
   scanCnOutput(outputPubkey, derivation, outputIndex, viewTag,
-      rctType, clearTextAmount, ecdhEncAmount,
+      rctType, clearTextAmount, ecdhEncAmount, commitment,
       spendSecretKey, viewSecretKey, subaddressMap) {
     const bKo = ensureBuffer(outputPubkey);
     const bDeriv = ensureBuffer(derivation);
@@ -1055,6 +1055,9 @@ export class FfiCryptoBackend {
       : 0xFFFFFFFFFFFFFFFFn;
 
     const bEncAmt = ensureBuffer(ecdhEncAmount || new Uint8Array(8));
+
+    // commitment: nullable (Pedersen commitment from outPk)
+    const bCommit = commitment ? ensureBuffer(commitment) : null;
 
     // spend_secret_key: nullable (view-only)
     const bSpend = (spendSecretKey) ? ensureBuffer(spendSecretKey) : null;
@@ -1071,6 +1074,7 @@ export class FfiCryptoBackend {
       bKo, bDeriv, outputIndex,
       vtInt, rctType, ctAmount,
       bEncAmt,
+      bCommit,     // nullable - Pedersen commitment
       bSpend,      // nullable
       bView,
       subBuf, nSub,

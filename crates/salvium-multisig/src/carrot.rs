@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 
 use crate::account::MultisigAccount;
@@ -145,16 +144,14 @@ impl CarrotTransactionProposal {
         payments + self_sends
     }
 
-    /// Compute a deterministic 32-byte SHA-256 hash over the canonical JSON
+    /// Compute a deterministic 32-byte keccak256 hash over the canonical JSON
     /// representation of this proposal, suitable for signing.
     pub fn get_signable_hash(&self) -> [u8; 32] {
         let json = serde_json::to_string(self)
             .expect("CarrotTransactionProposal serialization should not fail");
-        let mut hasher = Sha256::new();
-        hasher.update(json.as_bytes());
-        let result = hasher.finalize();
+        let hash = salvium_crypto::keccak256(json.as_bytes());
         let mut out = [0u8; 32];
-        out.copy_from_slice(&result);
+        out.copy_from_slice(&hash[..32]);
         out
     }
 
@@ -291,12 +288,12 @@ impl MultisigCarrotAccount {
         };
 
         // Derive subaddress by hashing the address secret with the indices.
-        let mut hasher = Sha256::new();
-        hasher.update(b"carrot_subaddress:");
-        hasher.update(keys.generate_address_secret.as_bytes());
-        hasher.update(major.to_le_bytes());
-        hasher.update(minor.to_le_bytes());
-        let sub_hash = hex::encode(hasher.finalize());
+        let mut data = Vec::new();
+        data.extend_from_slice(b"carrot_subaddress:");
+        data.extend_from_slice(keys.generate_address_secret.as_bytes());
+        data.extend_from_slice(&major.to_le_bytes());
+        data.extend_from_slice(&minor.to_le_bytes());
+        let sub_hash = hex::encode(salvium_crypto::keccak256(&data));
         let body = &sub_hash[..16];
 
         Ok(format!("{}sub{}", prefix, body))
@@ -331,13 +328,13 @@ pub fn generate_multisig_carrot_key_image(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Derive a 32-byte hex key by hashing a domain tag and an input.
+/// Derive a 32-byte hex key by hashing a domain tag and an input via keccak256.
 fn hash_derive(domain: &str, input: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(domain.as_bytes());
-    hasher.update(b":");
-    hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
+    let mut data = Vec::new();
+    data.extend_from_slice(domain.as_bytes());
+    data.extend_from_slice(b":");
+    data.extend_from_slice(input.as_bytes());
+    hex::encode(salvium_crypto::keccak256(&data))
 }
 
 // ---------------------------------------------------------------------------

@@ -2,10 +2,13 @@
 //!
 //! Decrypts wallet-*.json files created by the JavaScript wallet using the
 //! hybrid post-quantum encryption scheme:
-//!   1. Argon2id (PIN → classical key)
-//!   2. ML-KEM-768 (PIN → deterministic keypair → decapsulate → quantum key)
-//!   3. HKDF-SHA256 (classical + quantum → AES key)
-//!   4. AES-256-GCM (decrypt ciphertext → JSON plaintext)
+//!   1. Argon2id (PIN -> classical key)
+//!   2. ML-KEM-768 (PIN -> deterministic keypair -> decapsulate -> quantum key)
+//!   3. HKDF-SHA256 (classical + quantum -> AES key)
+//!   4. AES-256-GCM (decrypt ciphertext -> JSON plaintext)
+//!
+//! Shared PQC primitives live in `crate::pqc`; this module handles
+//! the JS-specific JSON envelope format.
 
 use crate::error::WalletError;
 use aes_gcm::aead::{Aead, KeyInit};
@@ -13,9 +16,6 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use hkdf::Hkdf;
 use ml_kem::{KemCore, MlKem768};
 use sha2::Sha256;
-
-/// Domain separator for KEM seed derivation (appended to kemSalt).
-const KEM_DOMAIN: &[u8] = b"salvium-wallet-kem-v1";
 
 /// HKDF info string for combining classical + quantum keys.
 const HKDF_INFO: &[u8] = b"salvium-wallet-encryption-key-v1";
@@ -77,33 +77,19 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
         .and_then(|v| v.as_u64())
         .unwrap_or(4) as u32;
 
-    let pin_bytes = pin.as_bytes();
-
-    // 1. Classical key: argon2id(pin, kdfSalt) → 32 bytes.
-    let classical_key =
-        salvium_crypto::argon2id_hash(pin_bytes, &kdf_salt, t_cost, m_cost, parallelism, 32);
-    if classical_key.len() != 32 {
-        return Err(WalletError::KeyDerivation(
-            "argon2id classical key derivation failed".into(),
-        ));
-    }
-
-    // 2. KEM seed: argon2id(pin, kemSalt ++ KEM_DOMAIN) → 64 bytes.
-    let mut kem_salt_with_domain = Vec::with_capacity(kem_salt.len() + KEM_DOMAIN.len());
-    kem_salt_with_domain.extend_from_slice(&kem_salt);
-    kem_salt_with_domain.extend_from_slice(KEM_DOMAIN);
-
-    let kem_seed =
-        salvium_crypto::argon2id_hash(pin_bytes, &kem_salt_with_domain, t_cost, m_cost, parallelism, 64);
-    if kem_seed.len() != 64 {
-        return Err(WalletError::KeyDerivation(
-            "argon2id KEM seed derivation failed".into(),
-        ));
-    }
+    // 1-2. Derive classical key + KEM seed via shared PQC primitives.
+    let keys = crate::pqc::derive_keys(
+        pin.as_bytes(),
+        &kdf_salt,
+        &kem_salt,
+        t_cost,
+        m_cost,
+        parallelism,
+    )?;
 
     // 3. Deterministic ML-KEM-768 keygen from seed (d = first 32, z = last 32).
-    let d: [u8; 32] = kem_seed[..32].try_into().unwrap();
-    let z: [u8; 32] = kem_seed[32..64].try_into().unwrap();
+    let d: [u8; 32] = keys.kem_seed[..32].try_into().unwrap();
+    let z: [u8; 32] = keys.kem_seed[32..64].try_into().unwrap();
     let (dk, _ek) = MlKem768::generate_deterministic(&d.into(), &z.into());
 
     // 4. Decapsulate to get quantum shared secret.
@@ -116,9 +102,9 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
         .decapsulate(&ct_array)
         .map_err(|_| WalletError::DecryptionFailed)?;
 
-    // 5. HKDF-SHA256: combine classical + quantum → 32-byte AES key.
+    // 5. HKDF-SHA256: combine classical + quantum -> 32-byte AES key.
     let mut ikm = Vec::with_capacity(64);
-    ikm.extend_from_slice(&classical_key);
+    ikm.extend_from_slice(&keys.classical_key);
     ikm.extend_from_slice(quantum_key.as_slice());
 
     let hk = Hkdf::<Sha256>::new(None, &ikm);

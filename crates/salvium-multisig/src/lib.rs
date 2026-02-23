@@ -6,3 +6,4 @@ pub mod tx_set;
 pub mod partial_sig;
 pub mod wallet;
 pub mod carrot;
+pub mod signing;

@@ -13,9 +13,9 @@ use std::collections::HashMap;
 // Constants
 // =============================================================================
 
-/// Portable storage signature bytes.
-const SIGNATURE_A: u32 = 0x0111_0101;
-const SIGNATURE_B: u32 = 0x0101_0201;
+/// Portable storage signature bytes (matches Monero/CryptoNote epee format).
+const SIGNATURE_A: u32 = 0x0101_1101;
+const SIGNATURE_B: u32 = 0x0102_0101;
 
 /// Current storage format version.
 const FORMAT_VER: u8 = 1;
@@ -554,6 +554,47 @@ mod tests {
 
         let nested = result.get("nested").unwrap().as_object().unwrap();
         assert_eq!(nested["x"].as_u64(), Some(42));
+    }
+
+    #[test]
+    fn test_signature_bytes_match_monero() {
+        // The first 9 bytes of any serialized message must match the
+        // Monero/CryptoNote epee portable storage wire format exactly.
+        let map = HashMap::new();
+        let bytes = serialize(&map);
+        // SIG_A LE: 01 11 01 01, SIG_B LE: 01 01 02 01, VER: 01
+        assert_eq!(
+            &bytes[..9],
+            &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01],
+            "portable storage header must match Monero epee format"
+        );
+    }
+
+    #[test]
+    fn test_heights_request_wire_format() {
+        // Verify the exact wire format for a get_blocks_by_height.bin request
+        // with a single height [100].
+        let mut req = HashMap::new();
+        req.insert(
+            "heights".to_string(),
+            PsValue::Array(vec![PsValue::Uint64(100)]),
+        );
+        let bytes = serialize(&req);
+
+        // Header: 9 bytes
+        assert_eq!(&bytes[0..9], &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01]);
+        // Section: varint count=1 → 0x04 (1 << 2)
+        assert_eq!(bytes[9], 0x04);
+        // Key: length=7, "heights"
+        assert_eq!(bytes[10], 7);
+        assert_eq!(&bytes[11..18], b"heights");
+        // Value: TYPE_UINT64 | FLAG_ARRAY = 0x85
+        assert_eq!(bytes[18], 0x85);
+        // Array count: varint 1 → 0x04
+        assert_eq!(bytes[19], 0x04);
+        // uint64 LE value 100
+        assert_eq!(&bytes[20..28], &100u64.to_le_bytes());
+        assert_eq!(bytes.len(), 28);
     }
 
     #[test]

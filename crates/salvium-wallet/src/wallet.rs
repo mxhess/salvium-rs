@@ -196,7 +196,9 @@ impl Wallet {
         daemon: &salvium_rpc::DaemonRpc,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
     ) -> Result<u64, WalletError> {
-        SyncEngine::sync(daemon, &self.db, &self.scan_context, event_tx).await
+        let lock_period = salvium_types::constants::network_config(self.network())
+            .stake_lock_period;
+        SyncEngine::sync(daemon, &self.db, &self.scan_context, lock_period, event_tx).await
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────
@@ -235,7 +237,18 @@ impl Wallet {
             .into_iter()
             .filter(|o| is_output_unlocked(o, sync_height))
             .filter_map(|o| {
-                let amount = o.amount.parse::<u64>().ok()?;
+                let amount = match o.amount.parse::<u64>() {
+                    Ok(a) => a,
+                    Err(e) => {
+                        log::error!(
+                            "output amount parse failed: '{}' for key_image={}: {}",
+                            o.amount,
+                            o.key_image.as_deref().unwrap_or("?"),
+                            e
+                        );
+                        return None;
+                    }
+                };
                 Some(UtxoCandidate {
                     key_image: o.key_image.unwrap_or_default(),
                     amount,
@@ -281,7 +294,18 @@ impl Wallet {
             .into_iter()
             .filter(|o| o.is_carrot && is_output_unlocked(o, sync_height))
             .filter_map(|o| {
-                let amount = o.amount.parse::<u64>().ok()?;
+                let amount = match o.amount.parse::<u64>() {
+                    Ok(a) => a,
+                    Err(e) => {
+                        log::error!(
+                            "CARROT output amount parse failed: '{}' for key_image={}: {}",
+                            o.amount,
+                            o.key_image.as_deref().unwrap_or("?"),
+                            e
+                        );
+                        return None;
+                    }
+                };
                 Some(UtxoCandidate {
                     key_image: o.key_image.unwrap_or_default(),
                     amount,
@@ -425,28 +449,88 @@ impl Wallet {
         db.delete_address_book_entry(row_id)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
+
+    // ── Output queries ──────────────────────────────────────────────────
+
+    /// Get outputs matching a query.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_outputs(
+        &self,
+        query: &salvium_crypto::storage::OutputQuery,
+    ) -> Result<Vec<salvium_crypto::storage::OutputRow>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_outputs(query)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Mark an output as unspent.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn mark_output_unspent(&self, key_image: &str) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.mark_unspent(key_image)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Freeze an output (exclude from coin selection).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn freeze_output(&self, key_image: &str) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.freeze_output(key_image)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Thaw a frozen output.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn thaw_output(&self, key_image: &str) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.thaw_output(key_image)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    // ── Wallet attributes (key-value store) ─────────────────────────────
+
+    /// Set a wallet attribute.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_attribute(&self, key: &str, value: &str) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_attribute(key, value)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Get a wallet attribute.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_attribute(&self, key: &str) -> Result<Option<String>, WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_attribute(key)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Reset the sync height (for rescanning).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn reset_sync_height(&self, height: u64) -> Result<(), WalletError> {
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_sync_height(height as i64)
+            .map_err(|e| WalletError::Storage(e.to_string()))
+    }
 }
 
 /// Check if an output is unlocked (spendable) at the given height.
+///
+/// Delegates to `salvium_crypto::storage::is_unlocked` which exactly matches
+/// C++ wallet2::is_transfer_unlocked + is_tx_spendtime_unlocked.
 #[cfg(not(target_arch = "wasm32"))]
 fn is_output_unlocked(output: &salvium_crypto::storage::OutputRow, current_height: i64) -> bool {
-    let unlock_time: u64 = output.unlock_time.parse().unwrap_or(0);
-    if unlock_time == 0 {
-        // Standard 10-confirmation rule.
-        let out_height = output.block_height.unwrap_or(0);
-        return current_height >= out_height + 10;
-    }
-
-    // Unlock time < 500_000_000 → block height.
-    // Unlock time >= 500_000_000 → Unix timestamp.
-    if unlock_time < 500_000_000 {
-        current_height as u64 >= unlock_time
-    } else {
-        // Use block timestamp approximation (120s per block).
-        let current_time = output.block_timestamp.unwrap_or(0) as u64
-            + (current_height as u64 - output.block_height.unwrap_or(0) as u64) * 120;
-        current_time >= unlock_time
-    }
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as u128;
+    salvium_crypto::storage::is_output_unlocked_ext(
+        current_height,
+        output.block_height,
+        &output.unlock_time,
+        output.tx_type,
+        now_secs,
+    )
 }
 
 #[cfg(test)]

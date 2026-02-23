@@ -14,9 +14,13 @@ salvium-crypto = { path = "../salvium-crypto" }
 salvium-rpc = { path = "../salvium-rpc" }
 salvium-wallet = { path = "../salvium-wallet" }
 salvium-tx = { path = "../salvium-tx" }
+salvium-multisig = { path = "../salvium-multisig" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 hex = "0.4"
+log.workspace = true
+env_logger.workspace = true
 rpassword = "7"
+rand = "0.8"
 dirs = "5"

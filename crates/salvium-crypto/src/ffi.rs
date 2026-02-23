@@ -1108,6 +1108,7 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
 ///   rct_type: u8 (0 = coinbase, else RCT),
 ///   clear_text_amount: u64 (u64::MAX = not provided),
 ///   ecdh_encrypted_amount: 8 bytes,
+///   commitment: 32 bytes (nullable — Pedersen commitment from outPk),
 ///   spend_secret_key: 32 bytes (nullable for view-only),
 ///   view_secret_key: 32 bytes
 /// Variable inputs:
@@ -1125,6 +1126,7 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
     rct_type: u8,
     clear_text_amount: u64,         // u64::MAX = not provided
     ecdh_encrypted_amount: *const u8, // 8 bytes
+    commitment: *const u8,          // 32 bytes, nullable (Pedersen commitment)
     spend_secret_key: *const u8,    // 32 bytes, nullable (view-only)
     view_secret_key: *const u8,     // 32 bytes
     subaddr_data: *const u8,        // n * 40 bytes
@@ -1145,6 +1147,12 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
             let mut a = [0u8; 8];
             a.copy_from_slice(s);
             a
+        };
+
+        let commit_opt = if commitment.is_null() {
+            None
+        } else {
+            Some(crate::to32(slice::from_raw_parts(commitment, 32)))
         };
 
         let spend_key_opt = if spend_secret_key.is_null() {
@@ -1180,6 +1188,7 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
             rct_type,
             ct_amount,
             &enc_amt,
+            commit_opt.as_ref(),
             spend_key_opt.as_ref(),
             &view_key_arr,
             &subaddrs,
@@ -1609,15 +1618,15 @@ pub unsafe extern "C" fn salvium_storage_put_output(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
             Ok(s) => s,
-            Err(e) => { eprintln!("salvium_storage_put_output: invalid UTF-8: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_output: invalid UTF-8: {e}"); return -1; }
         };
         let row: crate::storage::OutputRow = match serde_json::from_str(json_str) {
             Ok(r) => r,
-            Err(e) => { eprintln!("salvium_storage_put_output: JSON parse error: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_output: JSON parse error: {e}"); return -1; }
         };
         match crate::storage::with_db(handle, |db| db.put_output(&row)) {
             Ok(()) => 0,
-            Err(e) => { eprintln!("salvium_storage_put_output: DB error: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_put_output: DB error: {e}"); -1 }
         }
     })
 }
@@ -1673,7 +1682,7 @@ pub unsafe extern "C" fn salvium_storage_get_outputs(
         };
         let query: crate::storage::OutputQuery = match serde_json::from_str(query_str) {
             Ok(q) => q,
-            Err(e) => { eprintln!("salvium_storage_get_outputs: JSON parse error: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_get_outputs: JSON parse error: {e}"); return -1; }
         };
         match crate::storage::with_db(handle, |db| db.get_outputs(&query)) {
             Ok(rows) => {
@@ -1729,15 +1738,15 @@ pub unsafe extern "C" fn salvium_storage_put_tx(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
             Ok(s) => s,
-            Err(e) => { eprintln!("salvium_storage_put_tx: invalid UTF-8: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_tx: invalid UTF-8: {e}"); return -1; }
         };
         let row: crate::storage::TransactionRow = match serde_json::from_str(json_str) {
             Ok(r) => r,
-            Err(e) => { eprintln!("salvium_storage_put_tx: JSON parse error: {e}\n  JSON: {}", &json_str[..json_str.len().min(500)]); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_tx: JSON parse error: {e}\n  JSON: {}", &json_str[..json_str.len().min(500)]); return -1; }
         };
         match crate::storage::with_db(handle, |db| db.put_tx(&row)) {
             Ok(()) => 0,
-            Err(e) => { eprintln!("salvium_storage_put_tx: DB error: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_put_tx: DB error: {e}"); -1 }
         }
     })
 }
@@ -1791,7 +1800,7 @@ pub unsafe extern "C" fn salvium_storage_get_txs(
         };
         let query: crate::storage::TxQuery = match serde_json::from_str(query_str) {
             Ok(q) => q,
-            Err(e) => { eprintln!("salvium_storage_get_txs: JSON parse error: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_get_txs: JSON parse error: {e}"); return -1; }
         };
         match crate::storage::with_db(handle, |db| db.get_txs(&query)) {
             Ok(rows) => {
@@ -1977,15 +1986,15 @@ pub unsafe extern "C" fn salvium_storage_put_stake(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
             Ok(s) => s,
-            Err(e) => { eprintln!("salvium_storage_put_stake: invalid UTF-8: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_stake: invalid UTF-8: {e}"); return -1; }
         };
         let stake: crate::storage::StakeRow = match serde_json::from_str(json_str) {
             Ok(o) => o,
-            Err(e) => { eprintln!("salvium_storage_put_stake: JSON parse error: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_put_stake: JSON parse error: {e}"); return -1; }
         };
         match crate::storage::with_db(handle, |db| db.put_stake(&stake)) {
             Ok(()) => 0,
-            Err(e) => { eprintln!("salvium_storage_put_stake: DB error: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_put_stake: DB error: {e}"); -1 }
         }
     })
 }
@@ -2017,7 +2026,7 @@ pub unsafe extern "C" fn salvium_storage_get_stake(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { eprintln!("salvium_storage_get_stake: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_get_stake: {e}"); -1 }
         }
     })
 }
@@ -2052,7 +2061,7 @@ pub unsafe extern "C" fn salvium_storage_get_stakes(
                 *out_len = len;
                 0
             }
-            Err(e) => { eprintln!("salvium_storage_get_stakes: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_get_stakes: {e}"); -1 }
         }
     })
 }
@@ -2084,7 +2093,7 @@ pub unsafe extern "C" fn salvium_storage_get_stake_by_output_key(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { eprintln!("salvium_storage_get_stake_by_output_key: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_get_stake_by_output_key: {e}"); -1 }
         }
     })
 }
@@ -2098,11 +2107,11 @@ pub unsafe extern "C" fn salvium_storage_mark_stake_returned(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
             Ok(s) => s,
-            Err(e) => { eprintln!("salvium_storage_mark_stake_returned: invalid UTF-8: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_mark_stake_returned: invalid UTF-8: {e}"); return -1; }
         };
         let data: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(v) => v,
-            Err(e) => { eprintln!("salvium_storage_mark_stake_returned: JSON parse error: {e}"); return -1; }
+            Err(e) => { log::error!("salvium_storage_mark_stake_returned: JSON parse error: {e}"); return -1; }
         };
         let stake_tx_hash = data["stakeTxHash"].as_str().unwrap_or("");
         let return_tx_hash = data["returnTxHash"].as_str().unwrap_or("");
@@ -2113,7 +2122,7 @@ pub unsafe extern "C" fn salvium_storage_mark_stake_returned(
             db.mark_stake_returned(stake_tx_hash, return_tx_hash, return_height, return_timestamp, return_amount)
         }) {
             Ok(()) => 0,
-            Err(e) => { eprintln!("salvium_storage_mark_stake_returned: DB error: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_mark_stake_returned: DB error: {e}"); -1 }
         }
     })
 }
@@ -2126,7 +2135,7 @@ pub unsafe extern "C" fn salvium_storage_delete_stakes_above(
     catch_ffi(|| {
         match crate::storage::with_db(handle, |db| db.delete_stakes_above(height)) {
             Ok(()) => 0,
-            Err(e) => { eprintln!("salvium_storage_delete_stakes_above: DB error: {e}"); -1 }
+            Err(e) => { log::error!("salvium_storage_delete_stakes_above: DB error: {e}"); -1 }
         }
     })
 }

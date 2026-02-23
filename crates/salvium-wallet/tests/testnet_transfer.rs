@@ -105,6 +105,7 @@ async fn test_real_testnet_transfer() {
                     current_height,
                     target_height,
                     outputs_found,
+                    ..
                 } => {
                     if current_height % 100 == 0 || current_height == target_height {
                         println!(

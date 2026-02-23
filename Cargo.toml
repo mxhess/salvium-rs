@@ -12,12 +12,18 @@ members = [
     "crates/salvium-tx",
     "crates/salvium-cli",
     "crates/salvium-multisig",
+    "crates/salvium-ffi",
+    "crates/salvium-sync-bench",
 ]
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/salvium/salvium-rs"
+
+[workspace.dependencies]
+log = "0.4"
+env_logger = "0.11"
 
 [profile.release]
 opt-level = 3

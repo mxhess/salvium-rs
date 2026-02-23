@@ -38,8 +38,8 @@ impl SharedDataset {
         } else {
             (base_flags, false)
         };
-        eprintln!("RandomX v2 large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
-        eprintln!("RandomX v2 flags: 0x{:x}", flags);
+        log::info!("RandomX v2 large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
+        log::debug!("RandomX v2 flags: 0x{:x}", flags);
 
         // Allocate and init cache
         let cache_ptr = unsafe { ffi::randomx_alloc_cache(flags) };
@@ -49,7 +49,7 @@ impl SharedDataset {
         unsafe {
             ffi::randomx_init_cache(cache_ptr, seed_hash.as_ptr(), seed_hash.len());
         }
-        eprintln!("RandomX v2 cache initialized (256MB)");
+        log::info!("RandomX v2 cache initialized (256MB)");
 
         // Allocate and init dataset
         let dataset_ptr = unsafe { ffi::randomx_alloc_dataset(flags) };
@@ -59,7 +59,7 @@ impl SharedDataset {
         }
 
         let item_count = unsafe { ffi::randomx_dataset_item_count() };
-        eprintln!("Generating RandomX v2 dataset ({} items, ~2GB)...", item_count);
+        log::info!("generating RandomX v2 dataset ({} items, ~2GB)...", item_count);
         let start = std::time::Instant::now();
 
         // Multi-threaded dataset init
@@ -83,7 +83,7 @@ impl SharedDataset {
         for h in init_handles {
             let _ = h.join();
         }
-        eprintln!("RandomX v2 dataset ready in {:.1}s", start.elapsed().as_secs_f64());
+        log::info!("RandomX v2 dataset ready in {:.1}s", start.elapsed().as_secs_f64());
 
         // Release cache (dataset is self-contained after init)
         unsafe { ffi::randomx_release_cache(cache_ptr); }
@@ -105,6 +105,7 @@ impl SharedDataset {
 }
 
 /// Light-mode RandomX v2 state (256MB cache, no dataset).
+#[allow(dead_code)]
 pub struct LightCache {
     cache_ptr: *mut std::ffi::c_void,
     flags: u32,
@@ -113,6 +114,7 @@ pub struct LightCache {
 unsafe impl Send for LightCache {}
 unsafe impl Sync for LightCache {}
 
+#[allow(dead_code)]
 impl LightCache {
     /// Initialize a light-mode cache (256MB) for RandomX v2.
     pub fn new(seed_hash: &[u8], use_large_pages: bool) -> Result<Arc<Self>, String> {
@@ -183,6 +185,7 @@ impl RandomXV2Engine {
     }
 
     /// Create a light-mode engine (256MB cache, slower but less memory).
+    #[allow(dead_code)]
     pub fn new_light(cache: Arc<LightCache>) -> Result<Self, String> {
         let vm_ptr = cache.create_vm()?;
         Ok(Self {
@@ -383,6 +386,8 @@ mod tests {
             template_blob: vec![0u8; 200],
             difficulty: 1,
             height: 100,
+            nonce_offset: None,
+            target: None,
         });
 
         // RandomX light mode is slow (~4-10 H/s in debug), give it time

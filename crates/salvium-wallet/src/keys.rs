@@ -180,13 +180,17 @@ impl WalletKeys {
     }
 
     /// Get the primary CARROT address.
+    ///
+    /// The main address uses `(K_s, K^0_v)` where `K^0_v = k_vi * G`
+    /// (primary address view pubkey), not the account view pubkey `K_v = k_vi * K_s`
+    /// which is used internally for subaddress derivation.
     pub fn carrot_address(&self) -> Result<String, AddressError> {
         create_address_raw(
             self.network,
             AddressFormat::Carrot,
             AddressType::Standard,
             &self.carrot.account_spend_pubkey,
-            &self.carrot.account_view_pubkey,
+            &self.carrot.primary_address_view_pubkey,
             None,
         )
     }
