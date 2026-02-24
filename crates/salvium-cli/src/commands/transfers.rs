@@ -75,6 +75,7 @@ pub async fn transfer(
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_fee(actual_fee);
 
     let result = pipeline.build_sign_submit(builder).await?;
@@ -143,6 +144,7 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::STAKE)
         .set_fee(actual_fee);
 
@@ -204,6 +206,7 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::BURN)
         .set_amount_burnt(amount)
         .set_fee(actual_fee);
@@ -283,6 +286,7 @@ pub async fn convert(
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::CONVERT)
         .set_asset_types(source_asset, dest_asset)
         .set_fee(actual_fee);
@@ -348,6 +352,7 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::AUDIT)
         .set_fee(actual_fee);
 
@@ -417,6 +422,7 @@ pub async fn locked_transfer(
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_unlock_time(unlock_time)
         .set_fee(actual_fee);
 
@@ -888,6 +894,7 @@ pub async fn return_payment(
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::RETURN)
         .set_fee(actual_fee);
 

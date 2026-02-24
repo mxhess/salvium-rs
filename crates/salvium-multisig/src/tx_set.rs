@@ -1,4 +1,30 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+use crate::signing::{SignerNonces, PartialClsag};
+
+/// A pending multisig transaction awaiting signatures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingMultisigTx {
+    /// The unsigned transaction data (hex-encoded).
+    pub tx_blob: String,
+    /// Key images for this transaction's inputs.
+    pub key_images: Vec<String>,
+    /// Transaction prefix hash (hex-encoded).
+    pub tx_prefix_hash: String,
+    /// Per-input nonces from all signers who have contributed.
+    #[serde(default)]
+    pub input_nonces: Vec<Vec<SignerNonces>>,
+    /// Per-input partial CLSAG signatures accumulated so far.
+    #[serde(default)]
+    pub input_partials: Vec<Vec<PartialClsag>>,
+    /// Fee for this transaction (atomic units).
+    #[serde(default)]
+    pub fee: u64,
+    /// Destination addresses (for display).
+    #[serde(default)]
+    pub destinations: Vec<String>,
+}
 
 /// A set of transactions prepared for multisig signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7,6 +33,18 @@ pub struct MultisigTxSet {
     pub transactions: Vec<String>,
     /// Key images associated with the transaction inputs.
     pub key_images: Vec<String>,
+    /// Structured pending transactions with nonces and partial signatures.
+    #[serde(default)]
+    pub pending_txs: Vec<PendingMultisigTx>,
+    /// Public keys of signers who have contributed partial signatures.
+    #[serde(default)]
+    pub signers_contributed: HashSet<String>,
+    /// Required threshold for this TX set.
+    #[serde(default)]
+    pub threshold: usize,
+    /// Total number of signers.
+    #[serde(default)]
+    pub signer_count: usize,
 }
 
 impl MultisigTxSet {
@@ -15,7 +53,35 @@ impl MultisigTxSet {
         Self {
             transactions: Vec::new(),
             key_images: Vec::new(),
+            pending_txs: Vec::new(),
+            signers_contributed: HashSet::new(),
+            threshold: 0,
+            signer_count: 0,
         }
+    }
+
+    /// Create a new transaction set with threshold configuration.
+    pub fn with_config(threshold: usize, signer_count: usize) -> Self {
+        Self {
+            threshold,
+            signer_count,
+            ..Self::new()
+        }
+    }
+
+    /// Add a pending multisig transaction.
+    pub fn add_pending_tx(&mut self, tx: PendingMultisigTx) {
+        self.pending_txs.push(tx);
+    }
+
+    /// Record that a signer has contributed partial signatures.
+    pub fn mark_signer_contributed(&mut self, signer_pubkey: &str) {
+        self.signers_contributed.insert(signer_pubkey.to_string());
+    }
+
+    /// Whether enough signers have contributed to meet the threshold.
+    pub fn is_complete(&self) -> bool {
+        self.threshold > 0 && self.signers_contributed.len() >= self.threshold
     }
 
     /// Add a transaction (as a hex/JSON string) to the set.

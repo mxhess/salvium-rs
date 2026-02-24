@@ -1,0 +1,19 @@
+[package]
+name = "salvium-explorer"
+version = "1.0.7-r001"
+edition = "2021"
+description = "High-level WASM APIs for Salvium blockchain explorers"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+salvium-crypto = { path = "../salvium-crypto", default-features = false }
+salvium-types = { path = "../salvium-types" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

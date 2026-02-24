@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS outputs (
 CREATE INDEX IF NOT EXISTS idx_outputs_height ON outputs(block_height);
 CREATE INDEX IF NOT EXISTS idx_outputs_spent ON outputs(is_spent);
 CREATE INDEX IF NOT EXISTS idx_outputs_asset ON outputs(asset_type);
+CREATE INDEX IF NOT EXISTS idx_outputs_global ON outputs(asset_type, global_index) WHERE global_index IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_outputs_pubkey ON outputs(public_key) WHERE public_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS transactions (
   tx_hash           TEXT PRIMARY KEY,
@@ -137,6 +139,17 @@ CREATE TABLE IF NOT EXISTS subaddresses (
   used            INTEGER NOT NULL DEFAULT 0,
   created_at      INTEGER,
   PRIMARY KEY (major, minor)
+);
+
+CREATE TABLE IF NOT EXISTS multisig_state (
+  key             TEXT PRIMARY KEY,
+  value           BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS multisig_signers (
+  signer_index    INTEGER PRIMARY KEY,
+  public_key      TEXT NOT NULL,
+  label           TEXT NOT NULL DEFAULT ''
 );
 ";
 
@@ -235,7 +248,7 @@ pub struct TransactionRow {
     pub updated_at: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputQuery {
     pub is_spent: Option<bool>,
@@ -570,6 +583,84 @@ impl WalletDb {
             params![key_image],
         )?;
         Ok(())
+    }
+
+    /// Look up an output by its global output index and asset type.
+    /// Used by the output tracker cache for view-only CN spent detection.
+    pub fn get_output_by_global_index(&self, asset_type: &str, global_index: i64) -> Result<Option<OutputRow>, rusqlite::Error> {
+        self.conn.query_row(
+            "SELECT key_image, public_key, tx_hash, output_index, global_index,
+                    asset_type_index, block_height, block_timestamp, amount, asset_type,
+                    commitment, mask, subaddr_major, subaddr_minor, is_carrot,
+                    carrot_ephemeral_pubkey, carrot_shared_secret, carrot_enote_type,
+                    is_spent, spent_height, spent_tx_hash, unlock_time, tx_type,
+                    tx_pub_key, is_frozen, created_at, updated_at
+             FROM outputs WHERE asset_type = ?1 AND global_index = ?2 LIMIT 1",
+            params![asset_type, global_index],
+            |r| Ok(row_to_output(r)),
+        ).optional()
+    }
+
+    /// Update the global output index for a stored output.
+    pub fn update_global_index(&self, key_image: &str, global_index: i64) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "UPDATE outputs SET global_index = ?1, updated_at = ?2 WHERE key_image = ?3",
+            params![global_index, now, key_image],
+        )?;
+        Ok(())
+    }
+
+    /// Replace a synthetic view-only key image with the real on-chain key image.
+    /// Used when the output tracker cache detects a ring member match.
+    pub fn replace_key_image(&self, old_key_image: &str, new_key_image: &str) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        // Update the outputs table
+        self.conn.execute(
+            "UPDATE outputs SET key_image = ?1, updated_at = ?2 WHERE key_image = ?3",
+            params![new_key_image, now, old_key_image],
+        )?;
+        // Remove old synthetic key_images entry and insert the real one
+        self.conn.execute(
+            "DELETE FROM key_images WHERE key_image = ?1",
+            params![old_key_image],
+        )?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO key_images (key_image, tx_hash, output_index, is_spent) VALUES (?1, '', 0, 0)",
+            params![new_key_image],
+        )?;
+        Ok(())
+    }
+
+    /// Get outputs that need global_index resolution (global_index IS NULL).
+    /// Returns (key_image, tx_hash, output_index) tuples.
+    pub fn get_outputs_needing_global_index(&self) -> Result<Vec<(String, String, i64)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT key_image, tx_hash, output_index FROM outputs WHERE global_index IS NULL"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        rows.collect()
+    }
+
+    /// Get all unspent outputs that have a synthetic view-only key image ("vo:...").
+    pub fn get_vo_outputs(&self) -> Result<Vec<OutputRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT key_image, public_key, tx_hash, output_index, global_index,
+                    asset_type_index, block_height, block_timestamp, amount, asset_type,
+                    commitment, mask, subaddr_major, subaddr_minor, is_carrot,
+                    carrot_ephemeral_pubkey, carrot_shared_secret, carrot_enote_type,
+                    is_spent, spent_height, spent_tx_hash, unlock_time, tx_type,
+                    tx_pub_key, is_frozen, created_at, updated_at
+             FROM outputs WHERE key_image LIKE 'vo:%' AND is_spent = 0"
+        )?;
+        let rows = stmt.query_map([], |r| Ok(row_to_output(r)))?;
+        rows.collect()
     }
 
     // ── Transaction Operations ──────────────────────────────────────────

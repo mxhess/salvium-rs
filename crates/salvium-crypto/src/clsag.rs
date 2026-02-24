@@ -7,6 +7,7 @@ use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
+#[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
 use crate::{keccak256_internal, to32};
@@ -390,7 +391,7 @@ fn deserialize_clsag(bytes: &[u8]) -> Option<ClsagSignature> {
 
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn clsag_sign_wasm(
     message: &[u8],
     ring_flat: &[u8],
@@ -416,7 +417,7 @@ pub fn clsag_sign_wasm(
     serialize_clsag(&sig)
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn clsag_verify_wasm(
     message: &[u8],
     sig_bytes: &[u8],

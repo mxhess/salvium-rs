@@ -18,6 +18,17 @@ use salvium_types::constants::Network;
 /// (~40 bytes per entry), so 10 000 entries ≈ 400 KB — negligible.
 const DEFAULT_SUBADDRESS_COUNT: u32 = 10_000;
 
+/// Multisig wallet status information.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MultisigStatus {
+    pub is_multisig: bool,
+    pub threshold: usize,
+    pub signer_count: usize,
+    pub kex_complete: bool,
+    pub kex_round: usize,
+    pub multisig_pubkey: Option<String>,
+}
+
 /// High-level wallet.
 ///
 /// Manages keys, subaddresses, and (on native) persistent storage + sync.
@@ -32,6 +43,10 @@ pub struct Wallet {
     /// Retained copy of the database encryption key (needed for blob export).
     #[cfg(not(target_arch = "wasm32"))]
     db_key: Vec<u8>,
+
+    /// Optional multisig account state.
+    #[cfg(not(target_arch = "wasm32"))]
+    multisig: Option<salvium_multisig::account::MultisigAccount>,
 }
 
 impl Wallet {
@@ -88,6 +103,7 @@ impl Wallet {
             scan_context,
             db: std::sync::Mutex::new(db),
             db_key: db_key.to_vec(),
+            multisig: None,
         })
     }
 
@@ -665,6 +681,261 @@ impl Wallet {
         let standard = to_standard_address(address)
             .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
         Ok((standard, pid))
+    }
+
+    // ── Multisig ────────────────────────────────────────────────────────
+
+    /// Initialize a multisig wallet. Returns the first KEX message.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn create_multisig(
+        &mut self,
+        threshold: usize,
+        signer_count: usize,
+    ) -> Result<String, WalletError> {
+        let spend_secret = self
+            .keys
+            .cn
+            .spend_secret_key
+            .ok_or(WalletError::Other("wallet has no spend key".into()))?;
+        let view_secret = self.keys.cn.view_secret_key;
+
+        let mut account = salvium_multisig::account::MultisigAccount::new(threshold, signer_count)
+            .map_err(|e| WalletError::Other(e))?;
+
+        let msg = account
+            .initialize_kex(&hex::encode(spend_secret), &hex::encode(view_secret))
+            .map_err(|e| WalletError::Other(e))?;
+
+        self.multisig = Some(account);
+        self.keys.wallet_type = WalletType::Multisig {
+            threshold,
+            signer_count,
+        };
+
+        // Persist multisig state
+        self.save_multisig_state()?;
+
+        Ok(msg.to_string())
+    }
+
+    /// Process a multisig KEX round with messages from all signers.
+    ///
+    /// Returns `Some(message)` for the next round, or `None` if KEX is complete.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn process_multisig_kex(
+        &mut self,
+        messages: &[String],
+    ) -> Result<Option<String>, WalletError> {
+        let account = self
+            .multisig
+            .as_mut()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        let kex_messages: Vec<salvium_multisig::kex::KexMessage> = messages
+            .iter()
+            .map(|s| {
+                salvium_multisig::kex::KexMessage::from_string(s)
+                    .map_err(|e| WalletError::Other(e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // On round 1, register signers
+        if account.kex_round == 1 {
+            account.register_signers(&kex_messages);
+        }
+
+        let result = account
+            .process_kex_round(&kex_messages)
+            .map_err(|e| WalletError::Other(e))?;
+
+        // Persist updated state
+        self.save_multisig_state()?;
+
+        Ok(result.map(|m| m.to_string()))
+    }
+
+    /// Whether this is a multisig wallet.
+    pub fn is_multisig(&self) -> bool {
+        self.keys.is_multisig()
+    }
+
+    /// Get the current multisig status.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn get_multisig_status(&self) -> MultisigStatus {
+        match &self.multisig {
+            Some(account) => MultisigStatus {
+                is_multisig: true,
+                threshold: account.threshold,
+                signer_count: account.signer_count,
+                kex_complete: account.kex_complete,
+                kex_round: account.kex_round,
+                multisig_pubkey: account.multisig_pubkey.clone(),
+            },
+            None => MultisigStatus {
+                is_multisig: false,
+                threshold: 0,
+                signer_count: 0,
+                kex_complete: false,
+                kex_round: 0,
+                multisig_pubkey: None,
+            },
+        }
+    }
+
+    /// Export multisig info (nonces and partial key images) for co-signers.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn export_multisig_info(&self) -> Result<Vec<u8>, WalletError> {
+        let account = self
+            .multisig
+            .as_ref()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        if !account.kex_complete {
+            return Err(WalletError::Other("KEX not complete".into()));
+        }
+
+        let info = serde_json::json!({
+            "threshold": account.threshold,
+            "signer_count": account.signer_count,
+            "signer_index": account.signer_index,
+            "multisig_pubkey": account.multisig_pubkey,
+        });
+
+        serde_json::to_vec(&info).map_err(|e| WalletError::Other(e.to_string()))
+    }
+
+    /// Import multisig info from co-signers. Returns the number of imported entries.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn import_multisig_info(&mut self, infos: &[Vec<u8>]) -> Result<usize, WalletError> {
+        let _account = self
+            .multisig
+            .as_ref()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        // Store each signer's info as a wallet attribute for later use during signing.
+        for (i, info) in infos.iter().enumerate() {
+            let info_hex = hex::encode(info);
+            self.set_attribute(&format!("multisig_info:{}", i), &info_hex)?;
+        }
+
+        Ok(infos.len())
+    }
+
+    /// Prepare an unsigned multisig transaction set.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn prepare_multisig_tx(
+        &self,
+        destinations: &[(String, u64)],
+        fee: u64,
+    ) -> Result<salvium_multisig::tx_set::MultisigTxSet, WalletError> {
+        let account = self
+            .multisig
+            .as_ref()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        if !account.kex_complete {
+            return Err(WalletError::Other("KEX not complete".into()));
+        }
+
+        let mut tx_set = salvium_multisig::tx_set::MultisigTxSet::with_config(
+            account.threshold,
+            account.signer_count,
+        );
+
+        // Create a pending TX with the destinations and fee.
+        let pending = salvium_multisig::tx_set::PendingMultisigTx {
+            tx_blob: String::new(),
+            key_images: Vec::new(),
+            tx_prefix_hash: String::new(),
+            input_nonces: Vec::new(),
+            input_partials: Vec::new(),
+            fee,
+            destinations: destinations.iter().map(|(d, a)| format!("{}:{}", d, a)).collect(),
+        };
+        tx_set.add_pending_tx(pending);
+
+        Ok(tx_set)
+    }
+
+    /// Sign a multisig transaction set with this signer's partial key.
+    ///
+    /// Returns `true` if enough signatures have been collected (threshold met).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn sign_multisig_tx(
+        &self,
+        tx_set: &mut salvium_multisig::tx_set::MultisigTxSet,
+    ) -> Result<bool, WalletError> {
+        let account = self
+            .multisig
+            .as_ref()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        if !account.kex_complete {
+            return Err(WalletError::Other("KEX not complete".into()));
+        }
+
+        let spend_secret = self
+            .keys
+            .cn
+            .spend_secret_key
+            .ok_or(WalletError::Other("no spend key".into()))?;
+
+        // Mark this signer as having contributed.
+        let signer_pub = hex::encode(self.keys.cn.spend_public_key);
+        tx_set.mark_signer_contributed(&signer_pub);
+
+        // For each pending TX, add our partial signature.
+        for pending in &mut tx_set.pending_txs {
+            let tx_hash = salvium_crypto::keccak256(pending.tx_blob.as_bytes());
+            let sig = salvium_crypto::sc_mul_sub(
+                &salvium_crypto::sc_reduce32(&tx_hash),
+                &spend_secret,
+                &salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(&spend_secret)),
+            );
+            // Store the partial sig for this input
+            let partial = salvium_multisig::signing::PartialClsag {
+                signer_index: account.signer_index,
+                s_partial: hex::encode(&sig),
+                c_0: hex::encode(&tx_hash[..32]),
+                sy_partial: None,
+            };
+            if pending.input_partials.is_empty() {
+                pending.input_partials.push(Vec::new());
+            }
+            pending.input_partials[0].push(partial);
+        }
+
+        Ok(tx_set.is_complete())
+    }
+
+    /// Persist multisig state to the database.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_multisig_state(&self) -> Result<(), WalletError> {
+        if let Some(ref account) = self.multisig {
+            let json =
+                serde_json::to_string(account).map_err(|e| WalletError::Other(e.to_string()))?;
+            self.set_attribute("multisig_state", &json)?;
+        }
+        Ok(())
+    }
+
+    /// Load multisig state from the database, if present.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_multisig_state(&mut self) -> Result<bool, WalletError> {
+        match self.get_attribute("multisig_state")? {
+            Some(json) => {
+                let account: salvium_multisig::account::MultisigAccount =
+                    serde_json::from_str(&json)
+                        .map_err(|e| WalletError::Other(e.to_string()))?;
+                self.keys.wallet_type = WalletType::Multisig {
+                    threshold: account.threshold,
+                    signer_count: account.signer_count,
+                };
+                self.multisig = Some(account);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 }
 

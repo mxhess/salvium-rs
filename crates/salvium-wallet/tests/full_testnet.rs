@@ -46,7 +46,7 @@ const MINER_RETRIES: usize = 3;
 
 // ─── Fork Table ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum AddrFormat {
     Legacy,
     Carrot,
@@ -354,6 +354,8 @@ struct TestTransactor<'a> {
 struct TxResult {
     tx_hash: String,
     fee: u64,
+    /// Raw TX bytes for offline diagnostic scanning.
+    tx_bytes: Vec<u8>,
 }
 
 impl<'a> TestTransactor<'a> {
@@ -441,13 +443,13 @@ impl<'a> TestTransactor<'a> {
                 .map(|(e, _)| e)
                 .expect("tx not found in entries");
 
-            // Determine the ring asset type. The daemon has separate distributions
-            // for "SAL" (pre-HF6) and "SAL1" (post-HF6). Our wallet DB may store
-            // post-HF6 outputs as "SAL" if the scanner doesn't detect SAL1. Try the
-            // stored type first, then the equivalent type.
-            let stored_asset = &output_row.asset_type;
-            let equivalent_asset = if stored_asset == "SAL" { "SAL1" } else { "SAL" };
-            let candidates_to_try = [stored_asset.as_str(), equivalent_asset];
+            // The daemon maintains completely separate output pools per asset
+            // type (SAL and SAL1 have different index spaces). Ring members
+            // are resolved using vin[].asset_type, which must equal
+            // tx.source_asset_type (enforced by the daemon). At HF6+, only
+            // SAL1 outputs can be spent in TRANSFER/STAKE/BURN transactions.
+            // We ONLY look in the fork's canonical asset pool — no fallback.
+            let candidates_to_try = vec![fork.asset];
 
             let mut ring_asset_resolved: Option<String> = None;
             let mut resolved_distribution: Option<Vec<u64>> = None;
@@ -542,9 +544,20 @@ impl<'a> TestTransactor<'a> {
                         &hex_to_32(output_row.mask.as_ref().unwrap()),
                     ))
                 };
+                // Adjust keys for subaddress outputs: k_gi' = k_gi * k_subscal,
+                // k_ps' = k_ps * k_subscal. For main address (0,0) this is identity.
+                let (adj_gik, adj_psk) =
+                    salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                        &generate_image_key,
+                        &prove_spend_key,
+                        &keys.carrot.generate_address_secret,
+                        &keys.carrot.account_spend_pubkey,
+                        output_row.subaddress_index.major as u32,
+                        output_row.subaddress_index.minor as u32,
+                    );
                 let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-                    &prove_spend_key,
-                    &generate_image_key,
+                    &adj_psk,
+                    &adj_gik,
                     &shared_secret,
                     &commitment,
                 );
@@ -609,7 +622,7 @@ impl<'a> TestTransactor<'a> {
                 public_key,
                 amount: utxo.amount,
                 mask,
-                asset_type: ring_asset.to_string(),
+                asset_type: fork.asset.to_string(),
                 global_index: asset_type_index,
                 ring: ring_pub_keys,
                 ring_commitments: ring_members.iter().map(|m| hex_to_32(&m.mask)).collect(),
@@ -638,22 +651,14 @@ impl<'a> TestTransactor<'a> {
     }
 
     fn db_asset_type(&self, fork: &ForkSpec) -> &str {
-        // SAL and SAL1 are equivalent asset types. After HF6, the active asset
-        // becomes SAL1 but old SAL outputs remain spendable. We query "SAL"
-        // because that's what our pre-HF6 mined outputs are stored as.
-        // When SAL1 coinbase outputs start appearing they'll be stored as "SAL1",
-        // but for now the wallet's SAL balance covers both.
+        // SAL and SAL1 are completely separate asset pools with different
+        // output index spaces. At HF6+, the daemon requires all TRANSFER/
+        // STAKE/BURN outputs to be "SAL1". Pre-HF6 "SAL" outputs cannot
+        // be spent in these TX types after HF6 — they are stranded.
+        // The C++ wallet also defaults to "SAL1" after HF6 and only selects
+        // from m_transfers_indices["SAL1"].
         if fork.hf >= 6 {
-            // Try SAL1 first (post-HF6 coinbase), fall back to SAL (pre-HF6)
-            let sal1_balance = self.wallet.get_balance("SAL1", 0);
-            let has_sal1 = sal1_balance
-                .map(|b| b.unlocked_balance.parse::<u64>().unwrap_or(0) > 0)
-                .unwrap_or(false);
-            if has_sal1 {
-                "SAL1"
-            } else {
-                "SAL"
-            }
+            "SAL1"
         } else {
             "SAL"
         }
@@ -690,6 +695,14 @@ impl<'a> TestTransactor<'a> {
             .set_asset_types(fork.asset, fork.asset)
             .set_rct_type(fork.rct_type)
             .set_fee(estimated_fee);
+
+        // For CARROT transactions, set the view-balance secret so the change
+        // output uses the internal (self-send) path instead of ECDH.
+        if fork.addr_format == AddrFormat::Carrot {
+            builder = builder.set_change_view_balance_secret(
+                self.wallet.keys().carrot.view_balance_secret,
+            );
+        }
 
         let unsigned = builder.build().expect("failed to build transfer TX");
         let fee = unsigned.fee;
@@ -731,14 +744,18 @@ impl<'a> TestTransactor<'a> {
         }
         assert_eq!(
             result.status, "OK",
-            "transfer TX rejected: {} (reason: {})",
-            result.status, result.reason
+            "transfer TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
+             invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
+             sanity_check_failed: {})",
+            result.status, result.reason, result.double_spend, result.fee_too_low,
+            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.sanity_check_failed,
         );
 
         // Mark spent inputs in the wallet DB so we don't re-spend them.
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee }
+        TxResult { tx_hash, fee, tx_bytes }
     }
 
     /// Build, sign, and submit a STAKE transaction.
@@ -768,6 +785,12 @@ impl<'a> TestTransactor<'a> {
             .set_amount_burnt(amount)
             .set_view_secret_key(keys.cn.view_secret_key);
 
+        if fork.addr_format == AddrFormat::Carrot {
+            builder = builder.set_change_view_balance_secret(
+                keys.carrot.view_balance_secret,
+            );
+        }
+
         let unsigned = builder.build().expect("failed to build STAKE TX");
         let fee = unsigned.fee;
         let signed = sign_transaction(unsigned).expect("failed to sign STAKE TX");
@@ -782,13 +805,17 @@ impl<'a> TestTransactor<'a> {
             .expect("RPC send failed");
         assert_eq!(
             result.status, "OK",
-            "STAKE TX rejected: {} (reason: {})",
-            result.status, result.reason
+            "STAKE TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
+             invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
+             sanity_check_failed: {})",
+            result.status, result.reason, result.double_spend, result.fee_too_low,
+            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.sanity_check_failed
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 
     /// Build, sign, and submit a BURN transaction.
@@ -804,14 +831,6 @@ impl<'a> TestTransactor<'a> {
 
         let (chg_spend, chg_view) = change_keys(self.wallet, fork);
         builder = builder
-            .add_destination(Destination {
-                spend_pubkey: chg_spend,
-                view_pubkey: chg_view,
-                amount,
-                asset_type: fork.asset.to_string(),
-                payment_id: [0u8; 8],
-                is_subaddress: false,
-            })
             .set_change_address(chg_spend, chg_view)
             .set_tx_type(tx_type::BURN)
             .set_amount_burnt(amount)
@@ -819,6 +838,12 @@ impl<'a> TestTransactor<'a> {
             .set_asset_types(fork.asset, "BURN")
             .set_rct_type(fork.rct_type)
             .set_fee(estimated_fee);
+
+        if fork.addr_format == AddrFormat::Carrot {
+            builder = builder.set_change_view_balance_secret(
+                self.wallet.keys().carrot.view_balance_secret,
+            );
+        }
 
         let unsigned = builder.build().expect("failed to build BURN TX");
         let fee = unsigned.fee;
@@ -834,13 +859,17 @@ impl<'a> TestTransactor<'a> {
             .expect("RPC send failed");
         assert_eq!(
             result.status, "OK",
-            "BURN TX rejected: {} (reason: {})",
-            result.status, result.reason
+            "BURN TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
+             invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
+             sanity_check_failed: {})",
+            result.status, result.reason, result.double_spend, result.fee_too_low,
+            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.sanity_check_failed,
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 
     /// Build, sign, and submit a SWEEP transaction (transfer entire balance).
@@ -850,23 +879,36 @@ impl<'a> TestTransactor<'a> {
         dest_view: [u8; 32],
         fork: &ForkSpec,
     ) -> TxResult {
-        // Sweep: get full unlocked balance, send it all minus fee
+        // Sweep: get full unlocked balance, send it all minus fee.
+        // Must estimate fee using the actual number of inputs (all unlocked
+        // outputs), not 1.
         let db_asset_type = self.db_asset_type(fork);
         let balance = self
             .wallet
             .get_balance(db_asset_type, 0)
             .expect("get_balance failed");
         let unlocked: u64 = balance.unlocked_balance.parse().expect("invalid balance");
-        let estimated_fee = self.estimate_fee(1, 1, fork).await;
+
+        // First pass: use a minimal fee to select ALL unlocked outputs and
+        // determine the actual input count.
+        let min_fee = self.estimate_fee(1, 2, fork).await;
+        assert!(
+            unlocked > min_fee,
+            "insufficient balance for sweep: {} < min fee {}",
+            unlocked,
+            min_fee
+        );
+        let inputs = self.prepare_inputs(unlocked - min_fee, min_fee, fork).await;
+        let n_inputs = inputs.len();
+
+        // Re-estimate fee with the actual input count.
+        let estimated_fee = self.estimate_fee(n_inputs, 2, fork).await;
         assert!(
             unlocked > estimated_fee,
-            "insufficient balance for sweep: {} < fee {}",
-            unlocked,
-            estimated_fee
+            "insufficient balance for sweep with {} inputs: {} < fee {}",
+            n_inputs, unlocked, estimated_fee
         );
         let sweep_amount = unlocked - estimated_fee;
-
-        let inputs = self.prepare_inputs(sweep_amount, estimated_fee, fork).await;
 
         let mut builder = TransactionBuilder::new();
         for input in inputs {
@@ -890,6 +932,12 @@ impl<'a> TestTransactor<'a> {
             .set_rct_type(fork.rct_type)
             .set_fee(estimated_fee);
 
+        if fork.addr_format == AddrFormat::Carrot {
+            builder = builder.set_change_view_balance_secret(
+                self.wallet.keys().carrot.view_balance_secret,
+            );
+        }
+
         let unsigned = builder.build().expect("failed to build sweep TX");
         let fee = unsigned.fee;
         let signed = sign_transaction(unsigned).expect("failed to sign sweep TX");
@@ -904,14 +952,18 @@ impl<'a> TestTransactor<'a> {
             .expect("RPC send failed");
         assert_eq!(
             result.status, "OK",
-            "sweep TX rejected: {} (reason: {})",
-            result.status, result.reason
+            "sweep TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
+             invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
+             sanity_check_failed: {})",
+            result.status, result.reason, result.double_spend, result.fee_too_low,
+            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.sanity_check_failed,
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
         println!("    sweep amount: {} SAL", fmt_sal(sweep_amount));
-        TxResult { tx_hash, fee }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 }
 
@@ -1057,6 +1109,230 @@ impl RunStats {
     }
 }
 
+/// Diagnostic: attempt to scan a TX's CARROT outputs with the given wallet's keys.
+/// Prints detailed information about each step of the CARROT scanning pipeline.
+fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
+    println!("    --- CARROT SCAN DIAGNOSTIC for {} ---", label);
+    println!("    tx_bytes.len()={}", tx_bytes.len());
+
+    // Parse the TX bytes back to JSON
+    let tx_json_str = salvium_crypto::parse_transaction_bytes(tx_bytes);
+    if tx_json_str.starts_with(r#"{"error":"#) {
+        println!("    PARSE ERROR: {}", &tx_json_str[..tx_json_str.len().min(200)]);
+        return;
+    }
+
+    let tx_json: serde_json::Value = match serde_json::from_str(&tx_json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("    JSON PARSE ERROR: {}", e);
+            return;
+        }
+    };
+
+    let prefix = tx_json.get("prefix").unwrap_or(&tx_json);
+
+    // Check tx extra for tag 0x01 and 0x04
+    let extra = prefix.get("extra").and_then(|v| v.as_array());
+    println!("    extra entries: {}", extra.map(|e| e.len()).unwrap_or(0));
+    if let Some(entries) = extra {
+        for (i, entry) in entries.iter().enumerate() {
+            let entry_type = entry.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
+            let tag = entry.get("tag").and_then(|v| v.as_str()).unwrap_or("?");
+            if entry_type == 1 || entry_type == 4 {
+                let keys = entry.get("keys").and_then(|v| v.as_array());
+                let key = entry.get("key").and_then(|v| v.as_str());
+                println!("    extra[{}]: type={} tag={} key={:?} keys_count={}",
+                    i, entry_type, tag,
+                    key.map(|k| &k[..k.len().min(16)]),
+                    keys.map(|k| k.len()).unwrap_or(0));
+            }
+        }
+    }
+
+    // Check outputs
+    let vout = prefix.get("vout")
+        .or_else(|| tx_json.get("vout"))
+        .and_then(|v| v.as_array());
+    println!("    outputs: {}", vout.map(|v| v.len()).unwrap_or(0));
+    if let Some(outs) = vout {
+        for (i, out) in outs.iter().enumerate() {
+            let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
+            let key = out.get("key").and_then(|v| v.as_str()).unwrap_or("?");
+            let view_tag = out.get("viewTag");
+            let asset = out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("    out[{}]: type={} asset={} key={}.. viewTag={:?}",
+                i, out_type, asset, &key[..key.len().min(16)], view_tag);
+        }
+    }
+
+    // Check vin for key images
+    let vin = prefix.get("vin").and_then(|v| v.as_array());
+    let first_ki = vin.and_then(|v| v.first())
+        .and_then(|inp| inp.get("keyImage"))
+        .and_then(|v| v.as_str());
+    println!("    first_key_image: {:?}", first_ki.map(|k| &k[..k.len().min(16)]));
+
+    // Build scan context from wallet B's keys
+    let keys = wallet.keys();
+    println!("    carrot_enabled: {}", !keys.carrot.is_empty());
+    println!("    k_vi (view_incoming): {}...", hex::encode(&keys.carrot.view_incoming_key[..8]));
+    println!("    K_s (account_spend): {}...", hex::encode(&keys.carrot.account_spend_pubkey[..8]));
+
+    // Now attempt manual CARROT scan
+    if let (Some(outs), Some(ki_hex)) = (vout, first_ki) {
+        let ki_bytes = hex::decode(ki_hex).unwrap_or_default();
+        if ki_bytes.len() != 32 {
+            println!("    key image decode failed");
+            return;
+        }
+        let mut ki32 = [0u8; 32];
+        ki32.copy_from_slice(&ki_bytes);
+        let input_context = salvium_crypto::make_input_context_rct(&ki32);
+        println!("    input_context: {} bytes, first byte=0x{:02x}",
+            input_context.len(), input_context.first().unwrap_or(&0));
+
+        // Extract ephemeral pubkeys from tag 0x04
+        let mut additional_pubkeys: Vec<[u8; 32]> = Vec::new();
+        if let Some(entries) = extra {
+            for entry in entries {
+                let t = entry.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
+                if t == 4 {
+                    if let Some(ks) = entry.get("keys").and_then(|v| v.as_array()) {
+                        for k in ks {
+                            if let Some(hex_str) = k.as_str() {
+                                if let Ok(bytes) = hex::decode(hex_str) {
+                                    if bytes.len() == 32 {
+                                        let mut arr = [0u8; 32];
+                                        arr.copy_from_slice(&bytes);
+                                        additional_pubkeys.push(arr);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("    additional_pubkeys (D_e): {}", additional_pubkeys.len());
+
+        // Try scanning each output
+        for (i, out) in outs.iter().enumerate() {
+            let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            if out_type != 4 {
+                println!("    out[{}]: not CARROT (type={}), skipping", i, out_type);
+                continue;
+            }
+
+            let ko_hex = out.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            let ko_bytes = hex::decode(ko_hex).unwrap_or_default();
+            if ko_bytes.len() != 32 {
+                println!("    out[{}]: bad key", i);
+                continue;
+            }
+            let mut ko = [0u8; 32];
+            ko.copy_from_slice(&ko_bytes);
+
+            // View tag
+            let vt_hex = out.get("viewTag").and_then(|v| v.as_str()).unwrap_or("");
+            let vt_bytes = hex::decode(vt_hex).unwrap_or_default();
+            if vt_bytes.len() != 3 {
+                println!("    out[{}]: bad viewTag (len={})", i, vt_bytes.len());
+                continue;
+            }
+            let view_tag = [vt_bytes[0], vt_bytes[1], vt_bytes[2]];
+
+            // Ephemeral pubkey
+            let d_e = if let Some(pk) = additional_pubkeys.get(i) {
+                *pk
+            } else {
+                println!("    out[{}]: no ephemeral pubkey at index {}", i, i);
+                continue;
+            };
+
+            println!("    out[{}]: attempting CARROT scan...", i);
+            println!("      Ko={}...", &ko_hex[..16]);
+            println!("      D_e={}...", hex::encode(&d_e[..8]));
+            println!("      view_tag={}", vt_hex);
+
+            // Step 1: ECDH
+            let mut clamped_k_vi = keys.carrot.view_incoming_key;
+            clamped_k_vi[31] &= 0x7F;
+            let s_sr_unctx = salvium_crypto::x25519_scalar_mult(&clamped_k_vi, &d_e);
+            println!("      s_sr_unctx={}...", hex::encode(&s_sr_unctx[..8]));
+
+            // Step 2: View tag test
+            let mut s32 = [0u8; 32];
+            s32.copy_from_slice(&s_sr_unctx[..32]);
+            let expected_vt = salvium_crypto::compute_carrot_view_tag(&s32, &input_context, &ko);
+            let expected_vt_3 = [expected_vt[0], expected_vt[1], expected_vt[2]];
+            let vt_match = expected_vt_3 == view_tag;
+            println!("      expected_vt={} actual_vt={} match={}",
+                hex::encode(expected_vt_3), hex::encode(view_tag), vt_match);
+
+            if !vt_match {
+                println!("      VIEW TAG MISMATCH — ECDH shared secret differs");
+                // Try the full scan anyway to confirm
+                let enc_amount = [0u8; 8]; // placeholder
+                let result = salvium_crypto::carrot_scan::scan_carrot_output(
+                    &ko, &view_tag, &d_e, &enc_amount, None,
+                    &keys.carrot.view_incoming_key,
+                    &keys.carrot.account_spend_pubkey,
+                    &input_context, &[], None,
+                );
+                println!("      full scan result: {}", if result.is_some() { "MATCH" } else { "NO MATCH" });
+                continue;
+            }
+
+            // If view tag matches, try full scan with real encrypted amount
+            let rct = tx_json.get("rct").or_else(|| tx_json.get("rct_signatures"));
+            let ecdh_info = rct.and_then(|r| r.get("ecdhInfo")).and_then(|e| e.as_array());
+            let enc_amt = ecdh_info.and_then(|info| info.get(i))
+                .and_then(|e| e.get("amount"))
+                .and_then(|a| a.as_str())
+                .and_then(|s| hex::decode(s).ok())
+                .and_then(|b| {
+                    if b.len() >= 8 { let mut a = [0u8; 8]; a.copy_from_slice(&b[..8]); Some(a) }
+                    else { None }
+                })
+                .unwrap_or([0u8; 8]);
+            let commitment = rct.and_then(|r| r.get("outPk"))
+                .and_then(|e| e.as_array())
+                .and_then(|pks| pks.get(i))
+                .and_then(|v| v.as_str())
+                .and_then(|s| hex::decode(s).ok())
+                .and_then(|b| {
+                    if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) }
+                    else { None }
+                });
+
+            let result = salvium_crypto::carrot_scan::scan_carrot_output(
+                &ko, &view_tag, &d_e, &enc_amt,
+                commitment.as_ref(),
+                &keys.carrot.view_incoming_key,
+                &keys.carrot.account_spend_pubkey,
+                &input_context, &[], None,
+            );
+            if let Some(ref r) = result {
+                println!("      SCAN SUCCESS: amount={} enote_type={} is_main={}",
+                    r.amount, r.enote_type, r.is_main_address);
+            } else {
+                println!("      SCAN FAILED (past view tag)");
+                // Try to diagnose which step failed
+                let s_ctx = salvium_crypto::carrot_scan::build_transcript(
+                    b"Carrot sender-receiver secret", &[&d_e[..], &input_context]);
+                let s_ctx_hash = salvium_crypto::blake2b_keyed(&s_ctx, 32, &s32);
+                let mut s_ctx_32 = [0u8; 32];
+                s_ctx_32.copy_from_slice(&s_ctx_hash[..32]);
+                let recovered = salvium_crypto::recover_carrot_address_spend_pubkey(&ko, &s_ctx_32, &commitment.unwrap_or([0u8; 32]));
+                println!("      recovered K_s: {}...", hex::encode(&recovered[..recovered.len().min(16)]));
+                println!("      expected  K_s: {}...", hex::encode(&keys.carrot.account_spend_pubkey[..8]));
+            }
+        }
+    }
+    println!("    --- END DIAGNOSTIC ---");
+}
+
 /// Run full TX tests for era boundaries (HF2, HF6, HF10).
 async fn run_full_tests(
     daemon: &DaemonRpc,
@@ -1083,6 +1359,13 @@ async fn run_full_tests(
         let result =
             transactor_a.transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
+
+        // Diagnostic: scan TX1 with wallet B's keys at CARROT era
+        if i == 0 && fork.addr_format == AddrFormat::Carrot && !result.tx_bytes.is_empty() {
+            diagnose_carrot_scan(&result.tx_bytes, &fixture.wallet_b, "B (recipient)");
+            diagnose_carrot_scan(&result.tx_bytes, &fixture.wallet_a, "A (sender/change)");
+        }
+
         stats.record_tx(&result);
     }
 
@@ -1096,6 +1379,17 @@ async fn run_full_tests(
     )
     .await;
     stats.record_mining(&ms);
+
+    // Diagnostic: check mempool after mining — our TXs should NOT be there
+    // if they were included in blocks.
+    if let Ok(pool) = daemon.get_transaction_pool_hashes().await {
+        println!("  Mempool after mining: {} TXs", pool.len());
+        if !pool.is_empty() {
+            for h in pool.iter().take(5) {
+                println!("    still in mempool: {}", h);
+            }
+        }
+    }
 
     sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
     sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
@@ -1242,13 +1536,28 @@ async fn run_full_tests(
 
         println!("\n  TX 8: Transfer A->B subaddress (0,1)");
         let b_maps = fixture.wallet_b.subaddress_maps();
-        let sub_01 = b_maps
-            .cn
-            .iter()
-            .find(|(_, maj, min)| *maj == 0 && *min == 1)
-            .expect("subaddress (0,1) not found in wallet B's CN map");
-        let sub_spend = sub_01.0;
-        let sub_view = fixture.wallet_b.keys().cn.view_public_key;
+        let (sub_spend, sub_view) = if fork.addr_format == AddrFormat::Carrot {
+            // CARROT subaddress: K_s_sub from CARROT map, K_v_sub = k_vi * K_s_sub
+            let sub_01 = b_maps
+                .carrot
+                .iter()
+                .find(|(_, maj, min)| *maj == 0 && *min == 1)
+                .expect("subaddress (0,1) not found in wallet B's CARROT map");
+            let sub_k_s = sub_01.0;
+            let k_vi = fixture.wallet_b.keys().carrot.view_incoming_key;
+            let kv_sub_vec = salvium_crypto::scalar_mult_point(&k_vi, &sub_k_s);
+            let mut kv_sub = [0u8; 32];
+            kv_sub.copy_from_slice(&kv_sub_vec);
+            (sub_k_s, kv_sub)
+        } else {
+            // CryptoNote subaddress: from CN map + CN view key
+            let sub_01 = b_maps
+                .cn
+                .iter()
+                .find(|(_, maj, min)| *maj == 0 && *min == 1)
+                .expect("subaddress (0,1) not found in wallet B's CN map");
+            (sub_01.0, fixture.wallet_b.keys().cn.view_public_key)
+        };
         let sub_result = transactor_a
             .transfer(sub_spend, sub_view, sal(0.5), fork, true)
             .await;
@@ -1521,25 +1830,83 @@ async fn full_testnet_hardfork_progression() {
         .unwrap();
         sync_wallet_checked(&wallet_vo, &daemon, "A-ViewOnly").await;
 
-        // Compare SAL balance
+        // Compare SAL balance.
+        // View-only wallets cannot compute CN key images (no spend secret), so
+        // they use synthetic key images and cannot detect when pre-CARROT (SAL)
+        // outputs are spent on-chain. This is the same limitation as Monero's
+        // view-only wallets. The view-only balance will be >= full wallet balance.
         let bal_full_sal = fixture.wallet_a.get_balance("SAL", 0).unwrap();
         let bal_vo_sal = wallet_vo.get_balance("SAL", 0).unwrap();
-        assert_eq!(
-            bal_full_sal.balance, bal_vo_sal.balance,
-            "view-only wallet should see same SAL total balance as full wallet"
+        let full_sal: u64 = bal_full_sal.balance.parse().unwrap();
+        let vo_sal: u64 = bal_vo_sal.balance.parse().unwrap();
+        assert!(
+            vo_sal >= full_sal,
+            "view-only SAL balance ({}) should be >= full wallet ({})",
+            vo_sal, full_sal,
         );
+        if vo_sal > full_sal {
+            println!(
+                "  View-only SAL balance {} > full {} (expected: CN outputs lack real key images)",
+                fmt_sal(vo_sal), fmt_sal(full_sal),
+            );
+        }
 
-        // Compare SAL1 balance if present
+        // Compare SAL1 (CARROT) balance.
+        // SAL1 contains a mix of CN outputs (HF6-9 era) and CARROT outputs (HF10+).
+        // View-only wallets CAN compute CARROT key images (via generate_image_key)
+        // but CANNOT compute CN key images (no spend_secret). So spent CN SAL1
+        // outputs from the HF6-9 era remain "unspent" in the view-only wallet,
+        // making its total SAL1 balance >= the full wallet's.
         if let (Ok(bf), Ok(bv)) = (
             fixture.wallet_a.get_balance("SAL1", 0),
             wallet_vo.get_balance("SAL1", 0),
         ) {
+            let full_sal1: u64 = bf.balance.parse().unwrap();
+            let vo_sal1: u64 = bv.balance.parse().unwrap();
+            assert!(
+                vo_sal1 >= full_sal1,
+                "view-only SAL1 balance ({}) should be >= full wallet ({})",
+                vo_sal1, full_sal1,
+            );
+            if vo_sal1 > full_sal1 {
+                println!(
+                    "  View-only SAL1 balance {} > full {} (expected: HF6-9 CN outputs lack real key images)",
+                    fmt_sal(vo_sal1), fmt_sal(full_sal1),
+                );
+            }
+
+            // Verify CARROT-only outputs match exactly.
+            // Query all unspent SAL1 outputs and compare only is_carrot=true ones.
+            let query = OutputQuery {
+                is_spent: Some(false),
+                is_frozen: Some(false),
+                asset_type: Some("SAL1".to_string()),
+                ..Default::default()
+            };
+            let full_outputs = fixture.wallet_a.get_outputs(&query).unwrap();
+            let vo_outputs = wallet_vo.get_outputs(&query).unwrap();
+
+            let full_carrot_bal: u64 = full_outputs.iter()
+                .filter(|o| o.is_carrot)
+                .map(|o| o.amount.parse::<u64>().unwrap_or(0))
+                .sum();
+            let vo_carrot_bal: u64 = vo_outputs.iter()
+                .filter(|o| o.is_carrot)
+                .map(|o| o.amount.parse::<u64>().unwrap_or(0))
+                .sum();
+
             assert_eq!(
-                bf.balance, bv.balance,
-                "view-only wallet should see same SAL1 total balance as full wallet"
+                full_carrot_bal, vo_carrot_bal,
+                "CARROT-only SAL1 unspent balance should match: full={} vs view-only={}",
+                full_carrot_bal, vo_carrot_bal,
+            );
+            println!(
+                "  CARROT-only SAL1 balance verified: {} (full={}, vo={}, cn_diff={})",
+                fmt_sal(full_carrot_bal), fmt_sal(full_sal1), fmt_sal(vo_sal1),
+                fmt_sal(vo_sal1 - full_sal1),
             );
         }
-        println!("  View-only balance matches full wallet.");
+        println!("  View-only balance verification passed.");
     }
 
     // ── Phase 8: Gap Sync ───────────────────────────────────────────────

@@ -23,7 +23,7 @@ pub use account::Account;
 pub use scanner::{ScanContext, FoundOutput};
 pub use sync::{SyncEngine, SyncEvent};
 pub use utxo::{SelectionStrategy, SelectionOptions};
-pub use wallet::Wallet;
+pub use wallet::{Wallet, MultisigStatus};
 pub use js_import::{JsWalletSecrets, decrypt_js_wallet};
 pub use pqc::{WalletSecrets, PqcEnvelope, encrypt_envelope, decrypt_envelope};
 

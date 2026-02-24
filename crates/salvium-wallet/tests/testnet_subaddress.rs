@@ -296,6 +296,7 @@ async fn test_self_transfer_to_subaddress() {
             is_subaddress: true,
         })
         .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::TRANSFER)
         .set_asset_types(tx_asset_type, tx_asset_type)
         .set_rct_type(rct_type::SALVIUM_ONE)

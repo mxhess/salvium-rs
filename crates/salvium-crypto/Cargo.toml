@@ -38,9 +38,13 @@ der = "0.7"
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl"] }
 serde = { version = "1", features = ["derive"] }
 
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [features]
-default = []
+default = ["wasm-exports"]
 ffi = []
+wasm-exports = []
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

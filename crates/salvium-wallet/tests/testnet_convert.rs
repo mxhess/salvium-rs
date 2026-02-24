@@ -202,8 +202,18 @@ async fn test_convert_expected_rejection() {
                     &hex_to_32(output_row.mask.as_ref().unwrap()),
                 ))
             };
+            // Adjust keys for subaddress outputs.
+            let (adj_gik, adj_psk) =
+                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                    &generate_image_key,
+                    &prove_spend_key,
+                    &keys.carrot.generate_address_secret,
+                    &keys.carrot.account_spend_pubkey,
+                    output_row.subaddress_index.major as u32,
+                    output_row.subaddress_index.minor as u32,
+                );
             let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-                &prove_spend_key, &generate_image_key, &shared_secret, &commitment,
+                &adj_psk, &adj_gik, &shared_secret, &commitment,
             );
             (sk_x, Some(sk_y), output_pub_key)
         } else {
@@ -259,6 +269,7 @@ async fn test_convert_expected_rejection() {
             is_subaddress: false,
         })
         .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::CONVERT)
         .set_amount_burnt(CONVERT_AMOUNT) // Convert amount goes to amount_burnt
         .set_slippage_limit(slippage_limit)

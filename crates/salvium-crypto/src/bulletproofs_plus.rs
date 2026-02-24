@@ -9,6 +9,7 @@ use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
+#[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
 use crate::{keccak256_internal, to32, H_POINT_BYTES};
@@ -843,7 +844,7 @@ pub fn parse_proof(bytes: &[u8]) -> Option<BulletproofPlusProof> {
 
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn bulletproof_plus_prove_wasm(
     amounts_bytes: &[u8],
     masks_flat: &[u8],
@@ -874,7 +875,7 @@ pub fn bulletproof_plus_prove_wasm(
     out
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn bulletproof_plus_verify_wasm(
     proof_data: &[u8],
     commitments_flat: &[u8],

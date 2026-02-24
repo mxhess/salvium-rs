@@ -13,6 +13,13 @@ pub mod enote_type {
     pub const SELF_SPEND: u8 = 2;
 }
 
+/// X25519 base point: u = 9 in little-endian encoding.
+pub const X25519_BASE_U: [u8; 32] = {
+    let mut b = [0u8; 32];
+    b[0] = 9;
+    b
+};
+
 /// Domain separators for keyed Blake2b hashes in CARROT.
 mod domain {
     pub const EPHEMERAL_PRIVKEY: &[u8] = b"Carrot sending key normal";
@@ -49,7 +56,7 @@ pub struct CarrotOutput {
 pub struct CarrotOutputParams<'a> {
     /// Recipient's account spend public key (K_s).
     pub recipient_spend_pubkey: &'a [u8; 32],
-    /// Recipient's account view public key (K_v).
+    /// Recipient's account view public key (K_v or K^0_v).
     pub recipient_view_pubkey: &'a [u8; 32],
     /// Amount to send (atomic units).
     pub amount: u64,
@@ -61,16 +68,24 @@ pub struct CarrotOutputParams<'a> {
     pub payment_id: [u8; 8],
     /// Whether the recipient address is a subaddress.
     pub is_subaddress: bool,
+    /// View-balance secret for self-send (change) outputs. When provided AND
+    /// enote_type is CHANGE or SELF_SPEND, this is used directly as s_sr_unctx
+    /// instead of X25519 ECDH. This matches the C++ internal-output path where
+    /// the scanner uses view_balance_secret to detect its own change outputs.
+    pub view_balance_secret: Option<&'a [u8; 32]>,
 }
 
 /// Create a CARROT v1 output.
 ///
 /// This constructs the ephemeral key, one-time address, amount commitment,
-/// view tag, and all encrypted fields. Returns the output data plus the
-/// ephemeral private key (needed to construct the tx extra).
+/// view tag, and all encrypted fields. Returns:
+/// - The output data
+/// - d_e: ephemeral private key
+/// - D_e: ephemeral public key (X25519). For main address: d_e * BASE.
+///   For subaddress: d_e * conv(K_s). This is stored in tx extra (tag 0x04).
 pub fn create_carrot_output(
     params: &CarrotOutputParams,
-) -> Result<(CarrotOutput, [u8; 32]), TxError> {
+) -> Result<(CarrotOutput, [u8; 32], [u8; 32]), TxError> {
     // 1. Generate random Janus anchor (16 bytes).
     let anchor = random_bytes::<16>();
 
@@ -91,14 +106,21 @@ pub fn create_carrot_output(
         let k_s_mont = salvium_crypto::edwards_to_montgomery_u(params.recipient_spend_pubkey);
         to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &k_s_mont))
     } else {
-        let base_u = [9u8; 32]; // X25519 base point
-        to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &base_u))
+        to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &X25519_BASE_U))
     };
 
     // 4. Compute uncontextualized shared secret.
-    //    s_sr = d_e * ConvertPointE(K_v)
-    let k_v_mont = salvium_crypto::edwards_to_montgomery_u(params.recipient_view_pubkey);
-    let s_sr_unctx = to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &k_v_mont));
+    //    External (payment): s_sr = d_e * ConvertPointE(K_v) — X25519 ECDH
+    //    Internal (change/self-spend): s_sr = view_balance_secret — no ECDH
+    let s_sr_unctx = if (params.enote_type == enote_type::CHANGE
+        || params.enote_type == enote_type::SELF_SPEND)
+        && params.view_balance_secret.is_some()
+    {
+        *params.view_balance_secret.unwrap()
+    } else {
+        let k_v_mont = salvium_crypto::edwards_to_montgomery_u(params.recipient_view_pubkey);
+        to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &k_v_mont))
+    };
 
     // 5. Derive contextualized shared secret.
     //    s_ctx = H_32(domain, key=s_sr, D_e || input_context)
@@ -136,9 +158,8 @@ pub fn create_carrot_output(
     //    T is the second generator (dual-key system).
     let g_part = salvium_crypto::scalar_mult_base(&k_o_g);
     let partial = salvium_crypto::point_add_compressed(params.recipient_spend_pubkey, &g_part);
-    // k^o_t*T: need to use double_scalar_mult or dedicated T-point multiplication.
-    // For now, use scalar_mult_point with the T generator point.
-    let t_generator = salvium_crypto::hash_to_point(b"T");
+    // k^o_t*T: use the canonical T generator from carrot_scan (matches C++ config).
+    let t_generator = salvium_crypto::carrot_scan::T_BYTES;
     let t_part = salvium_crypto::scalar_mult_point(&k_o_t, &t_generator);
     let onetime_address = to_32(&salvium_crypto::point_add_compressed(&partial, &t_part));
 
@@ -187,6 +208,7 @@ pub fn create_carrot_output(
             encrypted_payment_id,
         },
         d_e,
+        d_e_pub,
     ))
 }
 
@@ -286,15 +308,17 @@ mod tests {
             enote_type: enote_type::PAYMENT,
             payment_id: [0u8; 8],
             is_subaddress: false,
+            view_balance_secret: None,
         };
 
         let result = create_carrot_output(&params);
         // We can't predict exact values due to random anchor, but structure should be correct.
         match result {
-            Ok((output, d_e)) => {
+            Ok((output, d_e, d_e_pub)) => {
                 assert_eq!(output.encrypted_anchor.len(), 16);
                 assert_eq!(output.view_tag.len(), 3);
                 assert_ne!(d_e, [0u8; 32], "ephemeral key should not be zero");
+                assert_ne!(d_e_pub, [0u8; 32], "ephemeral pubkey should not be zero");
                 assert_ne!(output.onetime_address, [0u8; 32]);
             }
             Err(e) => {
@@ -303,6 +327,45 @@ mod tests {
                 println!("Expected failure with test keys: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_edwards_montgomery_consistency() {
+        // Verify that edwards_to_montgomery_u(G_ed) == 9
+        let g_compressed = curve25519_dalek::constants::ED25519_BASEPOINT_COMPRESSED.to_bytes();
+        let g_mont = salvium_crypto::edwards_to_montgomery_u(&g_compressed);
+        let mut nine = [0u8; 32];
+        nine[0] = 9;
+        assert_eq!(to_32(&g_mont), nine, "edwards_to_montgomery_u(G) should be 9");
+
+        // Test with simple scalar k = [7; 32]
+        let k = [7u8; 32];
+        let k_times_g_ed = salvium_crypto::scalar_mult_base(&k);
+        let mont_of_kg = salvium_crypto::edwards_to_montgomery_u(&to_32(&k_times_g_ed));
+        let k_times_9 = salvium_crypto::x25519_scalar_mult(&k, &nine);
+        assert_eq!(to_32(&k_times_9), to_32(&mont_of_kg),
+            "X25519(k, 9) should equal edwards_to_montgomery_u(k*G) for k=[7;32]");
+
+        // Test with CARROT-derived k_vi (the actual failing case)
+        let raw = salvium_crypto::carrot_keys::derive_carrot_keys(&[42u8; 32]);
+        let k_vi = to_32(&raw[128..160]);
+        let k_v_pub = to_32(&raw[224..256]); // K^0_v from derivation
+
+        // Verify K^0_v == scalar_mult_base(k_vi)
+        let k_vi_times_g = salvium_crypto::scalar_mult_base(&k_vi);
+        println!("k_vi: {}", hex::encode(&k_vi));
+        println!("K^0_v (from derivation): {}", hex::encode(&k_v_pub));
+        println!("k_vi * G (scalar_mult_base): {}", hex::encode(&k_vi_times_g));
+        assert_eq!(to_32(&k_vi_times_g), k_v_pub,
+            "scalar_mult_base(k_vi) should equal K^0_v from derivation");
+
+        // Now test the Montgomery conversion
+        let mont_of_kv = salvium_crypto::edwards_to_montgomery_u(&k_v_pub);
+        let kvi_times_9 = salvium_crypto::x25519_scalar_mult(&k_vi, &nine);
+        println!("mont(K^0_v):   {}", hex::encode(&mont_of_kv));
+        println!("k_vi * 9:      {}", hex::encode(&kvi_times_9));
+        assert_eq!(to_32(&kvi_times_9), to_32(&mont_of_kv),
+            "X25519(k_vi, 9) should equal edwards_to_montgomery_u(K^0_v)");
     }
 
     #[test]
@@ -327,5 +390,210 @@ mod tests {
         let a: [u8; 16] = random_bytes();
         let b: [u8; 16] = random_bytes();
         assert_ne!(a, b, "random bytes should differ");
+    }
+
+    /// Helper: extract CARROT keys from the 288-byte derivation output.
+    struct TestCarrotKeys {
+        view_balance_secret: [u8; 32],
+        view_incoming_key: [u8; 32],
+        generate_address_secret: [u8; 32],
+        account_spend_pubkey: [u8; 32],
+        primary_address_view_pubkey: [u8; 32],
+        account_view_pubkey: [u8; 32],
+    }
+
+    fn derive_test_keys(seed: &[u8; 32]) -> TestCarrotKeys {
+        let raw = salvium_crypto::carrot_keys::derive_carrot_keys(seed);
+        TestCarrotKeys {
+            view_balance_secret: to_32(&raw[64..96]),
+            view_incoming_key: to_32(&raw[128..160]),
+            generate_address_secret: to_32(&raw[160..192]),
+            account_spend_pubkey: to_32(&raw[192..224]),
+            primary_address_view_pubkey: to_32(&raw[224..256]),
+            account_view_pubkey: to_32(&raw[256..288]),
+        }
+    }
+
+    #[test]
+    fn test_carrot_payment_roundtrip() {
+        let keys = derive_test_keys(&[42u8; 32]);
+        let fake_ki = [0xAA; 32];
+        let input_context = make_input_context_rct(&fake_ki);
+
+        let params = CarrotOutputParams {
+            recipient_spend_pubkey: &keys.account_spend_pubkey,
+            recipient_view_pubkey: &keys.primary_address_view_pubkey,
+            amount: 1_000_000_000,
+            input_context: &input_context,
+            enote_type: enote_type::PAYMENT,
+            payment_id: [0u8; 8],
+            is_subaddress: false,
+            view_balance_secret: None,
+        };
+
+        let (output, _d_e_priv, d_e_pub) = create_carrot_output(&params).expect("create failed");
+
+        let result = salvium_crypto::carrot_scan::scan_carrot_output(
+            &output.onetime_address,
+            &output.view_tag,
+            &d_e_pub,
+            &output.encrypted_amount,
+            Some(&output.amount_commitment),
+            &keys.view_incoming_key,
+            &keys.account_spend_pubkey,
+            &input_context,
+            &[],
+            None,
+        );
+
+        assert!(result.is_some(), "PAYMENT scan failed");
+        let r = result.unwrap();
+        assert_eq!(r.amount, 1_000_000_000);
+        assert!(r.is_main_address);
+        assert_eq!(r.enote_type, 0);
+    }
+
+    #[test]
+    fn test_carrot_change_roundtrip() {
+        let keys = derive_test_keys(&[42u8; 32]);
+        let fake_ki = [0xBB; 32];
+        let input_context = make_input_context_rct(&fake_ki);
+
+        let params = CarrotOutputParams {
+            recipient_spend_pubkey: &keys.account_spend_pubkey,
+            recipient_view_pubkey: &keys.account_view_pubkey,
+            amount: 500_000_000,
+            input_context: &input_context,
+            enote_type: enote_type::CHANGE,
+            payment_id: [0u8; 8],
+            is_subaddress: false,
+            view_balance_secret: Some(&keys.view_balance_secret),
+        };
+
+        let (output, _d_e_priv, d_e_pub) = create_carrot_output(&params).expect("create failed");
+
+        // Internal scan (how the wallet detects its own change outputs).
+        let result = salvium_crypto::carrot_scan::scan_carrot_internal_output(
+            &output.onetime_address,
+            &output.view_tag,
+            &d_e_pub,
+            &output.encrypted_amount,
+            Some(&output.amount_commitment),
+            &keys.view_balance_secret,
+            &keys.account_spend_pubkey,
+            &input_context,
+            &[],
+            None,
+        );
+
+        assert!(result.is_some(), "CHANGE internal scan failed");
+        let r = result.unwrap();
+        assert_eq!(r.amount, 500_000_000);
+        assert!(r.is_main_address);
+        assert_eq!(r.enote_type, 1); // CHANGE
+    }
+
+    #[test]
+    fn test_carrot_subaddress_roundtrip() {
+        use salvium_crypto::carrot_scan;
+
+        let keys = derive_test_keys(&[42u8; 32]);
+        let fake_ki = [0xCC; 32];
+        let input_context = salvium_crypto::make_input_context_rct(&fake_ki);
+
+        // Compute CARROT subaddress (0,1): K_s_sub = k_subscal * K_s
+        let sub_map_raw = salvium_crypto::carrot_subaddress_map_batch(
+            &keys.account_spend_pubkey,
+            &keys.account_view_pubkey,
+            &keys.generate_address_secret,
+            0, // major_count (0..=0)
+            1, // minor_count (0..=1)
+        );
+        // Parse the map: [count:u32LE] [spend_pub(32) | major(u32LE) | minor(u32LE)] ...
+        let count = u32::from_le_bytes([sub_map_raw[0], sub_map_raw[1], sub_map_raw[2], sub_map_raw[3]]);
+        assert_eq!(count, 2, "should have 2 entries: (0,0) and (0,1)");
+
+        // Entry 1 is at offset 4 + 40 = 44 (each entry is 32 + 4 + 4 = 40 bytes)
+        let sub_k_s = to_32(&sub_map_raw[44..76]);
+        let sub_major = u32::from_le_bytes([sub_map_raw[76], sub_map_raw[77], sub_map_raw[78], sub_map_raw[79]]);
+        let sub_minor = u32::from_le_bytes([sub_map_raw[80], sub_map_raw[81], sub_map_raw[82], sub_map_raw[83]]);
+        assert_eq!(sub_major, 0);
+        assert_eq!(sub_minor, 1);
+
+        println!("K_s (main): {}", hex::encode(&keys.account_spend_pubkey));
+        println!("K_s_sub (0,1): {}", hex::encode(&sub_k_s));
+        assert_ne!(sub_k_s, keys.account_spend_pubkey, "subaddress key should differ from main");
+
+        // Compute subaddress view key: K_v_sub = k_vi * K_s_sub
+        let kv_sub = to_32(&salvium_crypto::scalar_mult_point(
+            &keys.view_incoming_key,
+            &sub_k_s,
+        ));
+        println!("K_v_sub: {}", hex::encode(&kv_sub));
+
+        // Create output to the subaddress
+        let params = CarrotOutputParams {
+            recipient_spend_pubkey: &sub_k_s,
+            recipient_view_pubkey: &kv_sub,
+            amount: 750_000_000,
+            input_context: &input_context,
+            enote_type: enote_type::PAYMENT,
+            payment_id: [0u8; 8],
+            is_subaddress: true,
+            view_balance_secret: None,
+        };
+
+        let (output, d_e_priv, d_e_pub) = create_carrot_output(&params).expect("create failed");
+
+        println!("d_e_priv: {}", hex::encode(&d_e_priv));
+        println!("D_e: {}", hex::encode(&d_e_pub));
+        println!("Ko: {}", hex::encode(&output.onetime_address));
+        println!("view_tag: {}", hex::encode(&output.view_tag));
+
+        // Build subaddress map for scanning: [(K_s_sub, 0, 1)]
+        let subaddr_map: Vec<([u8; 32], u32, u32)> = vec![(sub_k_s, 0, 1)];
+
+        // Scan with external scanner (k_vi ECDH)
+        let result = carrot_scan::scan_carrot_output(
+            &output.onetime_address,
+            &output.view_tag,
+            &d_e_pub,
+            &output.encrypted_amount,
+            Some(&output.amount_commitment),
+            &keys.view_incoming_key,
+            &keys.account_spend_pubkey,
+            &input_context,
+            &subaddr_map,
+            None,
+        );
+
+        // Diagnostic: manual ECDH check
+        let mut clamped = keys.view_incoming_key;
+        clamped[31] &= 0x7F;
+        let scanner_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(&clamped, &d_e_pub));
+        println!("Scanner ECDH (k_vi * D_e): {}", hex::encode(&scanner_ecdh));
+
+        // Creator ECDH for comparison
+        let creator_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(&d_e_priv, &to_32(&salvium_crypto::edwards_to_montgomery_u(&kv_sub))));
+        println!("Creator ECDH (d_e * mont(K_v_sub)): {}", hex::encode(&creator_ecdh));
+        println!("ECDH match: {}", scanner_ecdh == creator_ecdh);
+
+        if let Some(ref r) = result {
+            println!("SCAN SUCCESS: amount={} enote_type={} major={} minor={}",
+                r.amount, r.enote_type, r.subaddress_major, r.subaddress_minor);
+        } else {
+            println!("SCAN FAILED");
+            // Check view tag manually
+            let expected_vt = carrot_scan::compute_view_tag(&scanner_ecdh, &input_context, &output.onetime_address);
+            println!("Expected VT: {} Actual VT: {} Match: {}",
+                hex::encode(expected_vt), hex::encode(output.view_tag), expected_vt == output.view_tag);
+        }
+
+        assert!(result.is_some(), "SUBADDRESS scan failed");
+        let r = result.unwrap();
+        assert_eq!(r.amount, 750_000_000);
+        assert_eq!(r.subaddress_major, 0);
+        assert_eq!(r.subaddress_minor, 1);
+        assert_eq!(r.enote_type, 0); // PAYMENT
     }
 }

@@ -106,6 +106,7 @@ fn wallet_type_label(wt: WalletType) -> &'static str {
         WalletType::Full => "Full",
         WalletType::ViewOnly => "View-only",
         WalletType::Watch => "Watch-only",
+        WalletType::Multisig { .. } => "Multisig",
     }
 }
 

@@ -7,6 +7,7 @@
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
+#[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
 use crate::to32;
@@ -356,7 +357,7 @@ fn deserialize_tclsag(bytes: &[u8]) -> Option<TclsagSignature> {
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn tclsag_sign_wasm(
     message: &[u8],
     ring_flat: &[u8],
@@ -378,7 +379,7 @@ pub fn tclsag_sign_wasm(
     serialize_tclsag(&sig)
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn tclsag_verify_wasm(
     message: &[u8],
     sig_bytes: &[u8],

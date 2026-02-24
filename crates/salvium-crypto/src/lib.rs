@@ -1,3 +1,4 @@
+#[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 use tiny_keccak::{Hasher, Keccak};
 use curve25519_dalek::scalar::Scalar;
@@ -30,7 +31,7 @@ mod ffi;
 
 /// Keccak-256 hash (CryptoNote variant with 0x01 padding, NOT SHA3)
 /// Matches Salvium C++ cn_fast_hash / keccak()
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn keccak256(data: &[u8]) -> Vec<u8> {
     let mut keccak = Keccak::v256();
     let mut output = [0u8; 32];
@@ -41,7 +42,7 @@ pub fn keccak256(data: &[u8]) -> Vec<u8> {
 
 /// Blake2b with variable output length (unkeyed)
 /// Matches Salvium C++ blake2b(out, outLen, data, dataLen, NULL, 0)
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn blake2b_hash(data: &[u8], out_len: usize) -> Vec<u8> {
     blake2b_simd::Params::new()
         .hash_length(out_len)
@@ -53,7 +54,7 @@ pub fn blake2b_hash(data: &[u8], out_len: usize) -> Vec<u8> {
 /// Blake2b with key (keyed variant per RFC 7693)
 /// Matches Salvium C++ blake2b(out, outLen, data, dataLen, key, keyLen)
 /// Used by CARROT protocol for domain-separated hashing
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn blake2b_keyed(data: &[u8], out_len: usize, key: &[u8]) -> Vec<u8> {
     blake2b_simd::Params::new()
         .hash_length(out_len)
@@ -81,28 +82,28 @@ fn to64(s: &[u8]) -> [u8; 64] {
 
 // ─── Scalar Operations (mod L) ─────────────────────────────────────────────
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_add(a: &[u8], b: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
     (sa + sb).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_sub(a: &[u8], b: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
     (sa - sb).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
     (sa * sb).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_mul_add(a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
@@ -110,7 +111,7 @@ pub fn sc_mul_add(a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
     (sa * sb + sc).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_mul_sub(a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
@@ -118,40 +119,40 @@ pub fn sc_mul_sub(a: &[u8], b: &[u8], c: &[u8]) -> Vec<u8> {
     (sc - sa * sb).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_reduce32(s: &[u8]) -> Vec<u8> {
     Scalar::from_bytes_mod_order(to32(s)).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_reduce64(s: &[u8]) -> Vec<u8> {
     Scalar::from_bytes_mod_order_wide(&to64(s)).to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_invert(a: &[u8]) -> Vec<u8> {
     Scalar::from_bytes_mod_order(to32(a)).invert().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_check(s: &[u8]) -> bool {
     bool::from(Scalar::from_canonical_bytes(to32(s)).is_some())
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_is_zero(s: &[u8]) -> bool {
     Scalar::from_bytes_mod_order(to32(s)) == Scalar::ZERO
 }
 
 // ─── Point Operations (compressed Edwards) ──────────────────────────────────
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn scalar_mult_base(s: &[u8]) -> Vec<u8> {
     let scalar = Scalar::from_bytes_mod_order(to32(s));
     (ED25519_BASEPOINT_TABLE * &scalar).compress().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
     let scalar = Scalar::from_bytes_mod_order(to32(s));
     let point = match CompressedEdwardsY(to32(p)).decompress() {
@@ -163,7 +164,7 @@ pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
         .compress().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn point_add_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
     let pp = match CompressedEdwardsY(to32(p)).decompress() {
         Some(pt) => pt,
@@ -176,7 +177,7 @@ pub fn point_add_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
     (pp + qq).compress().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn point_sub_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
     let pp = match CompressedEdwardsY(to32(p)).decompress() {
         Some(pt) => pt,
@@ -189,7 +190,7 @@ pub fn point_sub_compressed(p: &[u8], q: &[u8]) -> Vec<u8> {
     (pp - qq).compress().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn point_negate(p: &[u8]) -> Vec<u8> {
     let pp = match CompressedEdwardsY(to32(p)).decompress() {
         Some(pt) => pt,
@@ -198,7 +199,7 @@ pub fn point_negate(p: &[u8]) -> Vec<u8> {
     (-pp).compress().to_bytes().to_vec()
 }
 
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn double_scalar_mult_base(a: &[u8], p: &[u8], b: &[u8]) -> Vec<u8> {
     let sa = Scalar::from_bytes_mod_order(to32(a));
     let sb = Scalar::from_bytes_mod_order(to32(b));
@@ -245,7 +246,7 @@ fn derivation_to_scalar(derivation: &[u8], output_index: u32) -> Scalar {
 
 /// Hash-to-point: H_p(data) = cofactor * elligator2(keccak256(data))
 /// Matches Salvium C++ hash_to_ec / ge_fromfe_frombytes_vartime
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn hash_to_point(data: &[u8]) -> Vec<u8> {
     let hash = keccak256_internal(data);
     let point = elligator2::ge_fromfe_frombytes_vartime(&hash);
@@ -257,7 +258,7 @@ pub fn hash_to_point(data: &[u8]) -> Vec<u8> {
 }
 
 /// Generate key image: KI = sec * H_p(pub)
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn generate_key_image(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
     let hash = keccak256_internal(pub_key);
     let hp = elligator2::ge_fromfe_frombytes_vartime(&hash);
@@ -273,7 +274,7 @@ pub fn generate_key_image(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
 }
 
 /// Generate key derivation: D = 8 * (sec * pub)
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn generate_key_derivation(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
     let point = match CompressedEdwardsY(to32(pub_key)).decompress() {
         Some(pt) => pt,
@@ -291,7 +292,7 @@ pub fn generate_key_derivation(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
 }
 
 /// Derive public key: base + H(derivation || index) * G
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn derive_public_key(derivation: &[u8], output_index: u32, base_pub: &[u8]) -> Vec<u8> {
     let scalar = derivation_to_scalar(derivation, output_index);
     let base = match CompressedEdwardsY(to32(base_pub)).decompress() {
@@ -303,7 +304,7 @@ pub fn derive_public_key(derivation: &[u8], output_index: u32, base_pub: &[u8]) 
 }
 
 /// Derive secret key: base + H(derivation || index) mod L
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn derive_secret_key(derivation: &[u8], output_index: u32, base_sec: &[u8]) -> Vec<u8> {
     let scalar = derivation_to_scalar(derivation, output_index);
     let base = Scalar::from_bytes_mod_order(to32(base_sec));
@@ -328,7 +329,7 @@ pub(crate) const H_POINT_BYTES: [u8; 32] = [
 ];
 
 /// Pedersen commitment: C = mask*G + amount*H
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::from_bytes_mod_order(to32(mask));
@@ -342,7 +343,7 @@ pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
 
 /// Zero commitment: C = 1*G + amount*H (blinding factor = 1)
 /// Matches C++ rct::zeroCommit() used for coinbase outputs and fee commitments.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn zero_commit(amount: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::ONE;
@@ -356,7 +357,7 @@ pub fn zero_commit(amount: &[u8]) -> Vec<u8> {
 
 /// Generate commitment mask from shared secret
 /// mask = scReduce32(keccak256("commitment_mask" || sharedSecret))
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn gen_commitment_mask(shared_secret: &[u8]) -> Vec<u8> {
     let prefix = b"commitment_mask";
     let mut data = Vec::with_capacity(prefix.len() + shared_secret.len());
@@ -371,7 +372,7 @@ pub fn gen_commitment_mask(shared_secret: &[u8]) -> Vec<u8> {
 // ============================================================================
 
 /// SHA-256 hash
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sha256(data: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -383,7 +384,7 @@ pub fn sha256(data: &[u8]) -> Vec<u8> {
 /// t_cost: number of iterations, m_cost: memory in KiB, parallelism: threads.
 /// dk_len: desired output length in bytes.
 /// Returns the derived key bytes, or empty vec on error.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn argon2id_hash(
     password: &[u8],
     salt: &[u8],
@@ -421,7 +422,7 @@ pub fn argon2id_hash(
 ///
 /// Only available on native targets (not WASM). On WASM, the JS crypto shim is used.
 #[cfg(not(target_arch = "wasm32"))]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn verify_signature(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> i32 {
     verify_signature_internal(message, signature, pubkey_der)
         .unwrap_or(0)
@@ -513,7 +514,7 @@ fn verify_dsa(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32
 /// Uses a Montgomery ladder on Curve25519 (a24 = 121666, p = 2^255 - 19).
 /// scalar and u_coord must each be 32 bytes (little-endian).
 /// Returns the 32-byte u-coordinate of the result point.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn x25519_scalar_mult(scalar: &[u8], u_coord: &[u8]) -> Vec<u8> {
     let mut s = to32(scalar);
     // Salvium clamping: only clear bit 255
@@ -523,7 +524,7 @@ pub fn x25519_scalar_mult(scalar: &[u8], u_coord: &[u8]) -> Vec<u8> {
 
 /// Convert Ed25519 compressed point to X25519 u-coordinate.
 /// u = (1 + y) / (1 - y) mod p
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn edwards_to_montgomery_u(point: &[u8]) -> Vec<u8> {
     x25519::edwards_to_montgomery_u(&to32(point)).to_vec()
 }
@@ -532,7 +533,7 @@ pub fn edwards_to_montgomery_u(point: &[u8]) -> Vec<u8> {
 
 /// Generate CryptoNote subaddress map in a single call.
 /// Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn cn_subaddress_map_batch(
     spend_pubkey: &[u8],
     view_secret_key: &[u8],
@@ -549,7 +550,7 @@ pub fn cn_subaddress_map_batch(
 
 /// Generate CARROT subaddress map in a single call.
 /// Returns flat binary: [count:u32 LE][spend_pub(32)|major(u32 LE)|minor(u32 LE)]...
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn carrot_subaddress_map_batch(
     account_spend_pubkey: &[u8],
     account_view_pubkey: &[u8],
@@ -570,14 +571,14 @@ pub fn carrot_subaddress_map_batch(
 
 /// Derive all 9 CARROT keys from master secret.
 /// Returns 288 bytes (9 × 32) — see carrot_keys::derive_carrot_keys for layout.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn derive_carrot_keys_batch(master_secret: &[u8]) -> Vec<u8> {
     carrot_keys::derive_carrot_keys(&to32(master_secret)).to_vec()
 }
 
 /// Derive view-only CARROT keys.
 /// Returns 224 bytes (7 × 32) — see carrot_keys::derive_carrot_view_only_keys for layout.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn derive_carrot_view_only_keys_batch(
     view_balance_secret: &[u8],
     account_spend_pubkey: &[u8],
@@ -591,13 +592,13 @@ pub fn derive_carrot_view_only_keys_batch(
 // ─── CARROT Helpers ─────────────────────────────────────────────────────────
 
 /// Compute CARROT 3-byte view tag.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn compute_carrot_view_tag(s_sr_unctx: &[u8], input_context: &[u8], ko: &[u8]) -> Vec<u8> {
     carrot_scan::compute_view_tag(&to32(s_sr_unctx), input_context, &to32(ko)).to_vec()
 }
 
 /// Decrypt CARROT amount from encrypted 8 bytes.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn decrypt_carrot_amount(enc_amount: &[u8], s_sr_ctx: &[u8], ko: &[u8]) -> u64 {
     let mut enc = [0u8; 8];
     let len = enc_amount.len().min(8);
@@ -606,7 +607,7 @@ pub fn decrypt_carrot_amount(enc_amount: &[u8], s_sr_ctx: &[u8], ko: &[u8]) -> u
 }
 
 /// Derive CARROT commitment mask. Returns 32-byte scalar.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn derive_carrot_commitment_mask(
     s_sr_ctx: &[u8],
     amount: u64,
@@ -619,7 +620,7 @@ pub fn derive_carrot_commitment_mask(
 }
 
 /// Recover CARROT address spend pubkey. Returns 32 bytes or empty on invalid.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn recover_carrot_address_spend_pubkey(
     ko: &[u8],
     s_sr_ctx: &[u8],
@@ -632,7 +633,7 @@ pub fn recover_carrot_address_spend_pubkey(
 }
 
 /// Make input context for RCT transactions: "R" + first_key_image (33 bytes).
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn make_input_context_rct(first_key_image: &[u8]) -> Vec<u8> {
     let mut ctx = Vec::with_capacity(33);
     ctx.push(0x52); // 'R'
@@ -641,7 +642,7 @@ pub fn make_input_context_rct(first_key_image: &[u8]) -> Vec<u8> {
 }
 
 /// Make input context for coinbase transactions: "C" + height_LE_8 + 24 zero bytes (33 bytes).
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn make_input_context_coinbase(block_height: u64) -> Vec<u8> {
     let mut ctx = vec![0u8; 33];
     ctx[0] = 0x43; // 'C'
@@ -653,19 +654,19 @@ pub fn make_input_context_coinbase(block_height: u64) -> Vec<u8> {
 // ─── Transaction Extra Parsing & Serialization ──────────────────────────────
 
 /// Parse tx_extra binary into JSON string.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn parse_extra(extra_bytes: &[u8]) -> String {
     tx_format::parse_extra(extra_bytes)
 }
 
 /// Serialize tx_extra from JSON to binary. Returns empty on error.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn serialize_tx_extra(json_str: &str) -> Vec<u8> {
     tx_format::serialize_tx_extra(json_str).unwrap_or_default()
 }
 
 /// Compute keccak256 of transaction prefix bytes.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn compute_tx_prefix_hash(data: &[u8]) -> Vec<u8> {
     tx_format::compute_tx_prefix_hash(data).to_vec()
 }
@@ -674,7 +675,7 @@ pub fn compute_tx_prefix_hash(data: &[u8]) -> Vec<u8> {
 
 /// Parse a complete transaction from raw bytes to JSON string.
 /// Returns JSON with hex-encoded binary fields and decimal string amounts.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn parse_transaction_bytes(data: &[u8]) -> String {
     match tx_parse::parse_transaction(data) {
         Ok(json) => json,
@@ -684,13 +685,13 @@ pub fn parse_transaction_bytes(data: &[u8]) -> String {
 
 /// Serialize a transaction from JSON string to raw bytes.
 /// Returns empty Vec on error.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn serialize_transaction_json(json: &str) -> Vec<u8> {
     tx_serialize::serialize_transaction(json).unwrap_or_default()
 }
 
 /// Parse a complete block from raw bytes to JSON string.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn parse_block_bytes(data: &[u8]) -> String {
     match tx_parse::parse_block(data) {
         Ok(json) => json,
@@ -701,7 +702,7 @@ pub fn parse_block_bytes(data: &[u8]) -> String {
 // ─── Key Image Helpers ──────────────────────────────────────────────────────
 
 /// Check if a 32-byte key image is valid (non-zero, decompresses to a valid Ed25519 point).
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn is_valid_key_image(key_image: &[u8]) -> bool {
     if key_image.len() != 32 {
         return false;
@@ -718,7 +719,7 @@ pub fn is_valid_key_image(key_image: &[u8]) -> bool {
 /// Extract the Y coordinate from a compressed Edwards key image.
 /// In compressed Edwards form, the 32 bytes are the Y coordinate with a sign bit
 /// in the high bit of byte 31. This clears the sign bit to return the pure Y coordinate.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn key_image_to_y(key_image: &[u8]) -> Vec<u8> {
     if key_image.len() != 32 {
         return Vec::new();
@@ -734,7 +735,7 @@ pub fn key_image_to_y(key_image: &[u8]) -> Vec<u8> {
 /// Reconstruct a key image from Y coordinate and sign bit.
 /// Sets or clears the high bit of byte 31 based on the sign_bit parameter,
 /// then verifies the result is a valid curve point.
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn key_image_from_y(y_coord: &[u8], sign_bit: bool) -> Vec<u8> {
     if y_coord.len() != 32 {
         return Vec::new();
@@ -750,6 +751,177 @@ pub fn key_image_from_y(y_coord: &[u8], sign_bit: bool) -> Vec<u8> {
         return Vec::new();
     }
     ki.to_vec()
+}
+
+// ─── Address API (WASM) ─────────────────────────────────────────────────────
+
+/// Parse a Salvium address string into JSON.
+/// Returns JSON: {network, format, address_type, spend_public_key, view_public_key, payment_id?}
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_parse_address(address: &str) -> String {
+    match salvium_types::address::parse_address(address) {
+        Ok(parsed) => {
+            let network = match parsed.network {
+                salvium_types::Network::Mainnet => "mainnet",
+                salvium_types::Network::Testnet => "testnet",
+                salvium_types::Network::Stagenet => "stagenet",
+            };
+            let format = match parsed.format {
+                salvium_types::AddressFormat::Legacy => "legacy",
+                salvium_types::AddressFormat::Carrot => "carrot",
+            };
+            let addr_type = match parsed.address_type {
+                salvium_types::AddressType::Standard => "standard",
+                salvium_types::AddressType::Integrated => "integrated",
+                salvium_types::AddressType::Subaddress => "subaddress",
+            };
+            let mut obj = serde_json::json!({
+                "network": network,
+                "format": format,
+                "address_type": addr_type,
+                "spend_public_key": hex::encode(parsed.spend_public_key),
+                "view_public_key": hex::encode(parsed.view_public_key),
+            });
+            if let Some(pid) = parsed.payment_id {
+                obj["payment_id"] = serde_json::Value::String(hex::encode(pid));
+            }
+            obj.to_string()
+        }
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.to_string().replace('"', "\\\"")),
+    }
+}
+
+/// Validate a Salvium address string.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_is_valid_address(address: &str) -> bool {
+    salvium_types::address::is_valid_address(address)
+}
+
+/// Describe an address in human-readable form.
+/// Returns a string like "Testnet CARROT standard" or "Mainnet Legacy integrated (Payment ID: ...)".
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_describe_address(address: &str) -> String {
+    salvium_types::address::describe_address(address)
+}
+
+/// Create an address string from raw components.
+/// network: 0=mainnet, 1=testnet, 2=stagenet
+/// format: 0=legacy, 1=carrot
+/// addr_type: 0=standard, 1=integrated, 2=subaddress
+/// spend_key/view_key: 32-byte public keys
+/// Returns the Base58-encoded address string, or an error JSON.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_create_address(
+    network: u8,
+    format: u8,
+    addr_type: u8,
+    spend_key: &[u8],
+    view_key: &[u8],
+) -> String {
+    let network = match network {
+        0 => salvium_types::Network::Mainnet,
+        1 => salvium_types::Network::Testnet,
+        2 => salvium_types::Network::Stagenet,
+        _ => return format!(r#"{{"error":"invalid network: {}"}}"#, network),
+    };
+    let format = match format {
+        0 => salvium_types::AddressFormat::Legacy,
+        1 => salvium_types::AddressFormat::Carrot,
+        _ => return format!(r#"{{"error":"invalid format: {}"}}"#, format),
+    };
+    let addr_type = match addr_type {
+        0 => salvium_types::AddressType::Standard,
+        1 => salvium_types::AddressType::Integrated,
+        2 => salvium_types::AddressType::Subaddress,
+        _ => return format!(r#"{{"error":"invalid address type: {}"}}"#, addr_type),
+    };
+    match salvium_types::address::create_address_raw(
+        network, format, addr_type, spend_key, view_key, None,
+    ) {
+        Ok(addr) => addr,
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.to_string().replace('"', "\\\"")),
+    }
+}
+
+/// Convert a standard address to an integrated address with the given 8-byte payment ID.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_to_integrated_address(address: &str, payment_id: &[u8]) -> String {
+    if payment_id.len() != 8 {
+        return format!(
+            r#"{{"error":"payment_id must be 8 bytes, got {}"}}"#,
+            payment_id.len()
+        );
+    }
+    let mut pid = [0u8; 8];
+    pid.copy_from_slice(payment_id);
+    match salvium_types::address::to_integrated_address(address, &pid) {
+        Ok(addr) => addr,
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.to_string().replace('"', "\\\"")),
+    }
+}
+
+// ─── TX Analysis Helpers (WASM) ─────────────────────────────────────────────
+
+/// Get the human-readable name for a transaction type code.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_tx_type_name(tx_type: u8) -> String {
+    match salvium_types::TxType::from_u16(tx_type as u16) {
+        Some(t) => t.to_string(),
+        None => format!("UNKNOWN({})", tx_type),
+    }
+}
+
+/// Get the human-readable name for a RingCT type code.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_rct_type_name(rct_type: u8) -> String {
+    match salvium_types::RctType::from_u8(rct_type) {
+        Some(t) => match t {
+            salvium_types::RctType::Null => "Null".to_string(),
+            salvium_types::RctType::Full => "Full".to_string(),
+            salvium_types::RctType::Simple => "Simple".to_string(),
+            salvium_types::RctType::Bulletproof => "Bulletproof".to_string(),
+            salvium_types::RctType::Bulletproof2 => "Bulletproof2".to_string(),
+            salvium_types::RctType::Clsag => "CLSAG".to_string(),
+            salvium_types::RctType::BulletproofPlus => "BulletproofPlus".to_string(),
+            salvium_types::RctType::FullProofs => "FullProofs".to_string(),
+            salvium_types::RctType::SalviumZero => "SalviumZero".to_string(),
+            salvium_types::RctType::SalviumOne => "SalviumOne".to_string(),
+        },
+        None => format!("UNKNOWN({})", rct_type),
+    }
+}
+
+// ─── Mnemonic Support (WASM) ────────────────────────────────────────────────
+
+/// Encode a 32-byte seed to a 25-word mnemonic string (English).
+/// Returns the space-separated mnemonic, or an error JSON on failure.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_mnemonic_from_seed(seed: &[u8]) -> String {
+    if seed.len() != 32 {
+        return format!(r#"{{"error":"seed must be 32 bytes, got {}"}}"#, seed.len());
+    }
+    let mut s = [0u8; 32];
+    s.copy_from_slice(seed);
+    match salvium_types::mnemonic::seed_to_mnemonic(&s, None) {
+        Ok(words) => words,
+        Err(e) => format!(r#"{{"error":"{}"}}"#, e.to_string().replace('"', "\\\"")),
+    }
+}
+
+/// Decode a 25-word mnemonic string to a 32-byte seed.
+/// Returns the seed bytes, or empty Vec on error.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_mnemonic_to_seed(words: &str) -> Vec<u8> {
+    match salvium_types::mnemonic::mnemonic_to_seed(words, None) {
+        Ok(result) => result.seed.to_vec(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Validate a 25-word mnemonic string.
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
+pub fn wasm_validate_mnemonic(words: &str) -> bool {
+    salvium_types::mnemonic::validate_mnemonic(words, None).is_ok()
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

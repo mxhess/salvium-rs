@@ -10,6 +10,7 @@
 //! 4. Returns on first failure (with index) or success
 
 use std::panic;
+#[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
 use crate::keccak256_internal;
@@ -166,7 +167,7 @@ pub fn verify_rct_signatures(
 /// - `[0x00, idx_u32_le]` if signature at index `idx` is invalid
 /// - `[0xFF]` if input data is malformed
 #[allow(clippy::too_many_arguments)]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn verify_rct_signatures_wasm(
     rct_type: u8,
     input_count: u32,

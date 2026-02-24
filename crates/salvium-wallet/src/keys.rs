@@ -17,6 +17,11 @@ pub enum WalletType {
     ViewOnly,
     /// Watch-only: public keys only, no scanning.
     Watch,
+    /// Multisig wallet: M-of-N threshold signing.
+    Multisig {
+        threshold: usize,
+        signer_count: usize,
+    },
 }
 
 /// CryptoNote (legacy) key set.
@@ -196,11 +201,15 @@ impl WalletKeys {
     }
 
     pub fn can_spend(&self) -> bool {
-        self.wallet_type == WalletType::Full
+        matches!(self.wallet_type, WalletType::Full | WalletType::Multisig { .. })
     }
 
     pub fn can_view(&self) -> bool {
         self.wallet_type != WalletType::Watch
+    }
+
+    pub fn is_multisig(&self) -> bool {
+        matches!(self.wallet_type, WalletType::Multisig { .. })
     }
 }
 

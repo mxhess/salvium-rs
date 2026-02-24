@@ -122,7 +122,8 @@ async fn test_stake_transaction_build() {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey);
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret);
 
     // Add prepared inputs (simplified — we're testing structure, not full signing)
     // For a full test, we'd need to prepare all inputs with ring members.
@@ -253,8 +254,18 @@ async fn test_stake_submit_testnet() {
                     &hex_to_32(output_row.mask.as_ref().unwrap()),
                 ))
             };
+            // Adjust keys for subaddress outputs.
+            let (adj_gik, adj_psk) =
+                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                    &generate_image_key,
+                    &prove_spend_key,
+                    &keys.carrot.generate_address_secret,
+                    &keys.carrot.account_spend_pubkey,
+                    output_row.subaddress_index.major as u32,
+                    output_row.subaddress_index.minor as u32,
+                );
             let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-                &prove_spend_key, &generate_image_key, &shared_secret, &commitment,
+                &adj_psk, &adj_gik, &shared_secret, &commitment,
             );
             (sk_x, Some(sk_y), output_pub_key)
         } else {
@@ -308,6 +319,7 @@ async fn test_stake_submit_testnet() {
             is_subaddress: false,
         })
         .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::STAKE)
         .set_unlock_time(unlock_time)
         .set_asset_types(tx_asset_type, tx_asset_type)

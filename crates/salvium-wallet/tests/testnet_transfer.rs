@@ -404,15 +404,24 @@ async fn test_real_testnet_transfer() {
                 ))
             };
 
+            // Adjust keys for subaddress outputs.
+            let (adj_gik, adj_psk) =
+                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                    &generate_image_key,
+                    &prove_spend_key,
+                    &keys.carrot.generate_address_secret,
+                    &keys.carrot.account_spend_pubkey,
+                    output_row.subaddress_index.major as u32,
+                    output_row.subaddress_index.minor as u32,
+                );
             let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-                &prove_spend_key,
-                &generate_image_key,
+                &adj_psk,
+                &adj_gik,
                 &shared_secret,
                 &commitment,
             );
 
-            // Reconstruct the public key = sk_x*G + sk_y*T to verify.
-            let pk = output_pub_key; // The stored output public key is the one-time address.
+            let pk = output_pub_key;
             (sk_x, Some(sk_y), pk)
         } else {
             // CryptoNote output: derive one-time spending key.
@@ -534,6 +543,7 @@ async fn test_real_testnet_transfer() {
             keys.carrot.account_spend_pubkey,
             keys.carrot.account_view_pubkey,
         )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_asset_types(tx_asset_type, tx_asset_type)
         .set_rct_type(rct)
         .set_fee(estimated_fee);

@@ -24,6 +24,20 @@ pub unsafe fn borrow_handle<'a, T>(handle: *mut c_void) -> Result<&'a T, String>
     Ok(unsafe { &*(handle as *const T) })
 }
 
+/// Borrow a mutable reference to the value behind an opaque handle.
+///
+/// Returns `Err` if the handle is null.
+///
+/// # Safety
+/// The handle must have been created by `into_handle::<T>()` and must not
+/// have been freed yet. The caller must ensure exclusive access.
+pub unsafe fn borrow_handle_mut<'a, T>(handle: *mut c_void) -> Result<&'a mut T, String> {
+    if handle.is_null() {
+        return Err("null handle".into());
+    }
+    Ok(unsafe { &mut *(handle as *mut T) })
+}
+
 /// Drop the value behind an opaque handle, freeing its memory.
 ///
 /// No-op if the handle is null.

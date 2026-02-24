@@ -429,8 +429,18 @@ fn compute_carrot_key_image(
     output_pubkey: &[u8; 32],
     result: &salvium_crypto::carrot_scan::CarrotScanResult,
 ) -> Option<[u8; 32]> {
-    let prove_spend_key = ctx.carrot_prove_spend_key.as_ref()?;
+    // Key image KI = sk_x * H_p(Ko) only needs generate_image_key, not
+    // prove_spend_key.  sk_x = adjusted_gik + k^o_g — prove_spend_key is
+    // only needed for sk_y (spending).  This allows view-only wallets
+    // (which have generate_image_key but not prove_spend_key) to compute
+    // key images for spent-output tracking.
     let generate_image_key = ctx.carrot_generate_image_key.as_ref()?;
+
+    // prove_spend_key is only used for sk_y; pass zeros when unavailable.
+    let prove_spend_key = ctx.carrot_prove_spend_key
+        .as_ref()
+        .copied()
+        .unwrap_or([0u8; 32]);
 
     // Compute the commitment from the derived mask and amount.
     let commitment = salvium_crypto::pedersen_commit(
@@ -447,7 +457,7 @@ fn compute_carrot_key_image(
     // For main address (0,0), k^j_subscal = 1 (identity).
     let (adj_gik, adj_psk) = salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
         generate_image_key,
-        prove_spend_key,
+        &prove_spend_key,
         &ctx.carrot_generate_address_secret,
         &ctx.carrot_account_spend_pubkey,
         result.subaddress_major,

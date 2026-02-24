@@ -31,6 +31,7 @@ pub mod strings;
 pub mod wallet;
 pub mod daemon;
 pub mod transfer;
+pub mod multisig;
 
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;

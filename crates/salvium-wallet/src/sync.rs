@@ -335,7 +335,18 @@ impl SyncEngine {
                     .await;
             }
 
-            // ── 5. Adapt batch size ─────────────────────────────────────
+            // ── 5. Resolve global output indices ─────────────────────────
+            // The output tracker cache (detect_spent_outputs Pass 2) needs
+            // global_index to match ring members against our stored outputs.
+            // BinBlockEntry doesn't include output_indices, so resolve them
+            // post-hoc via get_transactions.
+            if total_outputs_found > 0 {
+                if let Err(e) = resolve_global_indices(daemon, db).await {
+                    log::warn!("global index resolution failed: {}", e);
+                }
+            }
+
+            // ── 6. Adapt batch size ─────────────────────────────────────
             controller.adjust(batch_timer.elapsed().as_millis() as u64, false);
         }
 
@@ -1244,8 +1255,92 @@ fn extract_all_key_images(prefix: &serde_json::Value) -> Vec<String> {
     key_images
 }
 
+/// Parsed transaction input with ring member global indices.
+struct ParsedTxInput {
+    key_image: String,
+    /// Absolute global output indices of ring members.
+    ring_member_indices: Vec<u64>,
+    /// Asset type from the input (for HF6+).
+    asset_type: Option<String>,
+}
+
+/// Extract inputs with key_offsets from a transaction prefix.
+/// Converts relative key_offsets to absolute global output indices.
+fn extract_inputs_with_offsets(prefix: &serde_json::Value) -> Vec<ParsedTxInput> {
+    let mut inputs = Vec::new();
+    let vin = match prefix.get("vin").and_then(|v| v.as_array()) {
+        Some(v) => v,
+        None => return inputs,
+    };
+
+    for input in vin {
+        let (ki_hex, offsets, asset_type) = if let Some(ki) = input.get("keyImage").and_then(|v| v.as_str()) {
+            // New format: { "keyImage": "hex", "keyOffsets": [...], "assetType": "..." }
+            let offsets = input.get("keyOffsets")
+                .or_else(|| input.get("key_offsets"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let asset = input.get("assetType")
+                .or_else(|| input.get("asset_type"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (ki.to_string(), offsets, asset)
+        } else if let Some(key) = input.get("key") {
+            // Legacy format: { "key": { "k_image": "hex", "key_offsets": [...] } }
+            let ki = key.get("k_image")
+                .or_else(|| key.get("keyImage"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let offsets = key.get("key_offsets")
+                .or_else(|| key.get("keyOffsets"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let asset = key.get("asset_type")
+                .or_else(|| key.get("assetType"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (ki, offsets, asset)
+        } else {
+            continue;
+        };
+
+        if ki_hex.len() != 64 || offsets.is_empty() {
+            continue;
+        }
+
+        // Convert relative offsets to absolute indices.
+        // C++ ref: cryptonote::relative_output_offsets_to_absolute
+        let mut absolute = Vec::with_capacity(offsets.len());
+        let mut running = 0u64;
+        for offset in &offsets {
+            running += offset;
+            absolute.push(running);
+        }
+
+        inputs.push(ParsedTxInput {
+            key_image: ki_hex,
+            ring_member_indices: absolute,
+            asset_type,
+        });
+    }
+
+    inputs
+}
+
 /// Check transaction inputs for key images that belong to our wallet and mark
 /// the corresponding outputs as spent.
+///
+/// Uses two complementary detection mechanisms:
+/// 1. **Key image matching** (primary): direct lookup of on-chain key images
+///    against stored output key images. Works for full wallets (all eras) and
+///    view-only wallets (CARROT outputs only, via generate_image_key).
+/// 2. **Output tracker cache** (fallback): matches ring member global indices
+///    against stored outputs. C++ ref: wallet2.cpp:2833-2853. When our output
+///    appears as a ring member and has a synthetic "vo:" key image (CN view-only),
+///    we learn its real key image from the on-chain input and mark it as spent.
 ///
 /// Fix #4: When a STAKE TX (tx_type=6) spends our output, record the stake
 /// in the stakes table so staked amounts appear in the total balance.
@@ -1279,6 +1374,8 @@ fn detect_spent_outputs(
     let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
     let mut spent_count = 0;
 
+    // ── Pass 1: Key image matching (primary mechanism) ──────────────────
+    let mut matched_key_images = std::collections::HashSet::new();
     for ki_hex in &key_images {
         // Check if this key image belongs to one of our outputs.
         let output = db
@@ -1289,9 +1386,47 @@ fn detect_spent_outputs(
             // (e.g. by mark_inputs_spent after TX submission). This ensures
             // stake recording still triggers when the block is later synced.
             spent_count += 1;
+            matched_key_images.insert(ki_hex.clone());
             if !row.is_spent {
                 db.mark_spent(ki_hex, tx_hash_hex, block_height as i64)
                     .map_err(|e| WalletError::Storage(e.to_string()))?;
+            }
+        }
+    }
+
+    // ── Pass 2: Output tracker cache (ring member usage tracking) ───────
+    // C++ ref: wallet2.cpp:2833-2853 (output_tracker_cache)
+    //
+    // When our output appears as a ring member of an on-chain input, we
+    // record usage but do NOT mark it as spent. We cannot distinguish
+    // real spends from decoy usage without the spending secret — marking
+    // on ring membership alone would cause false positives (~15/16 of the
+    // time for a standard ring size of 16).
+    //
+    // For view-only wallets, CN outputs will always show a balance >=
+    // the real balance. This matches C++ behavior: the tracker just sets
+    // `recognized_owned_possibly_spent_enote = true` and caches the TX
+    // for potential re-processing when the spend key becomes available.
+    let inputs = extract_inputs_with_offsets(prefix);
+    for input in &inputs {
+        if matched_key_images.contains(&input.key_image) {
+            continue; // Already matched by key image in Pass 1
+        }
+
+        let asset_type = input.asset_type.as_deref().unwrap_or("SAL");
+
+        for &global_idx in &input.ring_member_indices {
+            let output = db
+                .get_output_by_global_index(asset_type, global_idx as i64)
+                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            if let Some(row) = output {
+                log::debug!(
+                    "output tracker: our output global_idx={} asset={} seen as ring member (ki={}, tx={})",
+                    global_idx, asset_type,
+                    row.key_image.as_deref().unwrap_or("none"),
+                    &tx_hash_hex[..16]
+                );
+                break;
             }
         }
     }
@@ -1428,7 +1563,7 @@ fn store_found_outputs(
             .map(|o| o.unlock_time)
             .unwrap_or(tx.unlock_time);
 
-        let row = salvium_crypto::storage::OutputRow {
+        let mut row = salvium_crypto::storage::OutputRow {
             key_image: output.key_image.map(hex::encode),
             public_key: Some(pub_key_hex),
             tx_hash: hex::encode(tx.tx_hash),
@@ -1460,11 +1595,18 @@ fn store_found_outputs(
             updated_at: None,
         };
 
-        // Use key_image as primary key. Skip if no key image (view-only wallet).
-        if row.key_image.is_some() {
-            db.put_output(&row)
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
+        // View-only CN outputs have no key image (spend secret unavailable).
+        // Generate a synthetic key from tx_hash + output_index so the output
+        // can still be stored for balance tracking.
+        if row.key_image.is_none() {
+            let mut buf = Vec::with_capacity(36);
+            buf.extend_from_slice(&tx.tx_hash);
+            buf.extend_from_slice(&(output.output_index as u32).to_le_bytes());
+            let synthetic = salvium_crypto::keccak256(&buf);
+            row.key_image = Some(format!("vo:{}", hex::encode(synthetic)));
         }
+        db.put_output(&row)
+            .map_err(|e| WalletError::Storage(e.to_string()))?;
 
         // Fix #8 (TODO): Pre-CARROT PROTOCOL/RETURN key image override.
         // C++ ref: wallet2.cpp:2684-2719
@@ -1561,6 +1703,83 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Some(arr)
+}
+
+/// Resolve global output indices for newly stored outputs.
+///
+/// After each batch of blocks, outputs are stored with `global_index = NULL`
+/// because `get_blocks_by_height.bin` doesn't return output indices. This
+/// function fetches the missing indices via `get_transactions` and updates
+/// the stored outputs.
+///
+/// C++ ref: wallet2.cpp stores global_index at scan time because it uses
+/// `getblocks.bin` which returns output indices. We use `get_blocks_by_height.bin`
+/// (which doesn't) for performance, so we resolve indices post-hoc.
+///
+/// These indices are required by the output tracker cache (detect_spent_outputs
+/// Pass 2) to match ring member global indices against our stored outputs.
+#[cfg(not(target_arch = "wasm32"))]
+async fn resolve_global_indices(
+    daemon: &DaemonRpc,
+    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+) -> Result<usize, WalletError> {
+    // Get outputs that need global_index resolution.
+    let pending = {
+        let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_outputs_needing_global_index()
+            .map_err(|e| WalletError::Storage(e.to_string()))?
+    };
+
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    // Group by tx_hash for batched lookup.
+    let mut by_tx: std::collections::HashMap<String, Vec<(String, i64)>> =
+        std::collections::HashMap::new();
+    for (key_image, tx_hash, output_index) in &pending {
+        by_tx
+            .entry(tx_hash.clone())
+            .or_default()
+            .push((key_image.clone(), *output_index));
+    }
+
+    // Fetch transaction entries (which include output_indices).
+    let tx_hashes: Vec<String> = by_tx.keys().cloned().collect();
+    let hash_refs: Vec<&str> = tx_hashes.iter().map(|s| s.as_str()).collect();
+
+    // Process in batches of 100 to avoid huge RPC requests.
+    let mut resolved = 0;
+    for chunk in hash_refs.chunks(100) {
+        let entries = daemon
+            .get_transactions(chunk, false)
+            .await
+            .map_err(|e| WalletError::Sync(format!("resolve_global_indices: {}", e)))?;
+
+        let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        for (entry, &tx_hash_str) in entries.iter().zip(chunk.iter()) {
+            if entry.output_indices.is_empty() {
+                continue;
+            }
+
+            if let Some(outputs) = by_tx.get(tx_hash_str) {
+                for (key_image, output_index) in outputs {
+                    if (*output_index as usize) < entry.output_indices.len() {
+                        let global_idx = entry.output_indices[*output_index as usize];
+                        db.update_global_index(key_image, global_idx as i64)
+                            .map_err(|e| WalletError::Storage(e.to_string()))?;
+                        resolved += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if resolved > 0 {
+        log::debug!("resolved {} global output indices", resolved);
+    }
+
+    Ok(resolved)
 }
 
 /// Walk back from `height` to find the fork point during a reorg.

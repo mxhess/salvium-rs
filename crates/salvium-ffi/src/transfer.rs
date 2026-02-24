@@ -1,4 +1,4 @@
-//! High-level transfer and stake operations.
+//! High-level transfer, stake, and sweep operations.
 //!
 //! These wrap the full TX construction pipeline:
 //! 1. Parse params + validate addresses
@@ -7,7 +7,7 @@
 //! 4. Decoy selection + fetch ring members
 //! 5. Build unsigned TX
 //! 6. Sign
-//! 7. Broadcast
+//! 7. Broadcast (unless dry-run)
 //! 8. Mark spent outputs in wallet DB
 //! 9. Return result JSON
 
@@ -21,7 +21,7 @@ use salvium_rpc::DaemonRpc;
 use salvium_tx::builder::{Destination, PreparedInput, TransactionBuilder};
 use salvium_tx::decoy::DecoySelector;
 use salvium_tx::fee::{self, FeePriority};
-use salvium_tx::types::{rct_type, tx_type};
+use salvium_tx::types::{output_type, rct_type, tx_type};
 use salvium_wallet::Wallet;
 
 /// Transfer parameters (deserialized from JSON).
@@ -34,6 +34,9 @@ struct TransferParams {
     priority: String,
     #[serde(default = "default_ring_size")]
     ring_size: usize,
+    /// If true, build + sign but don't broadcast. Returns tx_hex in result.
+    #[serde(default)]
+    dry_run: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -52,6 +55,21 @@ struct StakeParams {
     priority: String,
     #[serde(default = "default_ring_size")]
     ring_size: usize,
+}
+
+/// Sweep parameters (deserialized from JSON).
+#[derive(serde::Deserialize)]
+struct SweepParams {
+    address: String,
+    #[serde(default = "default_asset")]
+    asset_type: String,
+    #[serde(default = "default_priority")]
+    priority: String,
+    #[serde(default = "default_ring_size")]
+    ring_size: usize,
+    /// If true, build + sign but don't broadcast. Returns tx_hex in result.
+    #[serde(default)]
+    dry_run: bool,
 }
 
 fn default_asset() -> String {
@@ -162,9 +180,110 @@ pub unsafe extern "C" fn salvium_wallet_stake(
     })
 }
 
+/// Sweep all unlocked funds of a given asset type to a single address.
+///
+/// `params_json` schema:
+/// ```json
+/// {
+///   "address": "Svk1...",
+///   "asset_type": "SAL",
+///   "priority": "normal",
+///   "ring_size": 16,
+///   "dry_run": false
+/// }
+/// ```
+///
+/// Returns JSON on success: `{"tx_hash": "...", "fee": "...", "amount": "...", "tx_hex": "..."}`
+/// `tx_hex` is only populated when `dry_run` is true.
+/// Returns null on error.
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_sweep(
+    wallet: *mut c_void,
+    daemon: *mut c_void,
+    params_json: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
+        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let json_str = unsafe { c_str_to_str(params_json) }?;
+
+        let params: SweepParams =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid sweep params: {e}"))?;
+
+        if !wallet_ref.can_spend() {
+            return Err("wallet is view-only, cannot sign transactions".into());
+        }
+
+        let priority = parse_priority(&params.priority);
+        let rt = crate::runtime();
+
+        rt.block_on(async {
+            do_sweep(wallet_ref, daemon_ref, &params, priority).await
+        })
+    })
+}
+
+/// Build a transfer without broadcasting (dry run).
+///
+/// Same params as `salvium_wallet_transfer`. The `dry_run` field is
+/// forced to `true` regardless of the JSON value.
+///
+/// Returns JSON: `{"tx_hash": "...", "fee": "...", "amount": "...", "tx_hex": "...", "weight": ...}`
+/// Returns null on error.
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
+    wallet: *mut c_void,
+    daemon: *mut c_void,
+    params_json: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
+        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let json_str = unsafe { c_str_to_str(params_json) }?;
+
+        let mut params: TransferParams =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid transfer params: {e}"))?;
+        params.dry_run = true;
+
+        if params.destinations.is_empty() {
+            return Err("no destinations specified".into());
+        }
+        if !wallet_ref.can_spend() {
+            return Err("wallet is view-only, cannot sign transactions".into());
+        }
+
+        let priority = parse_priority(&params.priority);
+        let rt = crate::runtime();
+
+        rt.block_on(async {
+            do_transfer(wallet_ref, daemon_ref, &params, priority).await
+        })
+    })
+}
+
 // =============================================================================
 // Internal Transfer Flow
 // =============================================================================
+
+/// Determine the fork-appropriate asset type and rct_type from the daemon.
+async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(String, u8, bool), String> {
+    let hf = daemon
+        .hard_fork_info()
+        .await
+        .map_err(|e| format!("hard_fork_info failed: {e}"))?;
+
+    let (asset, rct, is_carrot) = if hf.version >= 10 {
+        ("SAL1".to_string(), rct_type::SALVIUM_ONE, true)
+    } else if hf.version >= 6 {
+        ("SAL1".to_string(), rct_type::SALVIUM_ZERO, false)
+    } else {
+        ("SAL".to_string(), rct_type::BULLETPROOF_PLUS, false)
+    };
+
+    Ok((asset, rct, is_carrot))
+}
 
 async fn do_transfer(
     wallet: &Wallet,
@@ -172,6 +291,8 @@ async fn do_transfer(
     params: &TransferParams,
     priority: FeePriority,
 ) -> Result<String, String> {
+    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
     // 1. Parse and validate destinations.
     let mut destinations = Vec::new();
     let mut total_amount: u64 = 0;
@@ -194,40 +315,54 @@ async fn do_transfer(
             spend_pubkey: parsed.spend_public_key,
             view_pubkey: parsed.view_public_key,
             amount,
-            asset_type: params.asset_type.clone(),
+            asset_type: fork_asset.clone(),
             payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
             is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
         });
     }
 
     // 2. Estimate fee.
+    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
     let num_outputs = destinations.len() + 1; // +1 for change
-    let est_fee = fee::estimate_tx_fee(2, num_outputs, params.ring_size, false, 0x03, priority);
+    let est_fee = fee::estimate_tx_fee(2, num_outputs, params.ring_size, is_carrot, out_type, priority);
 
-    // 3. Select UTXOs.
-    let selection = wallet
-        .select_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
-        .map_err(|e| format!("UTXO selection failed: {e}"))?;
+    // 3. Select UTXOs (CARROT-only for SALVIUM_ONE).
+    let selection = if is_carrot {
+        wallet
+            .select_carrot_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    } else {
+        wallet
+            .select_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    };
 
     // 4. Build the transaction.
-    let (tx_hash, actual_fee) = build_sign_broadcast(
+    let built = build_sign_maybe_broadcast(
         wallet,
         daemon,
         &destinations,
         &selection,
-        &params.asset_type,
+        &fork_asset,
         tx_type::TRANSFER,
         params.ring_size,
         priority,
         0,  // amount_burnt
+        fork_rct,
+        is_carrot,
+        params.dry_run,
     )
     .await?;
 
-    let result = serde_json::json!({
-        "tx_hash": tx_hash,
-        "fee": actual_fee.to_string(),
+    let mut result = serde_json::json!({
+        "tx_hash": built.tx_hash,
+        "fee": built.fee.to_string(),
         "amount": total_amount.to_string(),
     });
+    if params.dry_run {
+        result["tx_hex"] = serde_json::Value::String(built.tx_hex);
+        result["weight"] = serde_json::Value::Number(built.weight.into());
+    }
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
@@ -237,6 +372,8 @@ async fn do_stake(
     params: &StakeParams,
     priority: FeePriority,
 ) -> Result<String, String> {
+    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
     let amount: u64 = params
         .amount
         .parse()
@@ -245,50 +382,149 @@ async fn do_stake(
         return Err("stake amount must be > 0".into());
     }
 
-    // Stake destination is the wallet's own address (self-stake).
-    let own_address = wallet.cn_address().map_err(|e| e.to_string())?;
-    let parsed = salvium_types::address::parse_address(&own_address)
-        .map_err(|e| format!("failed to parse own address: {e}"))?;
+    // Stake destination is the wallet's own address.
+    let keys = wallet.keys();
+    let (spend_pub, view_pub) = if is_carrot {
+        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+    } else {
+        (keys.cn.spend_public_key, keys.cn.view_public_key)
+    };
 
     let destinations = vec![Destination {
-        spend_pubkey: parsed.spend_public_key,
-        view_pubkey: parsed.view_public_key,
+        spend_pubkey: spend_pub,
+        view_pubkey: view_pub,
         amount,
-        asset_type: params.asset_type.clone(),
+        asset_type: fork_asset.clone(),
         payment_id: [0u8; 8],
         is_subaddress: false,
     }];
 
-    let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, false, 0x03, priority);
+    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, priority);
 
-    let selection = wallet
-        .select_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
-        .map_err(|e| format!("UTXO selection failed: {e}"))?;
+    let selection = if is_carrot {
+        wallet
+            .select_carrot_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    } else {
+        wallet
+            .select_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    };
 
-    let (tx_hash, actual_fee) = build_sign_broadcast(
+    let built = build_sign_maybe_broadcast(
         wallet,
         daemon,
         &destinations,
         &selection,
-        &params.asset_type,
+        &fork_asset,
         tx_type::STAKE,
         params.ring_size,
         priority,
         amount, // amount_burnt = staked amount
+        fork_rct,
+        is_carrot,
+        false, // never dry-run stakes
     )
     .await?;
 
     let result = serde_json::json!({
-        "tx_hash": tx_hash,
-        "fee": actual_fee.to_string(),
+        "tx_hash": built.tx_hash,
+        "fee": built.fee.to_string(),
         "amount": amount.to_string(),
     });
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
-/// Core TX construction pipeline shared by transfer and stake.
+async fn do_sweep(
+    wallet: &Wallet,
+    daemon: &DaemonRpc,
+    params: &SweepParams,
+    priority: FeePriority,
+) -> Result<String, String> {
+    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
+    let parsed = salvium_types::address::parse_address(&params.address)
+        .map_err(|e| format!("invalid address '{}': {e}", params.address))?;
+
+    // 1. Select ALL unlocked outputs.
+    let all_selection = if is_carrot {
+        wallet
+            .select_carrot_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    } else {
+        wallet
+            .select_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+            .map_err(|e| format!("UTXO selection failed: {e}"))?
+    };
+
+    if all_selection.selected.is_empty() {
+        return Err("no unlocked outputs to sweep".into());
+    }
+
+    // 2. Estimate fee with actual input count.
+    let n_inputs = all_selection.selected.len();
+    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let actual_fee = fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, priority);
+
+    let sweep_amount = all_selection
+        .total
+        .checked_sub(actual_fee)
+        .ok_or("balance too low to cover fee")?;
+
+    if sweep_amount == 0 {
+        return Err("balance too low to cover fee".into());
+    }
+
+    let destinations = vec![Destination {
+        spend_pubkey: parsed.spend_public_key,
+        view_pubkey: parsed.view_public_key,
+        amount: sweep_amount,
+        asset_type: fork_asset.clone(),
+        payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
+        is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
+    }];
+
+    // 3. Build, sign, broadcast.
+    let built = build_sign_maybe_broadcast(
+        wallet,
+        daemon,
+        &destinations,
+        &all_selection,
+        &fork_asset,
+        tx_type::TRANSFER,
+        params.ring_size,
+        priority,
+        0,
+        fork_rct,
+        is_carrot,
+        params.dry_run,
+    )
+    .await?;
+
+    let mut result = serde_json::json!({
+        "tx_hash": built.tx_hash,
+        "fee": built.fee.to_string(),
+        "amount": sweep_amount.to_string(),
+    });
+    if params.dry_run {
+        result["tx_hex"] = serde_json::Value::String(built.tx_hex);
+        result["weight"] = serde_json::Value::Number(built.weight.into());
+    }
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+/// Result of building (and optionally broadcasting) a transaction.
+struct BuiltTx {
+    tx_hash: String,
+    fee: u64,
+    tx_hex: String,
+    weight: u64,
+}
+
+/// Core TX construction pipeline shared by transfer, stake, and sweep.
 #[allow(clippy::too_many_arguments)]
-async fn build_sign_broadcast(
+async fn build_sign_maybe_broadcast(
     wallet: &Wallet,
     daemon: &DaemonRpc,
     destinations: &[Destination],
@@ -298,7 +534,10 @@ async fn build_sign_broadcast(
     ring_size: usize,
     priority: FeePriority,
     amount_burnt: u64,
-) -> Result<(String, u64), String> {
+    fork_rct_type: u8,
+    is_carrot: bool,
+    dry_run: bool,
+) -> Result<BuiltTx, String> {
     let keys = wallet.keys();
 
     // 1. Get output distribution for decoy selection.
@@ -362,19 +601,20 @@ async fn build_sign_broadcast(
             .map_err(|e| format!("get_output failed: {e}"))?
             .ok_or_else(|| format!("output not found for key_image {}", utxo.key_image))?;
 
-        let tx_pub_key = hex_to_32(
+        let output_pub_key = hex_to_32(
             output_row
-                .tx_pub_key
+                .public_key
                 .as_deref()
-                .ok_or("output missing tx_pub_key")?,
+                .ok_or("output missing public_key")?,
         )?;
 
         let (secret_key, secret_key_y) = if output_row.is_carrot {
-            // CARROT output: derive both x and y keys.
+            // CARROT output: derive both x and y keys with subaddress adjustment.
             let prove_spend = keys
                 .carrot
                 .prove_spend_key
                 .ok_or("no prove_spend_key (wallet is view-only)")?;
+            let generate_image_key = keys.carrot.generate_image_key;
 
             let shared_secret = hex_to_32(
                 output_row
@@ -390,9 +630,20 @@ async fn build_sign_broadcast(
                     .ok_or("CARROT output missing commitment")?,
             )?;
 
+            // Adjust keys for subaddress outputs.
+            let (adj_gik, adj_psk) =
+                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                    &generate_image_key,
+                    &prove_spend,
+                    &keys.carrot.generate_address_secret,
+                    &keys.carrot.account_spend_pubkey,
+                    output_row.subaddress_index.major as u32,
+                    output_row.subaddress_index.minor as u32,
+                );
+
             let (sx, sy) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
-                &prove_spend,
-                &keys.carrot.generate_image_key,
+                &adj_psk,
+                &adj_gik,
                 &shared_secret,
                 &commitment,
             );
@@ -403,6 +654,12 @@ async fn build_sign_broadcast(
                 .cn
                 .spend_secret_key
                 .ok_or("no spend_secret_key (wallet is view-only)")?;
+            let tx_pub_key = hex_to_32(
+                output_row
+                    .tx_pub_key
+                    .as_deref()
+                    .ok_or("output missing tx_pub_key")?,
+            )?;
 
             let secret = salvium_crypto::cn_scan::derive_output_spend_key(
                 &keys.cn.view_secret_key,
@@ -424,12 +681,7 @@ async fn build_sign_broadcast(
         prepared_inputs.push(PreparedInput {
             secret_key,
             secret_key_y,
-            public_key: hex_to_32(
-                output_row
-                    .public_key
-                    .as_deref()
-                    .ok_or("output missing public_key")?,
-            )?,
+            public_key: output_pub_key,
             amount: utxo.amount,
             mask,
             asset_type: asset_type.to_string(),
@@ -442,29 +694,37 @@ async fn build_sign_broadcast(
     }
 
     // 3. Build the unsigned transaction.
-    let own_address = wallet.cn_address().map_err(|e| e.to_string())?;
-    let change_addr = salvium_types::address::parse_address(&own_address)
-        .map_err(|e| format!("failed to parse change address: {e}"))?;
-
-    let use_tclsag = false; // Use CLSAG by default for legacy outputs
+    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
     let actual_fee = fee::estimate_tx_fee(
         prepared_inputs.len(),
         destinations.len() + 1,
         ring_size,
-        use_tclsag,
-        0x03,
+        is_carrot,
+        out_type,
         priority,
     );
 
+    // Change address: use CARROT keys when in CARROT mode, CN keys otherwise.
+    let (chg_spend, chg_view) = if is_carrot {
+        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+    } else {
+        (keys.cn.spend_public_key, keys.cn.view_public_key)
+    };
+
     let mut builder = TransactionBuilder::new()
         .add_inputs(prepared_inputs)
-        .set_change_address(change_addr.spend_public_key, change_addr.view_public_key)
+        .set_change_address(chg_spend, chg_view)
         .set_tx_type(tt)
         .set_fee(actual_fee)
         .set_priority(priority)
         .set_asset_types(asset_type, asset_type)
-        .set_rct_type(rct_type::SALVIUM_ZERO)
+        .set_rct_type(fork_rct_type)
         .set_view_secret_key(keys.cn.view_secret_key);
+
+    // CARROT outputs need the view_balance_secret for self-send ECDH.
+    if is_carrot {
+        builder = builder.set_change_view_balance_secret(keys.carrot.view_balance_secret);
+    }
 
     if amount_burnt > 0 {
         builder = builder.set_amount_burnt(amount_burnt);
@@ -482,29 +742,38 @@ async fn build_sign_broadcast(
     let signed = salvium_tx::sign_transaction(unsigned)
         .map_err(|e| format!("transaction signing failed: {e}"))?;
 
-    // 5. Serialize and broadcast.
+    // 5. Serialize.
     let tx_hash = hex::encode(signed.tx_hash().map_err(|e| format!("tx hash failed: {e}"))?);
     let tx_bytes = signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
     let tx_hex = hex::encode(&tx_bytes);
+    let weight = tx_bytes.len() as u64;
 
-    let send_result = daemon
-        .send_raw_transaction(&tx_hex, false)
-        .await
-        .map_err(|e| format!("broadcast failed: {e}"))?;
+    // 6. Broadcast (unless dry run).
+    if !dry_run {
+        let send_result = daemon
+            .send_raw_transaction_ex(&tx_hex, false, true, asset_type)
+            .await
+            .map_err(|e| format!("broadcast failed: {e}"))?;
 
-    if send_result.status != "OK" {
-        return Err(format!(
-            "daemon rejected transaction: {} (reason: {})",
-            send_result.status, send_result.reason
-        ));
+        if send_result.status != "OK" {
+            return Err(format!(
+                "daemon rejected transaction: {} (reason: {})",
+                send_result.status, send_result.reason
+            ));
+        }
+
+        // Mark spent outputs in wallet DB.
+        for utxo in &selection.selected {
+            let _ = wallet.mark_output_spent(&utxo.key_image, &tx_hash);
+        }
     }
 
-    // 6. Mark spent outputs in wallet DB.
-    for utxo in &selection.selected {
-        let _ = wallet.mark_output_spent(&utxo.key_image, &tx_hash);
-    }
-
-    Ok((tx_hash, actual_fee))
+    Ok(BuiltTx {
+        tx_hash,
+        fee: actual_fee,
+        tx_hex,
+        weight,
+    })
 }
 
 fn hex_to_32(hex_str: &str) -> Result<[u8; 32], String> {
