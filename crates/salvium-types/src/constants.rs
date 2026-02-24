@@ -50,29 +50,137 @@ pub struct PrefixInfo {
 /// All 18 address prefix entries (3 networks × 2 formats × 3 types).
 pub static ALL_PREFIXES: [PrefixInfo; 18] = [
     // Mainnet Legacy
-    PrefixInfo { prefix: 0x3ef318,     text: "SaLv",   network: Network::Mainnet,  format: AddressFormat::Legacy, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0x55ef318,    text: "SaLvi",  network: Network::Mainnet,  format: AddressFormat::Legacy, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0xf5ef318,    text: "SaLvs",  network: Network::Mainnet,  format: AddressFormat::Legacy, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x3ef318,
+        text: "SaLv",
+        network: Network::Mainnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0x55ef318,
+        text: "SaLvi",
+        network: Network::Mainnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0xf5ef318,
+        text: "SaLvs",
+        network: Network::Mainnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Subaddress,
+    },
     // Mainnet CARROT
-    PrefixInfo { prefix: 0x180c96,     text: "SC1",    network: Network::Mainnet,  format: AddressFormat::Carrot, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0x2ccc96,     text: "SC1i",   network: Network::Mainnet,  format: AddressFormat::Carrot, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0x314c96,     text: "SC1s",   network: Network::Mainnet,  format: AddressFormat::Carrot, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x180c96,
+        text: "SC1",
+        network: Network::Mainnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0x2ccc96,
+        text: "SC1i",
+        network: Network::Mainnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0x314c96,
+        text: "SC1s",
+        network: Network::Mainnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Subaddress,
+    },
     // Testnet Legacy
-    PrefixInfo { prefix: 0x15beb318,   text: "SaLvT",  network: Network::Testnet,  format: AddressFormat::Legacy, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0xd055eb318,  text: "SaLvTi", network: Network::Testnet,  format: AddressFormat::Legacy, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0xa59eb318,   text: "SaLvTs", network: Network::Testnet,  format: AddressFormat::Legacy, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x15beb318,
+        text: "SaLvT",
+        network: Network::Testnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0xd055eb318,
+        text: "SaLvTi",
+        network: Network::Testnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0xa59eb318,
+        text: "SaLvTs",
+        network: Network::Testnet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Subaddress,
+    },
     // Testnet CARROT
-    PrefixInfo { prefix: 0x254c96,     text: "SC1T",   network: Network::Testnet,  format: AddressFormat::Carrot, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0x1ac50c96,   text: "SC1Ti",  network: Network::Testnet,  format: AddressFormat::Carrot, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0x3c54c96,    text: "SC1Ts",  network: Network::Testnet,  format: AddressFormat::Carrot, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x254c96,
+        text: "SC1T",
+        network: Network::Testnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0x1ac50c96,
+        text: "SC1Ti",
+        network: Network::Testnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0x3c54c96,
+        text: "SC1Ts",
+        network: Network::Testnet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Subaddress,
+    },
     // Stagenet Legacy
-    PrefixInfo { prefix: 0x149eb318,   text: "SaLvS",  network: Network::Stagenet, format: AddressFormat::Legacy, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0xf343eb318,  text: "SaLvSi", network: Network::Stagenet, format: AddressFormat::Legacy, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0x2d47eb318,  text: "SaLvSs", network: Network::Stagenet, format: AddressFormat::Legacy, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x149eb318,
+        text: "SaLvS",
+        network: Network::Stagenet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0xf343eb318,
+        text: "SaLvSi",
+        network: Network::Stagenet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0x2d47eb318,
+        text: "SaLvSs",
+        network: Network::Stagenet,
+        format: AddressFormat::Legacy,
+        address_type: AddressType::Subaddress,
+    },
     // Stagenet CARROT
-    PrefixInfo { prefix: 0x24cc96,     text: "SC1S",   network: Network::Stagenet, format: AddressFormat::Carrot, address_type: AddressType::Standard },
-    PrefixInfo { prefix: 0x1a848c96,   text: "SC1Si",  network: Network::Stagenet, format: AddressFormat::Carrot, address_type: AddressType::Integrated },
-    PrefixInfo { prefix: 0x384cc96,    text: "SC1Ss",  network: Network::Stagenet, format: AddressFormat::Carrot, address_type: AddressType::Subaddress },
+    PrefixInfo {
+        prefix: 0x24cc96,
+        text: "SC1S",
+        network: Network::Stagenet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Standard,
+    },
+    PrefixInfo {
+        prefix: 0x1a848c96,
+        text: "SC1Si",
+        network: Network::Stagenet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Integrated,
+    },
+    PrefixInfo {
+        prefix: 0x384cc96,
+        text: "SC1Ss",
+        network: Network::Stagenet,
+        format: AddressFormat::Carrot,
+        address_type: AddressType::Subaddress,
+    },
 ];
 
 /// Look up prefix info by varint prefix value.
@@ -82,7 +190,8 @@ pub fn prefix_info(prefix: u64) -> Option<&'static PrefixInfo> {
 
 /// Get the prefix value for a specific network/format/type combination.
 pub fn get_prefix(network: Network, format: AddressFormat, addr_type: AddressType) -> Option<u64> {
-    ALL_PREFIXES.iter()
+    ALL_PREFIXES
+        .iter()
         .find(|p| p.network == network && p.format == format && p.address_type == addr_type)
         .map(|p| p.prefix)
 }
@@ -103,9 +212,9 @@ pub const PAYMENT_ID_SIZE: usize = 8;
 /// Address data sizes (without prefix), indexed by address type.
 pub fn address_data_size(addr_type: AddressType) -> usize {
     match addr_type {
-        AddressType::Standard   => KEY_SIZE * 2,                     // 64 bytes
-        AddressType::Integrated => KEY_SIZE * 2 + PAYMENT_ID_SIZE,   // 72 bytes
-        AddressType::Subaddress => KEY_SIZE * 2,                     // 64 bytes
+        AddressType::Standard => KEY_SIZE * 2, // 64 bytes
+        AddressType::Integrated => KEY_SIZE * 2 + PAYMENT_ID_SIZE, // 72 bytes
+        AddressType::Subaddress => KEY_SIZE * 2, // 64 bytes
     }
 }
 
@@ -119,15 +228,15 @@ pub fn address_data_size(addr_type: AddressType) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum TxType {
-    Unset    = 0,
-    Miner    = 1,
+    Unset = 0,
+    Miner = 1,
     Protocol = 2,
     Transfer = 3,
-    Convert  = 4,
-    Burn     = 5,
-    Stake    = 6,
-    Return   = 7,
-    Audit    = 8,
+    Convert = 4,
+    Burn = 5,
+    Stake = 6,
+    Return = 7,
+    Audit = 8,
 }
 
 impl TxType {
@@ -150,15 +259,15 @@ impl TxType {
 impl std::fmt::Display for TxType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unset    => write!(f, "UNSET"),
-            Self::Miner    => write!(f, "MINER"),
+            Self::Unset => write!(f, "UNSET"),
+            Self::Miner => write!(f, "MINER"),
             Self::Protocol => write!(f, "PROTOCOL"),
             Self::Transfer => write!(f, "TRANSFER"),
-            Self::Convert  => write!(f, "CONVERT"),
-            Self::Burn     => write!(f, "BURN"),
-            Self::Stake    => write!(f, "STAKE"),
-            Self::Return   => write!(f, "RETURN"),
-            Self::Audit    => write!(f, "AUDIT"),
+            Self::Convert => write!(f, "CONVERT"),
+            Self::Burn => write!(f, "BURN"),
+            Self::Stake => write!(f, "STAKE"),
+            Self::Return => write!(f, "RETURN"),
+            Self::Audit => write!(f, "AUDIT"),
         }
     }
 }
@@ -173,16 +282,16 @@ impl std::fmt::Display for TxType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RctType {
-    Null             = 0,
-    Full             = 1,
-    Simple           = 2,
-    Bulletproof      = 3,
-    Bulletproof2     = 4,
-    Clsag            = 5,
-    BulletproofPlus  = 6,
-    FullProofs       = 7,
-    SalviumZero      = 8,
-    SalviumOne       = 9,
+    Null = 0,
+    Full = 1,
+    Simple = 2,
+    Bulletproof = 3,
+    Bulletproof2 = 4,
+    Clsag = 5,
+    BulletproofPlus = 6,
+    FullProofs = 7,
+    SalviumZero = 8,
+    SalviumOne = 9,
 }
 
 impl RctType {
@@ -281,7 +390,7 @@ impl AssetType {
     /// The 4-byte tag written into transactions.
     pub fn tag(&self) -> &'static [u8] {
         match self {
-            Self::Sal  => b"SAL\0",
+            Self::Sal => b"SAL\0",
             Self::Sal1 => b"SAL1",
         }
     }
@@ -289,7 +398,7 @@ impl AssetType {
     /// Parse from string representation.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "SAL"  => Some(Self::Sal),
+            "SAL" => Some(Self::Sal),
             "SAL1" => Some(Self::Sal1),
             _ => None,
         }
@@ -306,7 +415,7 @@ impl AssetType {
 impl std::fmt::Display for AssetType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Sal  => write!(f, "SAL"),
+            Self::Sal => write!(f, "SAL"),
             Self::Sal1 => write!(f, "SAL1"),
         }
     }
@@ -442,8 +551,8 @@ pub static STAGENET_CONFIG: NetworkConfig = NetworkConfig {
 /// Get the network configuration for a given network.
 pub fn network_config(network: Network) -> &'static NetworkConfig {
     match network {
-        Network::Mainnet  => &MAINNET_CONFIG,
-        Network::Testnet  => &TESTNET_CONFIG,
+        Network::Mainnet => &MAINNET_CONFIG,
+        Network::Testnet => &TESTNET_CONFIG,
         Network::Stagenet => &STAGENET_CONFIG,
     }
 }
@@ -535,7 +644,11 @@ mod tests {
     #[test]
     fn test_get_prefix() {
         assert_eq!(
-            get_prefix(Network::Testnet, AddressFormat::Carrot, AddressType::Standard),
+            get_prefix(
+                Network::Testnet,
+                AddressFormat::Carrot,
+                AddressType::Standard
+            ),
             Some(0x254c96)
         );
     }

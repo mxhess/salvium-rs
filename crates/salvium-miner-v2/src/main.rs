@@ -7,7 +7,7 @@ mod ffi;
 
 use engine::{RandomXV2Engine, SharedDataset};
 use salvium_miner::daemon::DaemonClient;
-use salvium_miner::miner::{MiningJob, parse_difficulty};
+use salvium_miner::miner::{parse_difficulty, MiningJob};
 use salvium_miner::mining::MiningLoop;
 
 #[derive(Parser)]
@@ -74,11 +74,18 @@ fn main() {
         let mut result = None;
         for attempt in 1..=5 {
             match client.get_info() {
-                Ok(i) => { result = Some(i); break; }
+                Ok(i) => {
+                    result = Some(i);
+                    break;
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        log::warn!("cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
+                        log::warn!(
+                            "cannot connect to daemon (attempt {}/5): {}",
+                            attempt,
+                            last_err
+                        );
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -93,7 +100,10 @@ fn main() {
         }
     };
 
-    eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
+    eprintln!(
+        "Daemon height: {}, difficulty: {}",
+        info.height, info.difficulty
+    );
 
     // Get initial block template
     let template = {
@@ -101,11 +111,18 @@ fn main() {
         let mut tmpl = None;
         for attempt in 1..=5 {
             match client.get_block_template(&args.wallet, 8) {
-                Ok(t) => { tmpl = Some(t); break; }
+                Ok(t) => {
+                    tmpl = Some(t);
+                    break;
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        log::warn!("failed to get block template (attempt {}/5): {}", attempt, last_err);
+                        log::warn!(
+                            "failed to get block template (attempt {}/5): {}",
+                            attempt,
+                            last_err
+                        );
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -114,18 +131,21 @@ fn main() {
         match tmpl {
             Some(t) => t,
             None => {
-                log::error!("failed to get block template after 5 attempts: {}", last_err);
+                log::error!(
+                    "failed to get block template after 5 attempts: {}",
+                    last_err
+                );
                 std::process::exit(1);
             }
         }
     };
 
-    let difficulty = parse_difficulty(
-        template.difficulty,
-        template.wide_difficulty.as_deref(),
-    );
+    let difficulty = parse_difficulty(template.difficulty, template.wide_difficulty.as_deref());
 
-    eprintln!("Template: height={}, difficulty={}", template.height, difficulty);
+    eprintln!(
+        "Template: height={}, difficulty={}",
+        template.height, difficulty
+    );
 
     let seed_bytes = hex::decode(&template.seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
@@ -199,10 +219,15 @@ fn main() {
             block_found = true;
 
             let mut drained = 0;
-            while mining_loop.try_recv_block().is_some() { drained += 1; }
+            while mining_loop.try_recv_block().is_some() {
+                drained += 1;
+            }
 
             eprintln!();
-            eprintln!("*** BLOCK FOUND at height {}! nonce={} ***", current_height, block.nonce);
+            eprintln!(
+                "*** BLOCK FOUND at height {}! nonce={} ***",
+                current_height, block.nonce
+            );
 
             match client.submit_block(&block.blob_hex) {
                 Ok(()) => {
@@ -220,10 +245,7 @@ fn main() {
             while mining_loop.try_recv_block().is_some() {}
 
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff = parse_difficulty(
-                    tmpl.difficulty,
-                    tmpl.wide_difficulty.as_deref(),
-                );
+                let new_diff = parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
 
                 if tmpl.seed_hash != current_seed {
                     log::warn!("seed hash changed — need to restart with new dataset");
@@ -257,10 +279,7 @@ fn main() {
         // Refresh template every 5 seconds
         if !block_found && last_template_fetch.elapsed() > Duration::from_secs(5) {
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff = parse_difficulty(
-                    tmpl.difficulty,
-                    tmpl.wide_difficulty.as_deref(),
-                );
+                let new_diff = parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
 
                 if tmpl.seed_hash != current_seed {
                     log::warn!("seed hash changed — need to restart with new dataset");
@@ -268,7 +287,10 @@ fn main() {
                     break;
                 }
 
-                if tmpl.prev_hash != current_prev_hash || tmpl.height != current_height || new_diff != current_difficulty {
+                if tmpl.prev_hash != current_prev_hash
+                    || tmpl.height != current_height
+                    || new_diff != current_difficulty
+                {
                     current_height = tmpl.height;
                     current_difficulty = new_diff;
                     current_prev_hash = tmpl.prev_hash.clone();
@@ -316,8 +338,11 @@ fn main() {
                 eprintln!("Threads:  {}", args.threads);
                 eprintln!("Duration: {:.1}s", elapsed);
                 eprintln!("Hashes:   {}", total);
-                eprintln!("Hashrate: {} ({:.1} H/s per thread)",
-                    format_hashrate(hr), hr / args.threads as f64);
+                eprintln!(
+                    "Hashrate: {} ({:.1} H/s per thread)",
+                    format_hashrate(hr),
+                    hr / args.threads as f64
+                );
                 mining_loop.stop();
                 break;
             }
@@ -343,7 +368,10 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 
     #[cfg(unix)]
     unsafe {
-        libc::signal(libc::SIGINT, handle_sigint as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            handle_sigint as *const () as libc::sighandler_t,
+        );
         RUNNING_FLAG.store(running.as_ref() as *const _ as usize, Ordering::SeqCst);
     }
 }

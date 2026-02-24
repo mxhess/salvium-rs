@@ -629,9 +629,7 @@ impl WalletRpc {
 
     /// Save the wallet to disk.
     pub async fn store(&self) -> Result<(), RpcError> {
-        self.client
-            .call("store", serde_json::json!({}))
-            .await?;
+        self.client.call("store", serde_json::json!({})).await?;
         Ok(())
     }
 
@@ -711,7 +709,9 @@ impl WalletRpc {
             .await?;
         val.get("height")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult { context: "wallet get_height".into() })
+            .ok_or(RpcError::NoResult {
+                context: "wallet get_height".into(),
+            })
     }
 
     /// Get the index of a subaddress given its address string.
@@ -756,20 +756,13 @@ impl WalletRpc {
     pub async fn create_account(&self, label: &str) -> Result<CreateAccountResult, RpcError> {
         let val = self
             .client
-            .call(
-                "create_account",
-                serde_json::json!({ "label": label }),
-            )
+            .call("create_account", serde_json::json!({ "label": label }))
             .await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Set a label for an account.
-    pub async fn label_account(
-        &self,
-        account_index: u32,
-        label: &str,
-    ) -> Result<(), RpcError> {
+    pub async fn label_account(&self, account_index: u32, label: &str) -> Result<(), RpcError> {
         self.client
             .call(
                 "label_account",
@@ -877,7 +870,9 @@ impl WalletRpc {
             .await?;
         val.get("index")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult { context: "add_address_book(index)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "add_address_book(index)".into(),
+            })
     }
 
     /// Edit an address book entry.
@@ -908,10 +903,7 @@ impl WalletRpc {
     /// Delete an address book entry by index.
     pub async fn delete_address_book(&self, index: u64) -> Result<(), RpcError> {
         self.client
-            .call(
-                "delete_address_book",
-                serde_json::json!({ "index": index }),
-            )
+            .call("delete_address_book", serde_json::json!({ "index": index }))
             .await?;
         Ok(())
     }
@@ -995,10 +987,7 @@ impl WalletRpc {
     pub async fn sweep_dust(&self) -> Result<TransferSplitResult, RpcError> {
         let val = self
             .client
-            .call(
-                "sweep_dust",
-                serde_json::json!({ "get_tx_keys": true }),
-            )
+            .call("sweep_dust", serde_json::json!({ "get_tx_keys": true }))
             .await?;
         Ok(serde_json::from_value(val)?)
     }
@@ -1036,7 +1025,9 @@ impl WalletRpc {
         val.get("tx_hash")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "relay_tx(tx_hash)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "relay_tx(tx_hash)".into(),
+            })
     }
 
     /// Sign an unsigned transaction set (for cold-signing workflow).
@@ -1194,12 +1185,11 @@ impl WalletRpc {
     pub async fn get_transfer_by_txid(&self, txid: &str) -> Result<TransferEntry, RpcError> {
         let val = self
             .client
-            .call(
-                "get_transfer_by_txid",
-                serde_json::json!({ "txid": txid }),
-            )
+            .call("get_transfer_by_txid", serde_json::json!({ "txid": txid }))
             .await?;
-        let transfer = val.get("transfer").ok_or(RpcError::NoResult { context: "get_transfer_by_txid".into() })?;
+        let transfer = val.get("transfer").ok_or(RpcError::NoResult {
+            context: "get_transfer_by_txid".into(),
+        })?;
         Ok(serde_json::from_value(transfer.clone())?)
     }
 
@@ -1234,55 +1224,49 @@ impl WalletRpc {
     pub async fn get_mnemonic(&self) -> Result<String, RpcError> {
         let val = self
             .client
-            .call(
-                "query_key",
-                serde_json::json!({ "key_type": "mnemonic" }),
-            )
+            .call("query_key", serde_json::json!({ "key_type": "mnemonic" }))
             .await?;
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_mnemonic(key)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_mnemonic(key)".into(),
+            })
     }
 
     /// Get the view key.
     pub async fn get_view_key(&self) -> Result<String, RpcError> {
         let val = self
             .client
-            .call(
-                "query_key",
-                serde_json::json!({ "key_type": "view_key" }),
-            )
+            .call("query_key", serde_json::json!({ "key_type": "view_key" }))
             .await?;
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_view_key(key)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_view_key(key)".into(),
+            })
     }
 
     /// Get the spend key.
     pub async fn get_spend_key(&self) -> Result<String, RpcError> {
         let val = self
             .client
-            .call(
-                "query_key",
-                serde_json::json!({ "key_type": "spend_key" }),
-            )
+            .call("query_key", serde_json::json!({ "key_type": "spend_key" }))
             .await?;
         val.get("key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_spend_key(key)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_spend_key(key)".into(),
+            })
     }
 
     /// Export key images.
     pub async fn export_key_images(&self) -> Result<Vec<KeyImageEntry>, RpcError> {
         let val = self
             .client
-            .call(
-                "export_key_images",
-                serde_json::json!({ "all": true }),
-            )
+            .call("export_key_images", serde_json::json!({ "all": true }))
             .await?;
         let images = val
             .get("signed_key_images")
@@ -1314,15 +1298,14 @@ impl WalletRpc {
     pub async fn export_outputs(&self, all: bool) -> Result<String, RpcError> {
         let val = self
             .client
-            .call(
-                "export_outputs",
-                serde_json::json!({ "all": all }),
-            )
+            .call("export_outputs", serde_json::json!({ "all": all }))
             .await?;
         val.get("outputs_data_hex")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "export_outputs(outputs_data_hex)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "export_outputs(outputs_data_hex)".into(),
+            })
     }
 
     /// Import outputs from hex data.
@@ -1336,7 +1319,9 @@ impl WalletRpc {
             .await?;
         val.get("num_imported")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult { context: "import_outputs(num_imported)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "import_outputs(num_imported)".into(),
+            })
     }
 
     // =========================================================================
@@ -1370,7 +1355,9 @@ impl WalletRpc {
         val.get("version")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
-            .ok_or(RpcError::NoResult { context: "get_version".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_version".into(),
+            })
     }
 
     /// Check if wallet is multisig.
@@ -1379,7 +1366,10 @@ impl WalletRpc {
             .client
             .call("is_multisig", serde_json::json!({}))
             .await?;
-        Ok(val.get("multisig").and_then(|v| v.as_bool()).unwrap_or(false))
+        Ok(val
+            .get("multisig")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
     }
 
     // =========================================================================
@@ -1395,7 +1385,9 @@ impl WalletRpc {
         val.get("signature")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "sign(signature)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "sign(signature)".into(),
+            })
     }
 
     /// Verify a signature.
@@ -1428,7 +1420,9 @@ impl WalletRpc {
         val.get("tx_key")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_tx_key(tx_key)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_tx_key(tx_key)".into(),
+            })
     }
 
     /// Check a TX key to verify a payment to an address.
@@ -1473,7 +1467,9 @@ impl WalletRpc {
         val.get("signature")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_tx_proof(signature)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_tx_proof(signature)".into(),
+            })
     }
 
     /// Check a transaction proof.
@@ -1500,11 +1496,7 @@ impl WalletRpc {
     }
 
     /// Get a spend proof for a transaction.
-    pub async fn get_spend_proof(
-        &self,
-        txid: &str,
-        message: &str,
-    ) -> Result<String, RpcError> {
+    pub async fn get_spend_proof(&self, txid: &str, message: &str) -> Result<String, RpcError> {
         let val = self
             .client
             .call(
@@ -1518,7 +1510,9 @@ impl WalletRpc {
         val.get("signature")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_spend_proof(signature)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_spend_proof(signature)".into(),
+            })
     }
 
     /// Verify a spend proof.
@@ -1565,7 +1559,9 @@ impl WalletRpc {
         val.get("signature")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_reserve_proof(signature)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_reserve_proof(signature)".into(),
+            })
     }
 
     /// Verify a reserve proof.
@@ -1594,11 +1590,7 @@ impl WalletRpc {
     // =========================================================================
 
     /// Set notes for transactions.
-    pub async fn set_tx_notes(
-        &self,
-        txids: &[&str],
-        notes: &[&str],
-    ) -> Result<(), RpcError> {
+    pub async fn set_tx_notes(&self, txids: &[&str], notes: &[&str]) -> Result<(), RpcError> {
         self.client
             .call(
                 "set_tx_notes",
@@ -1615,10 +1607,7 @@ impl WalletRpc {
     pub async fn get_tx_notes(&self, txids: &[&str]) -> Result<Vec<String>, RpcError> {
         let val = self
             .client
-            .call(
-                "get_tx_notes",
-                serde_json::json!({ "txids": txids }),
-            )
+            .call("get_tx_notes", serde_json::json!({ "txids": txids }))
             .await?;
         let notes = val
             .get("notes")
@@ -1649,15 +1638,14 @@ impl WalletRpc {
     pub async fn get_attribute(&self, key: &str) -> Result<String, RpcError> {
         let val = self
             .client
-            .call(
-                "get_attribute",
-                serde_json::json!({ "key": key }),
-            )
+            .call("get_attribute", serde_json::json!({ "key": key }))
             .await?;
         val.get("value")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "get_attribute(value)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "get_attribute(value)".into(),
+            })
     }
 
     // =========================================================================
@@ -1727,17 +1715,16 @@ impl WalletRpc {
         val.get("uri")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "make_uri(uri)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "make_uri(uri)".into(),
+            })
     }
 
     /// Parse a payment URI.
     pub async fn parse_uri(&self, uri: &str) -> Result<ParsedUri, RpcError> {
         let val = self
             .client
-            .call(
-                "parse_uri",
-                serde_json::json!({ "uri": uri }),
-            )
+            .call("parse_uri", serde_json::json!({ "uri": uri }))
             .await?;
         let uri_obj = val.get("uri").ok_or(RpcError::NoResult {
             context: "parse_uri(uri)".into(),
@@ -1788,21 +1775,22 @@ impl WalletRpc {
         val.get("info")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "export_multisig_info(info)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "export_multisig_info(info)".into(),
+            })
     }
 
     /// Import multisig info from other participants.
     pub async fn import_multisig_info(&self, info: &[&str]) -> Result<u64, RpcError> {
         let val = self
             .client
-            .call(
-                "import_multisig_info",
-                serde_json::json!({ "info": info }),
-            )
+            .call("import_multisig_info", serde_json::json!({ "info": info }))
             .await?;
         val.get("n_outputs")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult { context: "import_multisig_info(n_outputs)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "import_multisig_info(n_outputs)".into(),
+            })
     }
 
     /// Finalize a multisig wallet setup.
@@ -1824,7 +1812,9 @@ impl WalletRpc {
         val.get("address")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult { context: "finalize_multisig(address)".into() })
+            .ok_or(RpcError::NoResult {
+                context: "finalize_multisig(address)".into(),
+            })
     }
 
     /// Exchange multisig keys (for N-1/N and M/N multisig).
@@ -1847,10 +1837,7 @@ impl WalletRpc {
     }
 
     /// Sign a multisig transaction.
-    pub async fn sign_multisig(
-        &self,
-        tx_data_hex: &str,
-    ) -> Result<SignMultisigResult, RpcError> {
+    pub async fn sign_multisig(&self, tx_data_hex: &str) -> Result<SignMultisigResult, RpcError> {
         let val = self
             .client
             .call(
@@ -1882,11 +1869,7 @@ impl WalletRpc {
     // =========================================================================
 
     /// Enable or disable auto-refresh, with an optional period in seconds.
-    pub async fn auto_refresh(
-        &self,
-        enable: bool,
-        period: Option<u64>,
-    ) -> Result<(), RpcError> {
+    pub async fn auto_refresh(&self, enable: bool, period: Option<u64>) -> Result<(), RpcError> {
         let mut params = serde_json::json!({ "enable": enable });
         if let Some(p) = period {
             params["period"] = serde_json::json!(p);
@@ -1906,10 +1889,7 @@ impl WalletRpc {
     /// Scan specific transactions by their IDs.
     pub async fn scan_tx(&self, txids: &[&str]) -> Result<(), RpcError> {
         self.client
-            .call(
-                "scan_tx",
-                serde_json::json!({ "txids": txids }),
-            )
+            .call("scan_tx", serde_json::json!({ "txids": txids }))
             .await?;
         Ok(())
     }
@@ -1919,11 +1899,7 @@ impl WalletRpc {
     // =========================================================================
 
     /// Set the daemon the wallet should connect to.
-    pub async fn set_daemon(
-        &self,
-        address: &str,
-        trusted: bool,
-    ) -> Result<(), RpcError> {
+    pub async fn set_daemon(&self, address: &str, trusted: bool) -> Result<(), RpcError> {
         self.client
             .call(
                 "set_daemon",
@@ -1943,10 +1919,7 @@ impl WalletRpc {
     /// Freeze an output by key image, preventing it from being used in transactions.
     pub async fn freeze(&self, key_image: &str) -> Result<(), RpcError> {
         self.client
-            .call(
-                "freeze",
-                serde_json::json!({ "key_image": key_image }),
-            )
+            .call("freeze", serde_json::json!({ "key_image": key_image }))
             .await?;
         Ok(())
     }
@@ -1954,10 +1927,7 @@ impl WalletRpc {
     /// Thaw (unfreeze) a previously frozen output.
     pub async fn thaw(&self, key_image: &str) -> Result<(), RpcError> {
         self.client
-            .call(
-                "thaw",
-                serde_json::json!({ "key_image": key_image }),
-            )
+            .call("thaw", serde_json::json!({ "key_image": key_image }))
             .await?;
         Ok(())
     }
@@ -1966,10 +1936,7 @@ impl WalletRpc {
     pub async fn frozen(&self, key_image: &str) -> Result<bool, RpcError> {
         let val = self
             .client
-            .call(
-                "frozen",
-                serde_json::json!({ "key_image": key_image }),
-            )
+            .call("frozen", serde_json::json!({ "key_image": key_image }))
             .await?;
         Ok(val.get("frozen").and_then(|v| v.as_bool()).unwrap_or(false))
     }

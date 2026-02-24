@@ -134,9 +134,7 @@ impl TxOutput {
 
     pub fn key(&self) -> &[u8; 32] {
         match self {
-            Self::Key { key, .. }
-            | Self::TaggedKey { key, .. }
-            | Self::CarrotV1 { key, .. } => key,
+            Self::Key { key, .. } | Self::TaggedKey { key, .. } | Self::CarrotV1 { key, .. } => key,
         }
     }
 
@@ -229,7 +227,9 @@ impl Transaction {
 
     /// Parse from the JSON structure returned by salvium-crypto's tx_parse.
     pub fn from_json(json: &Value) -> Result<Self, TxError> {
-        let prefix_json = json.get("prefix").ok_or(TxError::Parse("missing prefix".into()))?;
+        let prefix_json = json
+            .get("prefix")
+            .ok_or(TxError::Parse("missing prefix".into()))?;
         let prefix = TxPrefix::from_json(prefix_json)?;
 
         let rct = json.get("rct").and_then(|v| {
@@ -256,7 +256,8 @@ impl Transaction {
     /// Serialize to binary bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, TxError> {
         let json = self.to_json();
-        let json_str = serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
         let bytes = salvium_crypto::serialize_transaction_json(&json_str);
         if bytes.is_empty() {
             return Err(TxError::Serialize("serialization returned empty".into()));
@@ -273,7 +274,8 @@ impl Transaction {
     /// Compute the prefix hash.
     pub fn prefix_hash(&self) -> Result<[u8; 32], TxError> {
         let json = self.prefix.to_json();
-        let json_str = serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
         let prefix_bytes = salvium_crypto::tx_serialize::serialize_tx_prefix(&json_str)
             .map_err(TxError::Serialize)?;
         Ok(to_32(&salvium_crypto::keccak256(&prefix_bytes)))
@@ -304,19 +306,31 @@ impl TxPrefix {
         let inputs = v
             .get("vin")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|i| TxInput::from_json(i).ok()).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|i| TxInput::from_json(i).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let outputs = v
             .get("vout")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|o| TxOutput::from_json(o).ok()).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|o| TxOutput::from_json(o).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let extra = v
             .get("extra")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_u64().map(|n| n as u8))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let amount_burnt = parse_amount_str(v.get("amount_burnt"));
@@ -340,14 +354,14 @@ impl TxPrefix {
             .get("return_pubkey")
             .and_then(|s| s.as_str())
             .and_then(hex_to_32);
-        let return_address_list = v
-            .get("return_address_list")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s.as_str().and_then(|h| hex::decode(h).ok()))
-                    .collect()
-            });
+        let return_address_list =
+            v.get("return_address_list")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.as_str().and_then(|h| hex::decode(h).ok()))
+                        .collect()
+                });
         let return_address_change_mask = v
             .get("return_address_change_mask")
             .and_then(|s| s.as_str())
@@ -358,16 +372,26 @@ impl TxPrefix {
                 return None;
             }
             let ver = ptd.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
-            let ra = ptd.get("return_address").and_then(|s| s.as_str()).and_then(hex_to_32)?;
-            let rp = ptd.get("return_pubkey").and_then(|s| s.as_str()).and_then(hex_to_32)?;
+            let ra = ptd
+                .get("return_address")
+                .and_then(|s| s.as_str())
+                .and_then(hex_to_32)?;
+            let rp = ptd
+                .get("return_pubkey")
+                .and_then(|s| s.as_str())
+                .and_then(hex_to_32)?;
             let vt_hex = ptd.get("return_view_tag").and_then(|s| s.as_str())?;
             let vt_bytes = hex::decode(vt_hex).ok()?;
-            if vt_bytes.len() < 3 { return None; }
+            if vt_bytes.len() < 3 {
+                return None;
+            }
             let mut vt = [0u8; 3];
             vt.copy_from_slice(&vt_bytes[..3]);
             let ae_hex = ptd.get("return_anchor_enc").and_then(|s| s.as_str())?;
             let ae_bytes = hex::decode(ae_hex).ok()?;
-            if ae_bytes.len() < 16 { return None; }
+            if ae_bytes.len() < 16 {
+                return None;
+            }
             let mut ae = [0u8; 16];
             ae.copy_from_slice(&ae_bytes[..16]);
             Some(ProtocolTxData {
@@ -661,29 +685,38 @@ impl RctSignatures {
 
         let out_pk = parse_hex_array_32(v.get("outPk"));
         let pseudo_outs = parse_hex_array_32(v.get("pseudoOuts"));
-        let p_r = v
-            .get("p_r")
-            .and_then(|s| s.as_str())
-            .and_then(hex_to_32);
+        let p_r = v.get("p_r").and_then(|s| s.as_str()).and_then(hex_to_32);
 
         let salvium_data = v.get("salvium_data").cloned();
 
         let bulletproof_plus = v
             .get("bulletproofPlus")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|p| BpPlusData::from_json(p).ok()).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|p| BpPlusData::from_json(p).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let clsags = v
             .get("CLSAGs")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|s| ClsagData::from_json(s).ok()).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| ClsagData::from_json(s).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         let tclsags = v
             .get("TCLSAGs")
             .and_then(|a| a.as_array())
-            .map(|arr| arr.iter().filter_map(|s| TclsagData::from_json(s).ok()).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| TclsagData::from_json(s).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         Ok(Self {
@@ -706,7 +739,11 @@ impl RctSignatures {
             .iter()
             .map(|e| serde_json::json!({ "amount": hex::encode(e.amount) }))
             .collect();
-        let out_pk: Vec<Value> = self.out_pk.iter().map(|p| Value::String(hex::encode(p))).collect();
+        let out_pk: Vec<Value> = self
+            .out_pk
+            .iter()
+            .map(|p| Value::String(hex::encode(p)))
+            .collect();
         let pseudo: Vec<Value> = self
             .pseudo_outs
             .iter()
@@ -759,7 +796,11 @@ impl ClsagData {
     }
 
     pub fn to_json(&self) -> Value {
-        let s: Vec<Value> = self.s.iter().map(|x| Value::String(hex::encode(x))).collect();
+        let s: Vec<Value> = self
+            .s
+            .iter()
+            .map(|x| Value::String(hex::encode(x)))
+            .collect();
         serde_json::json!({
             "s": s,
             "c1": hex::encode(self.c1),
@@ -786,8 +827,16 @@ impl TclsagData {
     }
 
     pub fn to_json(&self) -> Value {
-        let sx: Vec<Value> = self.sx.iter().map(|x| Value::String(hex::encode(x))).collect();
-        let sy: Vec<Value> = self.sy.iter().map(|x| Value::String(hex::encode(x))).collect();
+        let sx: Vec<Value> = self
+            .sx
+            .iter()
+            .map(|x| Value::String(hex::encode(x)))
+            .collect();
+        let sy: Vec<Value> = self
+            .sy
+            .iter()
+            .map(|x| Value::String(hex::encode(x)))
+            .collect();
         serde_json::json!({
             "sx": sx,
             "sy": sy,
@@ -819,8 +868,16 @@ impl BpPlusData {
     }
 
     pub fn to_json(&self) -> Value {
-        let l: Vec<Value> = self.l_vec.iter().map(|x| Value::String(hex::encode(x))).collect();
-        let r: Vec<Value> = self.r_vec.iter().map(|x| Value::String(hex::encode(x))).collect();
+        let l: Vec<Value> = self
+            .l_vec
+            .iter()
+            .map(|x| Value::String(hex::encode(x)))
+            .collect();
+        let r: Vec<Value> = self
+            .r_vec
+            .iter()
+            .map(|x| Value::String(hex::encode(x)))
+            .collect();
         serde_json::json!({
             "A": hex::encode(self.a),
             "A1": hex::encode(self.a1),

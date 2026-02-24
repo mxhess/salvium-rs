@@ -52,17 +52,16 @@ fn run_full_kex(threshold: usize, signer_count: usize) -> Vec<MultisigAccount> {
         acct.set_signer_index(i);
     }
 
-    // Initialize KEX and collect round-1 messages, patching signer_index
-    let mut round1_msgs: Vec<KexMessage> = Vec::new();
-    for (i, acct) in accounts.iter_mut().enumerate() {
-        let mut msg = acct.initialize_kex(&keys[i].0, &keys[i].1).unwrap();
-        msg.signer_index = i; // patch: initialize_kex hardcodes 0
-        round1_msgs.push(msg);
-    }
+    // Initialize KEX and collect round-1 messages
+    let round1_msgs: Vec<KexMessage> = accounts
+        .iter_mut()
+        .enumerate()
+        .map(|(i, acct)| acct.initialize_kex(&keys[i].0, &keys[i].1).unwrap())
+        .collect();
 
     // Register signers on all accounts
     for acct in accounts.iter_mut() {
-        acct.register_signers(&round1_msgs);
+        acct.register_signers(&round1_msgs).unwrap();
     }
 
     // Process round 1
@@ -74,8 +73,7 @@ fn run_full_kex(threshold: usize, signer_count: usize) -> Vec<MultisigAccount> {
 
     // If there are more rounds, keep going
     if next_msgs[0].is_some() {
-        let mut current_msgs: Vec<KexMessage> =
-            next_msgs.into_iter().map(|m| m.unwrap()).collect();
+        let mut current_msgs: Vec<KexMessage> = next_msgs.into_iter().map(|m| m.unwrap()).collect();
 
         loop {
             let mut next = Vec::new();
@@ -90,16 +88,6 @@ fn run_full_kex(threshold: usize, signer_count: usize) -> Vec<MultisigAccount> {
             }
             current_msgs = next.into_iter().map(|m| m.unwrap()).collect();
         }
-    } else {
-        // N-of-N: round1 returned None → we got verification messages
-        // Process the verification round
-        // Actually, for N-of-N, process_kex_round on round1_msgs returns
-        // Some(verify_msg) since it goes straight to finalize + verification.
-        // Let's check if the accounts got verify messages from next_msgs.
-        // Actually re-reading the code: when main_rounds == 1 (N-of-N),
-        // process_round1 returns None → the account calls finalize() and
-        // returns Some(verification_message). So next_msgs has Some(verify).
-        // We shouldn't hit this branch. But just in case:
     }
 
     // Verify all accounts completed KEX
@@ -218,8 +206,6 @@ fn test_kex_3_of_5_completes() {
 
 #[test]
 fn test_kex_2_of_8_completes() {
-    // 2-of-8: 7 main rounds — validates multi-round KEX at scale.
-    // (2-of-16 is correct but too slow in debug mode.)
     let accounts = run_full_kex(2, 8);
     let pks: Vec<_> = accounts
         .iter()
@@ -232,13 +218,11 @@ fn test_kex_2_of_8_completes() {
 fn test_kex_different_keys_different_aggregates() {
     let a = run_full_kex(2, 2);
     let b = run_full_kex(2, 2);
-    // Random keys → different aggregate pubkeys (with overwhelming probability)
     assert_ne!(a[0].multisig_pubkey, b[0].multisig_pubkey);
 }
 
 #[test]
 fn test_kex_deterministic_with_same_keys() {
-    // Two runs with the same keys should produce the same aggregate.
     let spend0 = "11".repeat(32);
     let view0 = "22".repeat(32);
     let spend1 = "33".repeat(32);
@@ -252,14 +236,12 @@ fn test_kex_deterministic_with_same_keys() {
         accounts[0].set_signer_index(0);
         accounts[1].set_signer_index(1);
 
-        let mut msg0 = accounts[0].initialize_kex(&spend0, &view0).unwrap();
-        msg0.signer_index = 0;
-        let mut msg1 = accounts[1].initialize_kex(&spend1, &view1).unwrap();
-        msg1.signer_index = 1;
+        let msg0 = accounts[0].initialize_kex(&spend0, &view0).unwrap();
+        let msg1 = accounts[1].initialize_kex(&spend1, &view1).unwrap();
 
         let msgs = vec![msg0, msg1];
         for a in accounts.iter_mut() {
-            a.register_signers(&msgs);
+            a.register_signers(&msgs).unwrap();
         }
 
         let mut round_msgs: Vec<KexMessage> = Vec::new();
@@ -302,7 +284,7 @@ fn test_kex_signer_registration() {
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
     ];
-    acct.register_signers(&msgs);
+    acct.register_signers(&msgs).unwrap();
     assert_eq!(acct.signers.len(), 3);
     assert_eq!(acct.signers[0].index, 0);
     assert_eq!(acct.signers[1].public_spend_key, "cc".repeat(32));
@@ -385,7 +367,6 @@ fn test_kex_round1_wrong_message_count() {
     acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
         .unwrap();
 
-    // Only provide 2 messages for a 3-signer group
     let msgs = vec![
         KexMessage {
             round: 1,
@@ -400,7 +381,7 @@ fn test_kex_round1_wrong_message_count() {
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
     ];
-    acct.register_signers(&msgs);
+    acct.register_signers(&msgs).unwrap();
     let result = acct.process_kex_round(&msgs);
     assert!(result.is_err());
 }
@@ -413,7 +394,7 @@ fn test_kex_round1_wrong_round_number() {
 
     let msgs = vec![
         KexMessage {
-            round: 2, // wrong
+            round: 2,
             signer_index: 0,
             keys: vec!["aa".repeat(32), "bb".repeat(32)],
             msg_type: salvium_multisig::constants::MultisigMsgType::KexRound,
@@ -425,7 +406,7 @@ fn test_kex_round1_wrong_round_number() {
             msg_type: salvium_multisig::constants::MultisigMsgType::KexRound,
         },
     ];
-    acct.register_signers(&msgs);
+    acct.register_signers(&msgs).unwrap();
     let result = acct.process_kex_round(&msgs);
     assert!(result.is_err());
 }
@@ -440,7 +421,7 @@ fn test_kex_round1_too_few_keys() {
         KexMessage {
             round: 1,
             signer_index: 0,
-            keys: vec!["aa".repeat(32)], // only 1 key, need 2
+            keys: vec!["aa".repeat(32)],
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
         KexMessage {
@@ -450,8 +431,8 @@ fn test_kex_round1_too_few_keys() {
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
     ];
-    acct.register_signers(&msgs);
-    let result = acct.process_kex_round(&msgs);
+    // register_signers will fail due to missing view key on signer 0
+    let result = acct.register_signers(&msgs);
     assert!(result.is_err());
 }
 
@@ -475,14 +456,14 @@ fn test_kex_round1_invalid_hex_key() {
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
     ];
-    acct.register_signers(&msgs);
+    // register_signers will accept these (it doesn't validate hex format, just non-empty)
+    acct.register_signers(&msgs).unwrap();
     let result = acct.process_kex_round(&msgs);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_kex_verification_corrupted_hash() {
-    // Run a 2-of-2 KEX up to the verification stage, then corrupt one message.
     let spend0 = "11".repeat(32);
     let view0 = "22".repeat(32);
     let spend1 = "33".repeat(32);
@@ -495,14 +476,12 @@ fn test_kex_verification_corrupted_hash() {
     accounts[0].set_signer_index(0);
     accounts[1].set_signer_index(1);
 
-    let mut msg0 = accounts[0].initialize_kex(&spend0, &view0).unwrap();
-    msg0.signer_index = 0;
-    let mut msg1 = accounts[1].initialize_kex(&spend1, &view1).unwrap();
-    msg1.signer_index = 1;
+    let msg0 = accounts[0].initialize_kex(&spend0, &view0).unwrap();
+    let msg1 = accounts[1].initialize_kex(&spend1, &view1).unwrap();
 
     let msgs = vec![msg0, msg1];
     for a in accounts.iter_mut() {
-        a.register_signers(&msgs);
+        a.register_signers(&msgs).unwrap();
     }
 
     let mut verify_msgs = Vec::new();
@@ -520,7 +499,6 @@ fn test_kex_verification_corrupted_hash() {
 
 #[test]
 fn test_kex_duplicate_signer_indices() {
-    // Duplicate signer_index values shouldn't cause a panic.
     let mut acct = MultisigAccount::new(2, 2).unwrap();
     acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
         .unwrap();
@@ -534,14 +512,36 @@ fn test_kex_duplicate_signer_indices() {
         },
         KexMessage {
             round: 1,
-            signer_index: 0, // duplicate
+            signer_index: 0,
             keys: vec!["cc".repeat(32), "dd".repeat(32)],
             msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
         },
     ];
-    acct.register_signers(&msgs);
+    acct.register_signers(&msgs).unwrap();
     // Should not panic; may or may not return an error
     let _ = acct.process_kex_round(&msgs);
+}
+
+#[test]
+fn test_register_signers_rejects_empty_keys() {
+    let mut acct = MultisigAccount::new(2, 2).unwrap();
+    let msgs = vec![
+        KexMessage {
+            round: 1,
+            signer_index: 0,
+            keys: vec!["aa".repeat(32), "".to_string()],
+            msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
+        },
+        KexMessage {
+            round: 1,
+            signer_index: 1,
+            keys: vec!["cc".repeat(32), "dd".repeat(32)],
+            msg_type: salvium_multisig::constants::MultisigMsgType::KexInit,
+        },
+    ];
+    let result = acct.register_signers(&msgs);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("empty"));
 }
 
 // ===========================================================================
@@ -551,7 +551,7 @@ fn test_kex_duplicate_signer_indices() {
 #[test]
 fn test_nonces_structure() {
     let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
-    let nonces = generate_nonces(0, &key_image);
+    let nonces = generate_nonces(0, &key_image).unwrap();
     assert_eq!(nonces.secret_nonces.len(), 2);
     assert_eq!(nonces.pub_nonces_g.len(), 2);
     assert_eq!(nonces.pub_nonces_hp.len(), 2);
@@ -560,8 +560,8 @@ fn test_nonces_structure() {
 #[test]
 fn test_nonces_are_unique() {
     let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
-    let n1 = generate_nonces(0, &key_image);
-    let n2 = generate_nonces(0, &key_image);
+    let n1 = generate_nonces(0, &key_image).unwrap();
+    let n2 = generate_nonces(0, &key_image).unwrap();
     assert_ne!(n1.secret_nonces[0], n2.secret_nonces[0]);
     assert_ne!(n1.pub_nonces_g[0], n2.pub_nonces_g[0]);
 }
@@ -570,7 +570,7 @@ fn test_nonces_are_unique() {
 fn test_nonces_ext_tclsag() {
     let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
     let key_image_y = hex::encode(salvium_crypto::scalar_mult_base(&[2u8; 32]));
-    let nonces = generate_nonces_ext(0, &key_image, Some(&key_image_y));
+    let nonces = generate_nonces_ext(0, &key_image, Some(&key_image_y)).unwrap();
     assert_eq!(nonces.secret_nonces_y.len(), 2);
     assert_eq!(nonces.pub_nonces_g_y.len(), 2);
     assert_eq!(nonces.pub_nonces_hp_y.len(), 2);
@@ -579,10 +579,11 @@ fn test_nonces_ext_tclsag() {
 #[test]
 fn test_partial_sign_valid_scalars() {
     let ctx = make_signing_context(2);
-    let nonces = generate_nonces(0, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let (privkey_hex, _) = generate_random_scalar();
 
-    let partial = partial_sign(&ctx, &nonces, &privkey_hex, &[nonces.clone()]);
+    let partial = partial_sign(&ctx, &nonces0, &privkey_hex, &[nonces0.clone(), nonces1]).unwrap();
     assert_eq!(partial.s_partial.len(), 64);
     assert_eq!(partial.c_0.len(), 64);
     hex::decode(&partial.s_partial).unwrap();
@@ -594,14 +595,13 @@ fn test_partial_sign_deterministic() {
     let ctx = make_signing_context(2);
     let key_image = &ctx.key_image;
 
-    // Use fixed nonces (same secret scalars)
-    let nonces = generate_nonces(0, key_image);
+    let nonces0 = generate_nonces(0, key_image).unwrap();
+    let nonces1 = generate_nonces(1, key_image).unwrap();
     let privkey = "11".repeat(32);
+    let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx, &nonces, &privkey, &[nonces.clone()]);
-
-    // Sign again with the exact same nonces
-    let p2 = partial_sign(&ctx, &nonces, &privkey, &[nonces.clone()]);
+    let p1 = partial_sign(&ctx, &nonces0, &privkey, &all).unwrap();
+    let p2 = partial_sign(&ctx, &nonces0, &privkey, &all).unwrap();
     assert_eq!(p1.s_partial, p2.s_partial);
     assert_eq!(p1.c_0, p2.c_0);
 }
@@ -609,32 +609,32 @@ fn test_partial_sign_deterministic() {
 #[test]
 fn test_two_signers_different_partials() {
     let ctx = make_signing_context(2);
-    let nonces0 = generate_nonces(0, &ctx.key_image);
-    let nonces1 = generate_nonces(1, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all);
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all);
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
     assert_ne!(p0.s_partial, p1.s_partial);
 }
 
 #[test]
 fn test_combine_two_partials() {
     let ctx = make_signing_context(2);
-    let nonces0 = generate_nonces(0, &ctx.key_image);
-    let nonces1 = generate_nonces(1, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all);
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all);
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
 
-    let (s, c) = combine_partial_signatures(&[p0, p1]);
+    let (s, c) = combine_partial_signatures(&[p0, p1]).unwrap();
     assert_eq!(s.len(), 64);
     assert_eq!(c.len(), 64);
     let s_bytes = hex::decode(&s).unwrap();
@@ -645,16 +645,16 @@ fn test_combine_two_partials() {
 fn test_combine_three_partials() {
     let ctx = make_signing_context(2);
     let nonces: Vec<SignerNonces> = (0..3)
-        .map(|i| generate_nonces(i, &ctx.key_image))
+        .map(|i| generate_nonces(i, &ctx.key_image).unwrap())
         .collect();
 
     let keys: Vec<String> = (0..3).map(|_| generate_random_scalar().0).collect();
 
     let partials: Vec<_> = (0..3)
-        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces))
+        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces).unwrap())
         .collect();
 
-    let (s, _c) = combine_partial_signatures(&partials);
+    let (s, _c) = combine_partial_signatures(&partials).unwrap();
     let s_bytes = hex::decode(&s).unwrap();
     assert_ne!(s_bytes, vec![0u8; 32]);
 }
@@ -662,17 +662,17 @@ fn test_combine_three_partials() {
 #[test]
 fn test_combine_ext_returns_struct() {
     let ctx = make_signing_context(2);
-    let nonces0 = generate_nonces(0, &ctx.key_image);
-    let nonces1 = generate_nonces(1, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all);
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all);
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
 
-    let combined = combine_partial_signatures_ext(&[p0, p1]);
+    let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert_eq!(combined.s.len(), 64);
     assert_eq!(combined.c_0.len(), 64);
     assert!(combined.sy.is_none()); // no TCLSAG
@@ -682,11 +682,13 @@ fn test_combine_ext_returns_struct() {
 fn test_tclsag_partial_produces_sy() {
     let ctx = make_tclsag_context(2);
     let ki_y = ctx.key_image_y.as_ref().unwrap();
-    let nonces = generate_nonces_ext(0, &ctx.key_image, Some(ki_y));
+    let nonces0 = generate_nonces_ext(0, &ctx.key_image, Some(ki_y)).unwrap();
+    let nonces1 = generate_nonces_ext(1, &ctx.key_image, Some(ki_y)).unwrap();
     let (key, _) = generate_random_scalar();
     let (key_y, _) = generate_random_scalar();
 
-    let partial = partial_sign_tclsag(&ctx, &nonces, &key, &key_y, &[nonces.clone()]);
+    let partial =
+        partial_sign_tclsag(&ctx, &nonces0, &key, &key_y, &[nonces0.clone(), nonces1]).unwrap();
     assert!(partial.sy_partial.is_some());
     assert_eq!(partial.sy_partial.as_ref().unwrap().len(), 64);
 }
@@ -696,8 +698,8 @@ fn test_tclsag_combine_includes_sy() {
     let ctx = make_tclsag_context(2);
     let ki_y = ctx.key_image_y.as_ref().unwrap();
 
-    let nonces0 = generate_nonces_ext(0, &ctx.key_image, Some(ki_y));
-    let nonces1 = generate_nonces_ext(1, &ctx.key_image, Some(ki_y));
+    let nonces0 = generate_nonces_ext(0, &ctx.key_image, Some(ki_y)).unwrap();
+    let nonces1 = generate_nonces_ext(1, &ctx.key_image, Some(ki_y)).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let (k0, _) = generate_random_scalar();
@@ -705,10 +707,10 @@ fn test_tclsag_combine_includes_sy() {
     let (k1, _) = generate_random_scalar();
     let (k1y, _) = generate_random_scalar();
 
-    let p0 = partial_sign_tclsag(&ctx, &nonces0, &k0, &k0y, &all);
-    let p1 = partial_sign_tclsag(&ctx, &nonces1, &k1, &k1y, &all);
+    let p0 = partial_sign_tclsag(&ctx, &nonces0, &k0, &k0y, &all).unwrap();
+    let p1 = partial_sign_tclsag(&ctx, &nonces1, &k1, &k1y, &all).unwrap();
 
-    let combined = combine_partial_signatures_ext(&[p0, p1]);
+    let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert!(combined.sy.is_some());
     let sy_bytes = hex::decode(combined.sy.unwrap()).unwrap();
     assert_ne!(sy_bytes, vec![0u8; 32]);
@@ -717,12 +719,12 @@ fn test_tclsag_combine_includes_sy() {
 #[test]
 fn test_nonce_binding_deterministic() {
     let ctx = make_signing_context(2);
-    let nonces0 = generate_nonces(0, &ctx.key_image);
-    let nonces1 = generate_nonces(1, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
-    let b1 = compute_nonce_binding(&ctx, &all);
-    let b2 = compute_nonce_binding(&ctx, &all);
+    let b1 = compute_nonce_binding(&ctx, &all).unwrap();
+    let b2 = compute_nonce_binding(&ctx, &all).unwrap();
     assert_eq!(b1, b2);
 }
 
@@ -732,26 +734,27 @@ fn test_nonce_binding_varies_with_message() {
     let mut ctx2 = make_signing_context(2);
     ctx2.message = "bb".repeat(32); // different message
 
-    let nonces0 = generate_nonces(0, &ctx1.key_image);
-    let nonces1 = generate_nonces(1, &ctx1.key_image);
+    let nonces0 = generate_nonces(0, &ctx1.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx1.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
-    let b1 = compute_nonce_binding(&ctx1, &all);
-    let b2 = compute_nonce_binding(&ctx2, &all);
+    let b1 = compute_nonce_binding(&ctx1, &all).unwrap();
+    let b2 = compute_nonce_binding(&ctx2, &all).unwrap();
     assert_ne!(b1, b2);
 }
 
 #[test]
 fn test_signing_algebraic_correctness() {
-    // Verify s = alpha - c * privkey independently using sc_mul_sub.
     let ctx = make_signing_context(2);
-    let nonces = generate_nonces(0, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let (privkey_hex, privkey_bytes) = generate_random_scalar();
+    let all = vec![nonces0.clone(), nonces1];
 
-    let partial = partial_sign(&ctx, &nonces, &privkey_hex, &[nonces.clone()]);
+    let partial = partial_sign(&ctx, &nonces0, &privkey_hex, &all).unwrap();
 
     // Recompute: combined_alpha = alpha[0] + b * alpha[1]
-    let b = compute_nonce_binding(&ctx, &[nonces.clone()]);
+    let b = compute_nonce_binding(&ctx, &all).unwrap();
     let b_reduced = salvium_crypto::sc_reduce32(&b);
 
     let one = {
@@ -767,8 +770,8 @@ fn test_signing_algebraic_correctness() {
     let mut neg_b = [0u8; 32];
     neg_b.copy_from_slice(&neg_b_vec[..32]);
 
-    let alpha0 = nonces.secret_nonces[0];
-    let alpha1 = nonces.secret_nonces[1];
+    let alpha0 = nonces0.secret_nonces[0];
+    let alpha1 = nonces0.secret_nonces[1];
 
     let combined_vec = salvium_crypto::sc_mul_sub(&neg_b, &alpha1, &alpha0);
     let mut combined_alpha = [0u8; 32];
@@ -778,11 +781,10 @@ fn test_signing_algebraic_correctness() {
     let combined_g = salvium_crypto::scalar_mult_base(&combined_alpha);
     let mut c_data = Vec::new();
     c_data.extend_from_slice(b"CLSAG_c");
-    c_data.extend_from_slice(&hex::decode(&ctx.ring[ctx.real_index]).unwrap_or_default());
-    c_data.extend_from_slice(&hex::decode(&ctx.key_image).unwrap_or_default());
-    c_data
-        .extend_from_slice(&hex::decode(&ctx.pseudo_output_commitment).unwrap_or_default());
-    c_data.extend_from_slice(&hex::decode(&ctx.message).unwrap_or_default());
+    c_data.extend_from_slice(&hex::decode(&ctx.ring[ctx.real_index]).unwrap());
+    c_data.extend_from_slice(&hex::decode(&ctx.key_image).unwrap());
+    c_data.extend_from_slice(&hex::decode(&ctx.pseudo_output_commitment).unwrap());
+    c_data.extend_from_slice(&hex::decode(&ctx.message).unwrap());
     c_data.extend_from_slice(&combined_g);
     let c_hash = salvium_crypto::keccak256(&c_data);
     let c_reduced = salvium_crypto::sc_reduce32(&c_hash);
@@ -802,7 +804,7 @@ fn test_signing_algebraic_correctness() {
 
 #[test]
 fn test_combine_empty_partials() {
-    let (s, c) = combine_partial_signatures(&[]);
+    let (s, c) = combine_partial_signatures(&[]).unwrap();
     assert_eq!(s, hex::encode([0u8; 32]));
     assert_eq!(c, hex::encode([0u8; 32]));
 }
@@ -810,21 +812,23 @@ fn test_combine_empty_partials() {
 #[test]
 fn test_partial_sign_invalid_privkey_hex() {
     let ctx = make_signing_context(2);
-    let nonces = generate_nonces(0, &ctx.key_image);
-    // Non-hex key — should not panic, just produce a result with zeroed privkey
-    let partial = partial_sign(&ctx, &nonces, "not_hex!", &[nonces.clone()]);
-    assert_eq!(partial.s_partial.len(), 64);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
+    // Non-hex key — should now return an error
+    let result = partial_sign(&ctx, &nonces0, "not_hex!", &[nonces0.clone(), nonces1]);
+    assert!(result.is_err());
 }
 
 #[test]
 fn test_nonce_reuse_identical_signatures() {
     let ctx = make_signing_context(2);
-    let nonces = generate_nonces(0, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let (key, _) = generate_random_scalar();
+    let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx, &nonces, &key, &[nonces.clone()]);
-    let p2 = partial_sign(&ctx, &nonces, &key, &[nonces.clone()]);
-    // Same nonces + same key → same signature (documents nonce reuse danger)
+    let p1 = partial_sign(&ctx, &nonces0, &key, &all).unwrap();
+    let p2 = partial_sign(&ctx, &nonces0, &key, &all).unwrap();
     assert_eq!(p1.s_partial, p2.s_partial);
 }
 
@@ -835,11 +839,13 @@ fn test_different_real_index_different_challenge() {
     let mut ctx2 = make_signing_context(4);
     ctx2.real_index = 2;
 
-    let nonces = generate_nonces(0, &ctx1.key_image);
+    let nonces0 = generate_nonces(0, &ctx1.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx1.key_image).unwrap();
     let (key, _) = generate_random_scalar();
+    let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx1, &nonces, &key, &[nonces.clone()]);
-    let p2 = partial_sign(&ctx2, &nonces, &key, &[nonces.clone()]);
+    let p1 = partial_sign(&ctx1, &nonces0, &key, &all).unwrap();
+    let p2 = partial_sign(&ctx2, &nonces0, &key, &all).unwrap();
     assert_ne!(p1.c_0, p2.c_0);
 }
 
@@ -903,7 +909,7 @@ fn test_tx_set_complete_above_threshold() {
 fn test_tx_set_duplicate_signer_not_counted() {
     let mut set = MultisigTxSet::with_config(2, 3);
     set.mark_signer_contributed("pk0");
-    set.mark_signer_contributed("pk0"); // duplicate
+    set.mark_signer_contributed("pk0");
     assert_eq!(set.signers_contributed.len(), 1);
     assert!(!set.is_complete());
 }
@@ -968,29 +974,22 @@ fn test_tx_set_multiple_pending_txs() {
 fn test_e2e_2_of_3_kex_then_sign() {
     let accounts = run_full_kex(2, 3);
 
-    // Use first 2 signers for signing
     let ctx = make_signing_context(2);
 
-    let nonces0 = generate_nonces(0, &ctx.key_image);
-    let nonces1 = generate_nonces(1, &ctx.key_image);
+    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
+    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let key0 = accounts[0].spend_key().unwrap().to_string();
     let key1 = accounts[1].spend_key().unwrap().to_string();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all);
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all);
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
 
-    let (s, c) = combine_partial_signatures(&[p0, p1]);
+    let (s, c) = combine_partial_signatures(&[p0, p1]).unwrap();
     assert_ne!(s, hex::encode([0u8; 32]));
     assert_ne!(c, hex::encode([0u8; 32]));
 
-    // Build a tx set and mark complete
-    let mut tx_set = MultisigTxSet::with_config(2, 3);
-    tx_set.mark_signer_contributed(&accounts[0].multisig_pubkey.as_ref().unwrap());
-    tx_set.mark_signer_contributed(&accounts[1].multisig_pubkey.as_ref().unwrap());
-    // Both signers contributed the same pubkey (aggregate), so only 1 unique
-    // Mark with unique identifiers instead
     let mut tx_set2 = MultisigTxSet::with_config(2, 3);
     tx_set2.mark_signer_contributed("signer_0");
     tx_set2.mark_signer_contributed("signer_1");
@@ -1003,7 +1002,7 @@ fn test_e2e_3_of_5_kex_then_sign() {
 
     let ctx = make_signing_context(2);
     let nonces: Vec<SignerNonces> = (0..3)
-        .map(|i| generate_nonces(i, &ctx.key_image))
+        .map(|i| generate_nonces(i, &ctx.key_image).unwrap())
         .collect();
 
     let keys: Vec<String> = (0..3)
@@ -1011,10 +1010,10 @@ fn test_e2e_3_of_5_kex_then_sign() {
         .collect();
 
     let partials: Vec<_> = (0..3)
-        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces))
+        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces).unwrap())
         .collect();
 
-    let (s, c) = combine_partial_signatures(&partials);
+    let (s, c) = combine_partial_signatures(&partials).unwrap();
     assert_ne!(hex::decode(&s).unwrap(), vec![0u8; 32]);
     assert_ne!(hex::decode(&c).unwrap(), vec![0u8; 32]);
 }
@@ -1025,8 +1024,8 @@ fn test_e2e_tclsag_2_of_3() {
     let ctx = make_tclsag_context(2);
     let ki_y = ctx.key_image_y.as_ref().unwrap();
 
-    let nonces0 = generate_nonces_ext(0, &ctx.key_image, Some(ki_y));
-    let nonces1 = generate_nonces_ext(1, &ctx.key_image, Some(ki_y));
+    let nonces0 = generate_nonces_ext(0, &ctx.key_image, Some(ki_y)).unwrap();
+    let nonces1 = generate_nonces_ext(1, &ctx.key_image, Some(ki_y)).unwrap();
     let all = vec![nonces0.clone(), nonces1.clone()];
 
     let key0 = accounts[0].spend_key().unwrap().to_string();
@@ -1034,19 +1033,13 @@ fn test_e2e_tclsag_2_of_3() {
     let (key0y, _) = generate_random_scalar();
     let (key1y, _) = generate_random_scalar();
 
-    let p0 = partial_sign_tclsag(&ctx, &nonces0, &key0, &key0y, &all);
-    let p1 = partial_sign_tclsag(&ctx, &nonces1, &key1, &key1y, &all);
+    let p0 = partial_sign_tclsag(&ctx, &nonces0, &key0, &key0y, &all).unwrap();
+    let p1 = partial_sign_tclsag(&ctx, &nonces1, &key1, &key1y, &all).unwrap();
 
-    let combined = combine_partial_signatures_ext(&[p0, p1]);
+    let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert!(combined.sy.is_some());
-    assert_ne!(
-        hex::decode(&combined.s).unwrap(),
-        vec![0u8; 32]
-    );
-    assert_ne!(
-        hex::decode(combined.sy.unwrap()).unwrap(),
-        vec![0u8; 32]
-    );
+    assert_ne!(hex::decode(&combined.s).unwrap(), vec![0u8; 32]);
+    assert_ne!(hex::decode(combined.sy.unwrap()).unwrap(), vec![0u8; 32]);
 }
 
 #[test]
@@ -1061,26 +1054,22 @@ fn test_e2e_wallet_api() {
 
 #[test]
 fn test_e2e_wallet_helpers() {
-    // blinded_secret_key
     let key = "ab".repeat(32);
     let blinded = get_multisig_blinded_secret_key(&key);
     assert_eq!(blinded.len(), 64);
     hex::decode(&blinded).unwrap();
 
-    // compute_dh_secret
     let (priv_hex, priv_bytes) = generate_random_scalar();
     let pub_point = hex::encode(salvium_crypto::scalar_mult_base(&priv_bytes));
     let dh = compute_dh_secret(&priv_hex, &pub_point);
     assert_eq!(dh.len(), 64);
 
-    // generate_multisig_nonces
     let nonces = generate_multisig_nonces(3);
     assert_eq!(nonces.len(), 3);
     for pair in &nonces {
         assert_eq!(pair.len(), 2);
     }
 
-    // nonce_to_public
     let pub_nonce = nonce_to_public(&nonces[0][0]);
     assert_eq!(pub_nonce.len(), 64);
     hex::decode(&pub_nonce).unwrap();
@@ -1090,7 +1079,6 @@ fn test_e2e_wallet_helpers() {
 fn test_e2e_carrot_keys_after_kex() {
     let accounts = run_full_kex(2, 3);
 
-    // Use the first account's keys for CARROT derivation
     let spend = accounts[0].spend_key().unwrap().to_string();
     let view = accounts[0].view_key().unwrap().to_string();
 
@@ -1105,11 +1093,161 @@ fn test_e2e_carrot_keys_after_kex() {
     assert_eq!(keys.generate_address_secret.len(), 64);
     assert_eq!(keys.account_spend_pubkey.len(), 64);
 
-    // Address generation
     let addr = carrot.get_carrot_address("testnet").unwrap();
     assert!(addr.starts_with("SC1T"));
 
     let sub = carrot.get_carrot_subaddress("testnet", 0, 1).unwrap();
     assert!(sub.starts_with("SC1T"));
     assert_ne!(addr, sub);
+}
+
+// ===========================================================================
+// Weighted Key Share Tests
+// ===========================================================================
+
+#[test]
+fn test_weighted_key_share_algebraic() {
+    // Verify: sum(coeff_i * k_i) * G == aggregate multisig pubkey
+    let accounts = run_full_kex(2, 3);
+    let expected_pubkey_hex = accounts[0].multisig_pubkey.as_ref().unwrap();
+
+    // Compute weighted shares and sum their public points
+    let mut sum_point: Option<[u8; 32]> = None;
+    for acct in &accounts {
+        let weighted = acct.get_weighted_spend_key_share().unwrap();
+        let point = salvium_crypto::scalar_mult_base(&weighted);
+        let mut p32 = [0u8; 32];
+        p32.copy_from_slice(&point);
+        sum_point = Some(match sum_point {
+            None => p32,
+            Some(acc) => {
+                let s = salvium_crypto::point_add_compressed(&acc, &p32);
+                let mut r = [0u8; 32];
+                r.copy_from_slice(&s[..32]);
+                r
+            }
+        });
+    }
+
+    assert_eq!(hex::encode(sum_point.unwrap()), *expected_pubkey_hex);
+}
+
+#[test]
+fn test_aggregation_coefficient_deterministic() {
+    let accounts = run_full_kex(2, 3);
+    let c1 = accounts[0].get_aggregation_coefficient().unwrap();
+    let c2 = accounts[0].get_aggregation_coefficient().unwrap();
+    assert_eq!(c1, c2);
+    // Different signers should have different coefficients
+    let c3 = accounts[1].get_aggregation_coefficient().unwrap();
+    assert_ne!(c1, c3);
+}
+
+// ===========================================================================
+// Key Image Tests
+// ===========================================================================
+
+#[test]
+fn test_partial_key_image_deterministic() {
+    let weighted_share = {
+        let mut s = [0u8; 32];
+        s[0] = 42;
+        let reduced = salvium_crypto::sc_reduce32(&s);
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&reduced[..32]);
+        r
+    };
+    let output_pubkey = {
+        let mut s = [0u8; 32];
+        s[0] = 7;
+        let p = salvium_crypto::scalar_mult_base(&salvium_crypto::sc_reduce32(&s));
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&p);
+        r
+    };
+
+    let ki1 =
+        salvium_multisig::key_image::compute_partial_key_image(&weighted_share, &output_pubkey);
+    let ki2 =
+        salvium_multisig::key_image::compute_partial_key_image(&weighted_share, &output_pubkey);
+    assert_eq!(ki1, ki2);
+    assert_ne!(ki1, [0u8; 32]);
+}
+
+#[test]
+fn test_combine_key_images_matches_single_signer() {
+    // For a single "signer" with the full key, the partial KI should equal the full KI
+    let secret_key = {
+        let mut s = [0u8; 32];
+        s[0] = 55;
+        let reduced = salvium_crypto::sc_reduce32(&s);
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&reduced[..32]);
+        r
+    };
+    let output_pubkey = {
+        let p = salvium_crypto::scalar_mult_base(&secret_key);
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&p);
+        r
+    };
+
+    // Full key image: secret_key * H_p(output_pubkey)
+    let full_ki = salvium_crypto::generate_key_image(&output_pubkey, &secret_key);
+    let mut full_ki32 = [0u8; 32];
+    full_ki32.copy_from_slice(&full_ki);
+
+    // Partial with the full key (as if 1-of-1, coefficient = 1)
+    let partial =
+        salvium_multisig::key_image::compute_partial_key_image(&secret_key, &output_pubkey);
+
+    assert_eq!(partial, full_ki32);
+}
+
+#[test]
+fn test_combine_two_partial_key_images() {
+    let share0 = {
+        let mut s = [0u8; 32];
+        s[0] = 10;
+        let r = salvium_crypto::sc_reduce32(&s);
+        let mut a = [0u8; 32];
+        a.copy_from_slice(&r[..32]);
+        a
+    };
+    let share1 = {
+        let mut s = [0u8; 32];
+        s[0] = 20;
+        let r = salvium_crypto::sc_reduce32(&s);
+        let mut a = [0u8; 32];
+        a.copy_from_slice(&r[..32]);
+        a
+    };
+    let output_pubkey = {
+        // combined_key = share0 + share1
+        let combined = salvium_crypto::sc_add(&share0, &share1);
+        let mut c = [0u8; 32];
+        c.copy_from_slice(&combined[..32]);
+        let p = salvium_crypto::scalar_mult_base(&c);
+        let mut r = [0u8; 32];
+        r.copy_from_slice(&p);
+        r
+    };
+
+    let pki0 = salvium_multisig::key_image::compute_partial_key_image(&share0, &output_pubkey);
+    let pki1 = salvium_multisig::key_image::compute_partial_key_image(&share1, &output_pubkey);
+
+    let combined = salvium_multisig::key_image::combine_partial_key_images(&[pki0, pki1]).unwrap();
+
+    // The combined key image should match: (share0+share1) * H_p(output_pubkey)
+    let full_secret = {
+        let s = salvium_crypto::sc_add(&share0, &share1);
+        let mut a = [0u8; 32];
+        a.copy_from_slice(&s[..32]);
+        a
+    };
+    let expected = salvium_crypto::generate_key_image(&output_pubkey, &full_secret);
+    let mut expected32 = [0u8; 32];
+    expected32.copy_from_slice(&expected);
+
+    assert_eq!(combined, expected32);
 }

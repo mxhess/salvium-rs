@@ -10,8 +10,8 @@ use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 
-use crate::{keccak256_internal, to32};
 use crate::subaddress::cn_subaddress_secret_key;
+use crate::{keccak256_internal, to32};
 
 // ─── Result ─────────────────────────────────────────────────────────────────
 
@@ -66,8 +66,8 @@ fn hash_to_point(data: &[u8]) -> EdwardsPoint {
     let hash = keccak256_internal(data);
     let point = crate::elligator2::ge_fromfe_frombytes_vartime(&hash);
     let t = point + point; // 2P
-    let t = t + t;         // 4P
-    t + t                  // 8P
+    let t = t + t; // 4P
+    t + t // 8P
 }
 
 /// Generate key image: KI = sec * H_p(pub)
@@ -78,7 +78,7 @@ fn generate_key_image(pub_key: &[u8; 32], sec_key: &Scalar) -> [u8; 32] {
         .to_bytes()
 }
 
-/// CryptoNote view tag: keccak256("view_tag" || derivation || varint(index))[0]
+/// CryptoNote view tag: first byte of `keccak256("view_tag" || derivation || varint(index))`
 pub fn derive_view_tag(derivation: &[u8; 32], output_index: u32) -> u8 {
     let salt = b"view_tag";
     let mut buf = Vec::with_capacity(salt.len() + 32 + 5);
@@ -149,7 +149,9 @@ pub fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
 ///
 /// Matches the C++ rct::commit(amount, mask) which computes addKeys2(C, mask, d2h(amount), H).
 fn pedersen_commit_cn(amount: u64, mask: &[u8; 32]) -> [u8; 32] {
-    let h = CompressedEdwardsY(crate::H_POINT_BYTES).decompress().expect("invalid H");
+    let h = CompressedEdwardsY(crate::H_POINT_BYTES)
+        .decompress()
+        .expect("invalid H");
     let mut amount_bytes = [0u8; 32];
     amount_bytes[..8].copy_from_slice(&amount.to_le_bytes());
     let amount_scalar = Scalar::from_bytes_mod_order(amount_bytes);
@@ -305,7 +307,7 @@ pub fn derive_output_spend_key(
         .expect("invalid tx pubkey");
     let shared = view_scalar * tx_pub;
     let t = shared + shared; // 2P
-    let t = t + t;           // 4P
+    let t = t + t; // 4P
     let derivation = (t + t).compress().to_bytes(); // 8P
 
     let d2s = derivation_to_scalar(&derivation, output_index);

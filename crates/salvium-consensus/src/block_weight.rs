@@ -87,8 +87,8 @@ pub fn get_effective_median_block_weight(
     let mut effective_median = long_term_effective_median.max(short_term_median);
 
     // Clamp to surge factor.
-    effective_median = effective_median
-        .min(SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * long_term_effective_median);
+    effective_median =
+        effective_median.min(SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * long_term_effective_median);
 
     // Floor at full reward zone.
     effective_median = effective_median.max(FRZ);
@@ -129,14 +129,20 @@ mod tests {
     fn weight_below_lower_bound_gets_clamped_up() {
         let median: u64 = 500_000;
         let lower_bound = median * 10 / 17; // 294117
-        assert_eq!(get_next_long_term_block_weight(100_000, median), lower_bound);
+        assert_eq!(
+            get_next_long_term_block_weight(100_000, median),
+            lower_bound
+        );
     }
 
     #[test]
     fn weight_above_upper_bound_gets_clamped_down() {
         let median: u64 = 500_000;
         let upper_bound = median + median * 7 / 10; // 850000
-        assert_eq!(get_next_long_term_block_weight(1_000_000, median), upper_bound);
+        assert_eq!(
+            get_next_long_term_block_weight(1_000_000, median),
+            upper_bound
+        );
     }
 
     #[test]

@@ -70,7 +70,14 @@ fn main() {
     eprintln!("Daemon:  {}", args.daemon);
     eprintln!("Wallet:  {}...", &args.wallet[..20.min(args.wallet.len())]);
     eprintln!("Threads: {}", args.threads);
-    eprintln!("Mode:    {}", if args.light { "light (256MB/thread)" } else { "full (2GB shared dataset)" });
+    eprintln!(
+        "Mode:    {}",
+        if args.light {
+            "light (256MB/thread)"
+        } else {
+            "full (2GB shared dataset)"
+        }
+    );
     eprintln!();
 
     // Connect to daemon (retry up to 5 times)
@@ -81,11 +88,17 @@ fn main() {
         let mut result = None;
         for attempt in 1..=5 {
             match client.get_info() {
-                Ok(i) => { result = Some(i); break; }
+                Ok(i) => {
+                    result = Some(i);
+                    break;
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!("Cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
+                        eprintln!(
+                            "Cannot connect to daemon (attempt {}/5): {}",
+                            attempt, last_err
+                        );
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -100,7 +113,10 @@ fn main() {
         }
     };
 
-    eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
+    eprintln!(
+        "Daemon height: {}, difficulty: {}",
+        info.height, info.difficulty
+    );
 
     // Get initial block template (retry up to 5 times for transient daemon errors)
     let template = {
@@ -108,11 +124,17 @@ fn main() {
         let mut tmpl = None;
         for attempt in 1..=5 {
             match client.get_block_template(&args.wallet, 8) {
-                Ok(t) => { tmpl = Some(t); break; }
+                Ok(t) => {
+                    tmpl = Some(t);
+                    break;
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!("Failed to get block template (attempt {}/5): {}", attempt, last_err);
+                        eprintln!(
+                            "Failed to get block template (attempt {}/5): {}",
+                            attempt, last_err
+                        );
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -121,7 +143,10 @@ fn main() {
         match tmpl {
             Some(t) => t,
             None => {
-                eprintln!("Failed to get block template after 5 attempts: {}", last_err);
+                eprintln!(
+                    "Failed to get block template after 5 attempts: {}",
+                    last_err
+                );
                 std::process::exit(1);
             }
         }
@@ -132,7 +157,10 @@ fn main() {
         template.wide_difficulty.as_deref(),
     );
 
-    eprintln!("Template: height={}, difficulty={}", template.height, difficulty);
+    eprintln!(
+        "Template: height={}, difficulty={}",
+        template.height, difficulty
+    );
 
     let seed_bytes = hex::decode(&template.seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
@@ -198,10 +226,15 @@ fn main() {
 
             // Drain any stale blocks
             let mut drained = 0;
-            while engine.try_recv_block().is_some() { drained += 1; }
+            while engine.try_recv_block().is_some() {
+                drained += 1;
+            }
 
             eprintln!();
-            eprintln!("*** BLOCK FOUND at height {}! nonce={} ***", current_height, block.nonce);
+            eprintln!(
+                "*** BLOCK FOUND at height {}! nonce={} ***",
+                current_height, block.nonce
+            );
 
             match client.submit_block(&block.blob_hex) {
                 Ok(()) => {
@@ -252,8 +285,10 @@ fn main() {
                     target: None,
                 });
 
-                eprintln!("Template: height={} diff={} prev={:.16}...",
-                    tmpl.height, new_diff, tmpl.prev_hash);
+                eprintln!(
+                    "Template: height={} diff={} prev={:.16}...",
+                    tmpl.height, new_diff, tmpl.prev_hash
+                );
             }
             last_template_fetch = Instant::now();
         }
@@ -273,7 +308,10 @@ fn main() {
                 }
 
                 // Send new job if anything changed
-                if tmpl.prev_hash != current_prev_hash || tmpl.height != current_height || new_diff != current_difficulty {
+                if tmpl.prev_hash != current_prev_hash
+                    || tmpl.height != current_height
+                    || new_diff != current_difficulty
+                {
                     current_height = tmpl.height;
                     current_difficulty = new_diff;
                     current_prev_hash = tmpl.prev_hash.clone();
@@ -323,8 +361,11 @@ fn main() {
                 eprintln!("Mode:     {}", if args.light { "light" } else { "full" });
                 eprintln!("Duration: {:.1}s", elapsed);
                 eprintln!("Hashes:   {}", total);
-                eprintln!("Hashrate: {} ({:.1} H/s per thread)",
-                    format_hashrate(hr), hr / args.threads as f64);
+                eprintln!(
+                    "Hashrate: {} ({:.1} H/s per thread)",
+                    format_hashrate(hr),
+                    hr / args.threads as f64
+                );
                 engine.stop();
                 break;
             }
@@ -350,7 +391,10 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 
     #[cfg(unix)]
     unsafe {
-        libc::signal(libc::SIGINT, handle_sigint as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            handle_sigint as *const () as libc::sighandler_t,
+        );
         RUNNING_FLAG.store(running.as_ref() as *const _ as usize, Ordering::SeqCst);
     }
 }

@@ -24,13 +24,19 @@ unsafe impl Sync for SharedDataset {}
 
 impl SharedDataset {
     /// Initialize RandomX v2 cache and dataset from a seed hash (full mode, ~2GB).
-    pub fn new(seed_hash: &[u8], num_init_threads: usize, use_large_pages: bool) -> Result<Arc<Self>, String> {
+    pub fn new(
+        seed_hash: &[u8],
+        num_init_threads: usize,
+        use_large_pages: bool,
+    ) -> Result<Arc<Self>, String> {
         let base_flags = unsafe { ffi::randomx_get_flags() } | 0x4 | 0x8; // FULL_MEM | JIT
         let (flags, using_large_pages) = if use_large_pages {
             let with_lp = base_flags | 0x1;
             let test_cache = unsafe { ffi::randomx_alloc_cache(with_lp) };
             if !test_cache.is_null() {
-                unsafe { ffi::randomx_release_cache(test_cache); }
+                unsafe {
+                    ffi::randomx_release_cache(test_cache);
+                }
                 (with_lp, true)
             } else {
                 (base_flags, false)
@@ -38,7 +44,14 @@ impl SharedDataset {
         } else {
             (base_flags, false)
         };
-        log::info!("RandomX v2 large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
+        log::info!(
+            "RandomX v2 large pages: {}",
+            if using_large_pages {
+                "YES"
+            } else {
+                "NO (falling back)"
+            }
+        );
         log::debug!("RandomX v2 flags: 0x{:x}", flags);
 
         // Allocate and init cache
@@ -54,12 +67,17 @@ impl SharedDataset {
         // Allocate and init dataset
         let dataset_ptr = unsafe { ffi::randomx_alloc_dataset(flags) };
         if dataset_ptr.is_null() {
-            unsafe { ffi::randomx_release_cache(cache_ptr); }
+            unsafe {
+                ffi::randomx_release_cache(cache_ptr);
+            }
             return Err("Failed to allocate RandomX v2 dataset (need ~2GB free RAM)".to_string());
         }
 
         let item_count = unsafe { ffi::randomx_dataset_item_count() };
-        log::info!("generating RandomX v2 dataset ({} items, ~2GB)...", item_count);
+        log::info!(
+            "generating RandomX v2 dataset ({} items, ~2GB)...",
+            item_count
+        );
         let start = std::time::Instant::now();
 
         // Multi-threaded dataset init
@@ -83,19 +101,23 @@ impl SharedDataset {
         for h in init_handles {
             let _ = h.join();
         }
-        log::info!("RandomX v2 dataset ready in {:.1}s", start.elapsed().as_secs_f64());
+        log::info!(
+            "RandomX v2 dataset ready in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
 
         // Release cache (dataset is self-contained after init)
-        unsafe { ffi::randomx_release_cache(cache_ptr); }
+        unsafe {
+            ffi::randomx_release_cache(cache_ptr);
+        }
 
         Ok(Arc::new(Self { dataset_ptr, flags }))
     }
 
     /// Create a VM for this dataset (one per worker thread).
     pub fn create_vm(&self) -> Result<*mut std::ffi::c_void, String> {
-        let vm_ptr = unsafe {
-            ffi::randomx_create_vm(self.flags, std::ptr::null_mut(), self.dataset_ptr)
-        };
+        let vm_ptr =
+            unsafe { ffi::randomx_create_vm(self.flags, std::ptr::null_mut(), self.dataset_ptr) };
         if vm_ptr.is_null() {
             Err("Failed to create RandomX v2 VM".to_string())
         } else {
@@ -123,7 +145,9 @@ impl LightCache {
             let with_lp = base_flags | 0x1;
             let test_cache = unsafe { ffi::randomx_alloc_cache(with_lp) };
             if !test_cache.is_null() {
-                unsafe { ffi::randomx_release_cache(test_cache); }
+                unsafe {
+                    ffi::randomx_release_cache(test_cache);
+                }
                 (with_lp, true)
             } else {
                 (base_flags, false)
@@ -145,9 +169,8 @@ impl LightCache {
 
     /// Create a light-mode VM for this cache.
     pub fn create_vm(&self) -> Result<*mut std::ffi::c_void, String> {
-        let vm_ptr = unsafe {
-            ffi::randomx_create_vm(self.flags, self.cache_ptr, std::ptr::null_mut())
-        };
+        let vm_ptr =
+            unsafe { ffi::randomx_create_vm(self.flags, self.cache_ptr, std::ptr::null_mut()) };
         if vm_ptr.is_null() {
             Err("Failed to create RandomX v2 light VM".to_string())
         } else {
@@ -158,7 +181,9 @@ impl LightCache {
 
 impl Drop for LightCache {
     fn drop(&mut self) {
-        unsafe { ffi::randomx_release_cache(self.cache_ptr); }
+        unsafe {
+            ffi::randomx_release_cache(self.cache_ptr);
+        }
     }
 }
 
@@ -241,7 +266,10 @@ mod tests {
         let mut engine = make_light_engine();
         let input = b"test input for RandomX v2 hash verification";
         let hash = engine.hash(input);
-        assert!(!hash.iter().all(|&b| b == 0), "hash should not be all zeros");
+        assert!(
+            !hash.iter().all(|&b| b == 0),
+            "hash should not be all zeros"
+        );
     }
 
     #[test]
@@ -258,7 +286,10 @@ mod tests {
         let mut engine = make_light_engine();
         let hash1 = engine.hash(b"input A for randomx v2 testing");
         let hash2 = engine.hash(b"input B for randomx v2 testing");
-        assert_ne!(hash1, hash2, "different inputs should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "different inputs should produce different hashes"
+        );
     }
 
     #[test]
@@ -278,8 +309,11 @@ mod tests {
         let hash = engine.hash(b"This is a test");
         let expected = "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f";
         let actual = hex::encode(hash);
-        assert_eq!(actual, expected,
-            "RandomX v2 vector A mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 vector A mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     /// Test vector B: key="test key 000", input="Lorem ipsum dolor sit amet"
@@ -290,8 +324,11 @@ mod tests {
         let hash = engine.hash(b"Lorem ipsum dolor sit amet");
         let expected = "300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969";
         let actual = hex::encode(hash);
-        assert_eq!(actual, expected,
-            "RandomX v2 vector B mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 vector B mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     /// Test vector C: key="test key 000", input="sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
@@ -299,11 +336,15 @@ mod tests {
     #[test]
     fn test_randomx_v2_official_vector_c() {
         let mut engine = make_light_engine_with_key(b"test key 000");
-        let hash = engine.hash(b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
+        let hash =
+            engine.hash(b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
         let expected = "c36d4ed4191e617309867ed66a443be4075014e2b061bcdaf9ce7b721d2b77a8";
         let actual = hex::encode(hash);
-        assert_eq!(actual, expected,
-            "RandomX v2 vector C mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 vector C mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     /// Test vector D: key="test key 001" (different key!), same input as C
@@ -311,11 +352,15 @@ mod tests {
     #[test]
     fn test_randomx_v2_official_vector_d() {
         let mut engine = make_light_engine_with_key(b"test key 001");
-        let hash = engine.hash(b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
+        let hash =
+            engine.hash(b"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua");
         let expected = "e9ff4503201c0c2cca26d285c93ae883f9b1d30c9eb240b820756f2d5a7905fc";
         let actual = hex::encode(hash);
-        assert_eq!(actual, expected,
-            "RandomX v2 vector D mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 vector D mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     /// Test vector E: key="test key 001", hex-encoded block blob input
@@ -329,8 +374,11 @@ mod tests {
         let hash = engine.hash(&input);
         let expected = "c56414121acda1713c2f2a819d8ae38aed7c80c35c2a769298d34f03833cd5f1";
         let actual = hex::encode(hash);
-        assert_eq!(actual, expected,
-            "RandomX v2 vector E (block blob) mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 vector E (block blob) mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     /// Test vector: commitment = hash then Blake2b(input || hash)
@@ -354,16 +402,19 @@ mod tests {
         }
         let expected = "d53ccf348b75291b7be76f0a7ac8208bbced734b912f6fca60539ab6f86be919";
         let actual = hex::encode(commitment);
-        assert_eq!(actual, expected,
-            "RandomX v2 commitment mismatch!\n  got:    {}\n  expect: {}", actual, expected);
+        assert_eq!(
+            actual, expected,
+            "RandomX v2 commitment mismatch!\n  got:    {}\n  expect: {}",
+            actual, expected
+        );
     }
 
     // ── Mining loop integration test ──────────────────────────────────
 
     #[test]
     fn test_randomx_v2_mining_loop_smoke() {
-        use salvium_miner::mining::MiningLoop;
         use salvium_miner::miner::MiningJob;
+        use salvium_miner::mining::MiningLoop;
         use std::sync::atomic::Ordering;
 
         let seed = [42u8; 32];
@@ -372,7 +423,8 @@ mod tests {
         let mining_loop = MiningLoop::new(1, move |_| {
             let engine = RandomXV2Engine::new_light(cache.clone())?;
             Ok(Box::new(engine))
-        }).expect("failed to create mining loop");
+        })
+        .expect("failed to create mining loop");
 
         // Create a fake job with trivial difficulty
         let mut hashing_blob = vec![0u8; 76];
@@ -399,10 +451,16 @@ mod tests {
 
         // With difficulty=1, every hash should be a valid block
         let block = mining_loop.try_recv_block();
-        assert!(block.is_some(), "should have found a block with difficulty=1");
+        assert!(
+            block.is_some(),
+            "should have found a block with difficulty=1"
+        );
 
         let block = block.unwrap();
-        assert!(!block.hash.iter().all(|&b| b == 0), "found block hash should be non-zero");
+        assert!(
+            !block.hash.iter().all(|&b| b == 0),
+            "found block hash should be non-zero"
+        );
 
         mining_loop.stop();
     }

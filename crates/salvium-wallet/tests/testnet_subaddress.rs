@@ -10,9 +10,9 @@
 use salvium_rpc::daemon::DaemonRpc;
 use salvium_tx::builder::{Destination, TransactionBuilder};
 use salvium_tx::types::*;
-use salvium_wallet::{decrypt_js_wallet, Wallet, WalletKeys};
-use salvium_types::address::{parse_address, create_address_raw, to_integrated_address};
+use salvium_types::address::{create_address_raw, parse_address, to_integrated_address};
 use salvium_types::constants::{AddressFormat, AddressType, Network};
+use salvium_wallet::{decrypt_js_wallet, Wallet, WalletKeys};
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -20,8 +20,7 @@ use std::path::PathBuf;
 const DAEMON_URL: &str = "http://node12.whiskymine.io:29081";
 
 fn daemon() -> DaemonRpc {
-    let url = std::env::var("TESTNET_DAEMON_URL")
-        .unwrap_or_else(|_| DAEMON_URL.to_string());
+    let url = std::env::var("TESTNET_DAEMON_URL").unwrap_or_else(|_| DAEMON_URL.to_string());
     DaemonRpc::new(&url)
 }
 
@@ -51,48 +50,94 @@ async fn test_subaddress_generation() {
     let maps_a = salvium_wallet::account::SubaddressMaps::generate(&keys_a, 2, 5);
 
     // 1. CN subaddress (0,0) should be the main address spend pubkey
-    let cn_main = maps_a.cn.iter().find(|(_, maj, min)| *maj == 0 && *min == 0);
+    let cn_main = maps_a
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 0);
     assert!(cn_main.is_some(), "CN (0,0) entry should exist");
     let (cn_main_pk, _, _) = cn_main.unwrap();
-    assert_eq!(*cn_main_pk, keys_a.cn.spend_public_key,
-        "CN (0,0) spend pubkey should equal main address spend pubkey");
+    assert_eq!(
+        *cn_main_pk, keys_a.cn.spend_public_key,
+        "CN (0,0) spend pubkey should equal main address spend pubkey"
+    );
     println!("CN (0,0) matches main address: OK");
 
     // 2. Subaddresses should differ from each other
-    let cn_01 = maps_a.cn.iter().find(|(_, maj, min)| *maj == 0 && *min == 1);
-    let cn_02 = maps_a.cn.iter().find(|(_, maj, min)| *maj == 0 && *min == 2);
-    let cn_10 = maps_a.cn.iter().find(|(_, maj, min)| *maj == 1 && *min == 0);
-    assert!(cn_01.is_some() && cn_02.is_some() && cn_10.is_some(),
-        "Subaddresses (0,1), (0,2), (1,0) should exist");
+    let cn_01 = maps_a
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 1);
+    let cn_02 = maps_a
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 2);
+    let cn_10 = maps_a
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 1 && *min == 0);
+    assert!(
+        cn_01.is_some() && cn_02.is_some() && cn_10.is_some(),
+        "Subaddresses (0,1), (0,2), (1,0) should exist"
+    );
 
     let mut spend_keys = HashSet::new();
     spend_keys.insert(cn_main_pk.to_vec());
-    assert!(spend_keys.insert(cn_01.unwrap().0.to_vec()), "CN (0,1) should differ from (0,0)");
-    assert!(spend_keys.insert(cn_02.unwrap().0.to_vec()), "CN (0,2) should differ from others");
-    assert!(spend_keys.insert(cn_10.unwrap().0.to_vec()), "CN (1,0) should differ from others");
-    println!("CN subaddresses are unique: OK ({} unique keys)", spend_keys.len());
+    assert!(
+        spend_keys.insert(cn_01.unwrap().0.to_vec()),
+        "CN (0,1) should differ from (0,0)"
+    );
+    assert!(
+        spend_keys.insert(cn_02.unwrap().0.to_vec()),
+        "CN (0,2) should differ from others"
+    );
+    assert!(
+        spend_keys.insert(cn_10.unwrap().0.to_vec()),
+        "CN (1,0) should differ from others"
+    );
+    println!(
+        "CN subaddresses are unique: OK ({} unique keys)",
+        spend_keys.len()
+    );
 
     // 3. CARROT subaddresses should also be generated and unique
-    let carrot_00 = maps_a.carrot.iter().find(|(_, maj, min)| *maj == 0 && *min == 0);
-    let carrot_01 = maps_a.carrot.iter().find(|(_, maj, min)| *maj == 0 && *min == 1);
+    let carrot_00 = maps_a
+        .carrot
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 0);
+    let carrot_01 = maps_a
+        .carrot
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 1);
     assert!(carrot_00.is_some(), "CARROT (0,0) entry should exist");
     assert!(carrot_01.is_some(), "CARROT (0,1) entry should exist");
-    assert_ne!(carrot_00.unwrap().0, carrot_01.unwrap().0,
-        "CARROT (0,0) and (0,1) should have different spend pubkeys");
+    assert_ne!(
+        carrot_00.unwrap().0,
+        carrot_01.unwrap().0,
+        "CARROT (0,0) and (0,1) should have different spend pubkeys"
+    );
     println!("CARROT subaddresses are unique: OK");
 
     // 4. CN and CARROT spend keys should differ (different derivation)
-    assert_ne!(*cn_main_pk, carrot_00.unwrap().0,
-        "CN and CARROT main address spend keys should differ");
+    assert_ne!(
+        *cn_main_pk,
+        carrot_00.unwrap().0,
+        "CN and CARROT main address spend keys should differ"
+    );
     println!("CN vs CARROT keys differ: OK");
 
     // 5. Different wallets should produce different subaddresses
     let keys_different = WalletKeys::from_seed([0xBB; 32], Network::Testnet);
     let maps_different = salvium_wallet::account::SubaddressMaps::generate(&keys_different, 1, 3);
-    let diff_00 = maps_different.cn.iter().find(|(_, maj, min)| *maj == 0 && *min == 0);
+    let diff_00 = maps_different
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 0);
     assert!(diff_00.is_some());
-    assert_ne!(*cn_main_pk, diff_00.unwrap().0,
-        "Different wallets should produce different subaddresses");
+    assert_ne!(
+        *cn_main_pk,
+        diff_00.unwrap().0,
+        "Different wallets should produce different subaddresses"
+    );
     println!("Different wallets produce different subaddresses: OK");
 
     println!("\nTotal CN subaddress entries: {}", maps_a.cn_count());
@@ -110,8 +155,8 @@ async fn test_address_parsing() {
     println!("\n=== Address Parsing Test ===\n");
 
     let dir = testnet_wallet_dir();
-    let wallet_json = std::fs::read_to_string(dir.join("wallet-a.json"))
-        .expect("wallet-a.json not found");
+    let wallet_json =
+        std::fs::read_to_string(dir.join("wallet-a.json")).expect("wallet-a.json not found");
     let pin = std::fs::read_to_string(dir.join("wallet-a.pin"))
         .expect("wallet-a.pin not found")
         .trim()
@@ -128,7 +173,11 @@ async fn test_address_parsing() {
     assert_eq!(parsed_cn.spend_public_key, keys.cn.spend_public_key);
     assert_eq!(parsed_cn.view_public_key, keys.cn.view_public_key);
     println!("CN address parsed: OK");
-    println!("  Address: {}...{}", &cn_addr[..12], &cn_addr[cn_addr.len()-6..]);
+    println!(
+        "  Address: {}...{}",
+        &cn_addr[..12],
+        &cn_addr[cn_addr.len() - 6..]
+    );
 
     // Parse CARROT address
     let carrot_addr = keys.carrot_address().expect("carrot_address");
@@ -136,10 +185,20 @@ async fn test_address_parsing() {
     assert_eq!(parsed_carrot.network, Network::Testnet);
     assert_eq!(parsed_carrot.format, AddressFormat::Carrot);
     assert_eq!(parsed_carrot.address_type, AddressType::Standard);
-    assert_eq!(parsed_carrot.spend_public_key, keys.carrot.account_spend_pubkey);
-    assert_eq!(parsed_carrot.view_public_key, keys.carrot.account_view_pubkey);
+    assert_eq!(
+        parsed_carrot.spend_public_key,
+        keys.carrot.account_spend_pubkey
+    );
+    assert_eq!(
+        parsed_carrot.view_public_key,
+        keys.carrot.account_view_pubkey
+    );
     println!("CARROT address parsed: OK");
-    println!("  Address: {}...{}", &carrot_addr[..12], &carrot_addr[carrot_addr.len()-6..]);
+    println!(
+        "  Address: {}...{}",
+        &carrot_addr[..12],
+        &carrot_addr[carrot_addr.len() - 6..]
+    );
 
     // CN and CARROT addresses should differ
     assert_ne!(cn_addr, carrot_addr);
@@ -147,7 +206,11 @@ async fn test_address_parsing() {
 
     // Create a CN subaddress and verify it parses
     let maps = salvium_wallet::account::SubaddressMaps::generate(&keys, 1, 3);
-    let sub_01 = maps.cn.iter().find(|(_, maj, min)| *maj == 0 && *min == 1).unwrap();
+    let sub_01 = maps
+        .cn
+        .iter()
+        .find(|(_, maj, min)| *maj == 0 && *min == 1)
+        .unwrap();
     // Build a subaddress view pubkey: C = v * D (where D is the subaddress spend pubkey)
     // For parsing, we just verify the subaddress spend pubkey is in the map.
     let cn_sub_addr = create_address_raw(
@@ -157,7 +220,8 @@ async fn test_address_parsing() {
         &sub_01.0,
         &keys.cn.view_public_key,
         None,
-    ).expect("create CN subaddress");
+    )
+    .expect("create CN subaddress");
     let parsed_sub = parse_address(&cn_sub_addr).expect("parse CN subaddress");
     assert_eq!(parsed_sub.address_type, AddressType::Subaddress);
     assert_eq!(parsed_sub.format, AddressFormat::Legacy);
@@ -176,8 +240,8 @@ async fn test_integrated_addresses() {
     println!("\n=== Integrated Address Test ===\n");
 
     let dir = testnet_wallet_dir();
-    let wallet_json = std::fs::read_to_string(dir.join("wallet-a.json"))
-        .expect("wallet-a.json not found");
+    let wallet_json =
+        std::fs::read_to_string(dir.join("wallet-a.json")).expect("wallet-a.json not found");
     let pin = std::fs::read_to_string(dir.join("wallet-a.pin"))
         .expect("wallet-a.pin not found")
         .trim()
@@ -192,9 +256,13 @@ async fn test_integrated_addresses() {
     println!("Payment ID: {}", hex::encode(payment_id));
 
     // Create an integrated address
-    let integrated = to_integrated_address(&cn_addr, &payment_id)
-        .expect("create integrated address");
-    println!("Integrated: {}...{}", &integrated[..12], &integrated[integrated.len()-6..]);
+    let integrated =
+        to_integrated_address(&cn_addr, &payment_id).expect("create integrated address");
+    println!(
+        "Integrated: {}...{}",
+        &integrated[..12],
+        &integrated[integrated.len() - 6..]
+    );
 
     // Verify it parses as integrated
     let parsed = parse_address(&integrated).expect("parse integrated address");
@@ -204,7 +272,11 @@ async fn test_integrated_addresses() {
     println!("Parsed as Integrated: OK");
 
     // Verify payment ID round-trips
-    assert_eq!(parsed.payment_id.unwrap(), payment_id, "Payment ID should round-trip");
+    assert_eq!(
+        parsed.payment_id.unwrap(),
+        payment_id,
+        "Payment ID should round-trip"
+    );
     println!("Payment ID round-trip: OK");
 
     // Verify spend/view keys match the original address
@@ -214,15 +286,18 @@ async fn test_integrated_addresses() {
 
     // Different payment IDs should produce different integrated addresses
     let payment_id_2: [u8; 8] = rand::random();
-    let integrated_2 = to_integrated_address(&cn_addr, &payment_id_2)
-        .expect("create integrated address 2");
-    assert_ne!(integrated, integrated_2, "Different payment IDs → different addresses");
+    let integrated_2 =
+        to_integrated_address(&cn_addr, &payment_id_2).expect("create integrated address 2");
+    assert_ne!(
+        integrated, integrated_2,
+        "Different payment IDs → different addresses"
+    );
     println!("Different PIDs → different addresses: OK");
 
     // Also test CARROT integrated address
     let carrot_addr = keys.carrot_address().expect("carrot_address");
-    let carrot_integrated = to_integrated_address(&carrot_addr, &payment_id)
-        .expect("create CARROT integrated address");
+    let carrot_integrated =
+        to_integrated_address(&carrot_addr, &payment_id).expect("create CARROT integrated address");
     let parsed_carrot = parse_address(&carrot_integrated).expect("parse CARROT integrated");
     assert_eq!(parsed_carrot.address_type, AddressType::Integrated);
     assert_eq!(parsed_carrot.format, AddressFormat::Carrot);
@@ -242,8 +317,8 @@ async fn test_self_transfer_to_subaddress() {
     println!("\n=== Self-Transfer to Subaddress Test ===\n");
 
     let dir = testnet_wallet_dir();
-    let wallet_json = std::fs::read_to_string(dir.join("wallet-a.json"))
-        .expect("wallet-a.json not found");
+    let wallet_json =
+        std::fs::read_to_string(dir.join("wallet-a.json")).expect("wallet-a.json not found");
     let pin = std::fs::read_to_string(dir.join("wallet-a.pin"))
         .expect("wallet-a.pin not found")
         .trim()
@@ -252,8 +327,13 @@ async fn test_self_transfer_to_subaddress() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
-        .expect("create wallet");
+    let wallet = Wallet::create(
+        secrets.seed,
+        Network::Testnet,
+        db_path.to_str().unwrap(),
+        &[0u8; 32],
+    )
+    .expect("create wallet");
 
     let d = daemon();
     let sync_height = wallet.sync(&d, None).await.expect("sync failed");
@@ -276,7 +356,9 @@ async fn test_self_transfer_to_subaddress() {
     let maps = wallet.subaddress_maps();
 
     // Get subaddress (0,1) — a CARROT subaddress
-    let carrot_sub_01 = maps.carrot.iter()
+    let carrot_sub_01 = maps
+        .carrot
+        .iter()
         .find(|(_, maj, min)| *maj == 0 && *min == 1)
         .expect("CARROT subaddress (0,1) should exist");
 
@@ -295,7 +377,10 @@ async fn test_self_transfer_to_subaddress() {
             payment_id: [0u8; 8],
             is_subaddress: true,
         })
-        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_address(
+            keys.carrot.account_spend_pubkey,
+            keys.carrot.account_view_pubkey,
+        )
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::TRANSFER)
         .set_asset_types(tx_asset_type, tx_asset_type)

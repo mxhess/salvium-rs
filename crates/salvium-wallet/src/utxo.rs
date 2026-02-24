@@ -132,10 +132,7 @@ fn select_default(candidates: &[UtxoCandidate], needed: u64) -> Option<Selection
     // fall back to largest-first accumulation.
 
     // Try single-output exact-ish match (within 10x of needed).
-    let mut singles: Vec<_> = candidates
-        .iter()
-        .filter(|c| c.amount >= needed)
-        .collect();
+    let mut singles: Vec<_> = candidates.iter().filter(|c| c.amount >= needed).collect();
     singles.sort_by_key(|c| c.amount);
 
     if let Some(best) = singles.first() {
@@ -170,7 +167,8 @@ pub fn select_utxos_with_options(
     let filtered: Vec<UtxoCandidate> = candidates
         .iter()
         .filter(|c| {
-            if options.current_height > 0 && options.min_confirmations > 0
+            if options.current_height > 0
+                && options.min_confirmations > 0
                 && options.current_height < c.block_height + options.min_confirmations
             {
                 return false;
@@ -362,8 +360,13 @@ mod tests {
             ..Default::default()
         };
         let result = select_utxos_with_options(
-            &candidates, 50, 0, SelectionStrategy::LargestFirst, &options,
-        ).unwrap();
+            &candidates,
+            50,
+            0,
+            SelectionStrategy::LargestFirst,
+            &options,
+        )
+        .unwrap();
         assert_eq!(result.selected.len(), 1);
         assert_eq!(result.selected[0].amount, 100);
     }
@@ -376,8 +379,13 @@ mod tests {
             ..Default::default()
         };
         let result = select_utxos_with_options(
-            &candidates, 50, 0, SelectionStrategy::LargestFirst, &options,
-        ).unwrap();
+            &candidates,
+            50,
+            0,
+            SelectionStrategy::LargestFirst,
+            &options,
+        )
+        .unwrap();
         // 5 is below dust_threshold=10, should be filtered out.
         for c in &result.selected {
             assert!(c.amount >= 10);
@@ -392,7 +400,11 @@ mod tests {
             ..Default::default()
         };
         let result = select_utxos_with_options(
-            &candidates, 60, 0, SelectionStrategy::SmallestFirst, &options,
+            &candidates,
+            60,
+            0,
+            SelectionStrategy::SmallestFirst,
+            &options,
         );
         // SmallestFirst would need 4 inputs (10+20+30+40=100) but max_inputs=2,
         // so re-select with top 2 by amount: 50+40=90 >= 60.
@@ -412,18 +424,18 @@ mod tests {
     #[test]
     fn test_fifo_with_options() {
         let candidates = make_candidates_with_heights(&[
-            (100, 50),  // old, confirmed
-            (200, 80),  // confirmed
-            (300, 95),  // not confirmed at height 100 with min_conf=10
+            (100, 50), // old, confirmed
+            (200, 80), // confirmed
+            (300, 95), // not confirmed at height 100 with min_conf=10
         ]);
         let options = SelectionOptions {
             min_confirmations: 10,
             current_height: 100,
             ..Default::default()
         };
-        let result = select_utxos_with_options(
-            &candidates, 250, 0, SelectionStrategy::Fifo, &options,
-        ).unwrap();
+        let result =
+            select_utxos_with_options(&candidates, 250, 0, SelectionStrategy::Fifo, &options)
+                .unwrap();
         // Only heights 50 and 80 pass (100 >= 50+10 and 100 >= 80+10).
         // Height 95 filtered (100 < 95+10).
         // Fifo order: 100@50 + 200@80 = 300 >= 250.
@@ -441,9 +453,8 @@ mod tests {
             current_height: 0,
             ..Default::default()
         };
-        let result = select_utxos_with_options(
-            &candidates, 50, 0, SelectionStrategy::Default, &options,
-        );
+        let result =
+            select_utxos_with_options(&candidates, 50, 0, SelectionStrategy::Default, &options);
         assert!(result.is_some());
     }
 
@@ -454,9 +465,8 @@ mod tests {
             dust_threshold: 10,
             ..Default::default()
         };
-        let result = select_utxos_with_options(
-            &candidates, 1, 0, SelectionStrategy::Default, &options,
-        );
+        let result =
+            select_utxos_with_options(&candidates, 1, 0, SelectionStrategy::Default, &options);
         assert!(result.is_none());
     }
 
@@ -468,8 +478,13 @@ mod tests {
             ..Default::default()
         };
         let result = select_utxos_with_options(
-            &candidates, 100, 0, SelectionStrategy::LargestFirst, &options,
-        ).unwrap();
+            &candidates,
+            100,
+            0,
+            SelectionStrategy::LargestFirst,
+            &options,
+        )
+        .unwrap();
         // 10 filtered (< 20 dust). Largest first from [50, 100, 200]: 200 >= 100.
         assert_eq!(result.selected.len(), 1);
         assert_eq!(result.selected[0].amount, 200);
@@ -477,12 +492,8 @@ mod tests {
 
     #[test]
     fn test_fifo_ordering() {
-        let candidates = make_candidates_with_heights(&[
-            (10, 500),
-            (20, 100),
-            (30, 300),
-            (40, 200),
-        ]);
+        let candidates =
+            make_candidates_with_heights(&[(10, 500), (20, 100), (30, 300), (40, 200)]);
         let result = select_utxos(&candidates, 90, 0, SelectionStrategy::Fifo).unwrap();
         // Sorted by height: 20@100, 40@200, 30@300 => 90 >= 90.
         assert_eq!(result.selected.len(), 3);
@@ -504,8 +515,13 @@ mod tests {
         // Target 80: SmallestFirst picks 10+20+30+40=100 (4 inputs > max 3).
         // Re-select: top 3 by amount [50,40,30], then SmallestFirst: 30+40=70 < 80, 30+40+50=120 >= 80.
         let result = select_utxos_with_options(
-            &candidates, 80, 0, SelectionStrategy::SmallestFirst, &options,
-        ).unwrap();
+            &candidates,
+            80,
+            0,
+            SelectionStrategy::SmallestFirst,
+            &options,
+        )
+        .unwrap();
         assert!(result.selected.len() <= 3);
         assert!(result.total >= 80);
     }

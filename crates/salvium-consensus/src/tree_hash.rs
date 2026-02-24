@@ -170,11 +170,13 @@ mod tests {
 
     #[test]
     fn test_tree_hash_deterministic() {
-        let hashes: Vec<[u8; 32]> = (0..7).map(|i| {
-            let mut h = [0u8; 32];
-            h[0] = i as u8;
-            h
-        }).collect();
+        let hashes: Vec<[u8; 32]> = (0..7)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
 
         let r1 = tree_hash(&hashes);
         let r2 = tree_hash(&hashes);

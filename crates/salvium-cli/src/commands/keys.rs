@@ -6,7 +6,10 @@ pub async fn show_viewkey(ctx: &AppContext) -> Result {
     let wallet = open_wallet(ctx)?;
 
     println!("View secret key: {}", wallet.view_secret_key_hex());
-    println!("View public key: {}", hex::encode(wallet.keys().cn.view_public_key));
+    println!(
+        "View public key: {}",
+        hex::encode(wallet.keys().cn.view_public_key)
+    );
 
     Ok(())
 }
@@ -125,7 +128,12 @@ pub async fn sign_data(ctx: &AppContext, file_path: &str) -> Result {
     Ok(())
 }
 
-pub async fn verify_data(ctx: &AppContext, file_path: &str, address: &str, signature: &str) -> Result {
+pub async fn verify_data(
+    ctx: &AppContext,
+    file_path: &str,
+    address: &str,
+    signature: &str,
+) -> Result {
     let _wallet = open_wallet(ctx)?;
 
     let data = std::fs::read(file_path)
@@ -154,7 +162,12 @@ pub async fn verify_data(ctx: &AppContext, file_path: &str, address: &str, signa
     let mut r_prime32 = [0u8; 32];
     r_prime32.copy_from_slice(&r_prime);
 
-    let c_check_data = [&r_prime32[..], &parsed_addr.spend_public_key[..], &hash32[..]].concat();
+    let c_check_data = [
+        &r_prime32[..],
+        &parsed_addr.spend_public_key[..],
+        &hash32[..],
+    ]
+    .concat();
     let c_check = salvium_crypto::keccak256(&c_check_data);
     let c_check_reduced = salvium_crypto::sc_reduce32(&c_check);
 

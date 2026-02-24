@@ -228,7 +228,8 @@ mod tests {
         let data = b"wallet secrets here";
         let encrypted = encrypt_wallet_data(data, b"old_password").unwrap();
 
-        let reencrypted = reencrypt_wallet_data(&encrypted, b"old_password", b"new_password").unwrap();
+        let reencrypted =
+            reencrypt_wallet_data(&encrypted, b"old_password", b"new_password").unwrap();
 
         // Old password should no longer work.
         assert!(decrypt_wallet_data(&reencrypted, b"old_password").is_err());

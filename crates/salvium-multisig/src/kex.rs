@@ -144,10 +144,7 @@ impl KexRoundProcessor {
                 continue;
             }
             let dh = cofactored_dh(&self.private_key, pk);
-            self.kex_keys_to_origins
-                .entry(dh)
-                .or_default()
-                .push(i);
+            self.kex_keys_to_origins.entry(dh).or_default().push(i);
             out_keys.push(dh);
         }
         self.round_keys.push(out_keys.clone());
@@ -173,7 +170,9 @@ impl KexRoundProcessor {
         if messages.len() != self.signer_count {
             return Err(format!(
                 "expected {} messages for round {}, got {}",
-                self.signer_count, round, messages.len()
+                self.signer_count,
+                round,
+                messages.len()
             ));
         }
 
@@ -251,8 +250,7 @@ impl KexRoundProcessor {
             });
         }
 
-        let multisig_pubkey =
-            aggregate.ok_or_else(|| "no pubkeys to aggregate".to_string())?;
+        let multisig_pubkey = aggregate.ok_or_else(|| "no pubkeys to aggregate".to_string())?;
 
         // Common view key: H(sorted base common privkeys concat)
         let mut common_data = Vec::new();
@@ -378,7 +376,11 @@ impl KexMessage {
 
 impl std::fmt::Display for KexMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", serde_json::to_string(self).expect("KexMessage to_string should not fail"))
+        write!(
+            f,
+            "{}",
+            serde_json::to_string(self).expect("KexMessage to_string should not fail")
+        )
     }
 }
 
@@ -419,10 +421,10 @@ mod tests {
 
     #[test]
     fn test_kex_rounds_required_various() {
-        assert_eq!(kex_rounds_required(2, 4), 3);  // 4 - 2 + 1
-        assert_eq!(kex_rounds_required(3, 4), 2);  // 4 - 3 + 1
-        assert_eq!(kex_rounds_required(4, 4), 1);  // 4 - 4 + 1
-        assert_eq!(kex_rounds_required(5, 5), 1);  // 5 - 5 + 1
+        assert_eq!(kex_rounds_required(2, 4), 3); // 4 - 2 + 1
+        assert_eq!(kex_rounds_required(3, 4), 2); // 4 - 3 + 1
+        assert_eq!(kex_rounds_required(4, 4), 1); // 4 - 4 + 1
+        assert_eq!(kex_rounds_required(5, 5), 1); // 5 - 5 + 1
         assert_eq!(kex_rounds_required(2, 10), 9); // 10 - 2 + 1
     }
 
@@ -440,10 +442,7 @@ mod tests {
         let msg = KexMessage {
             round: 1,
             signer_index: 0,
-            keys: vec![
-                "aa".repeat(32),
-                "bb".repeat(32),
-            ],
+            keys: vec!["aa".repeat(32), "bb".repeat(32)],
             msg_type: MultisigMsgType::KexRound,
         };
 
@@ -541,12 +540,14 @@ mod tests {
 
         // Round 1 messages
         let msg0 = KexMessage {
-            round: 1, signer_index: 0,
+            round: 1,
+            signer_index: 0,
             keys: vec![hex::encode(pk0), hex::encode(pk0)],
             msg_type: MultisigMsgType::KexInit,
         };
         let msg1 = KexMessage {
-            round: 1, signer_index: 1,
+            round: 1,
+            signer_index: 1,
             keys: vec![hex::encode(pk1), hex::encode(pk1)],
             msg_type: MultisigMsgType::KexInit,
         };
@@ -566,7 +567,9 @@ mod tests {
         // Verification
         let v0 = proc0.verification_message(&agg0, &view0);
         let v1 = proc1.verification_message(&agg1, &view1);
-        proc0.verify_kex(&[v0.clone(), v1.clone()], &agg0, &view0).unwrap();
+        proc0
+            .verify_kex(&[v0.clone(), v1.clone()], &agg0, &view0)
+            .unwrap();
         proc1.verify_kex(&[v0, v1], &agg1, &view1).unwrap();
     }
 
@@ -593,17 +596,20 @@ mod tests {
 
         let round1_msgs: Vec<KexMessage> = vec![
             KexMessage {
-                round: 1, signer_index: 0,
+                round: 1,
+                signer_index: 0,
                 keys: vec![hex::encode(pk0), hex::encode(pk0)],
                 msg_type: MultisigMsgType::KexInit,
             },
             KexMessage {
-                round: 1, signer_index: 1,
+                round: 1,
+                signer_index: 1,
                 keys: vec![hex::encode(pk1), hex::encode(pk1)],
                 msg_type: MultisigMsgType::KexInit,
             },
             KexMessage {
-                round: 1, signer_index: 2,
+                round: 1,
+                signer_index: 2,
                 keys: vec![hex::encode(pk2), hex::encode(pk2)],
                 msg_type: MultisigMsgType::KexInit,
             },

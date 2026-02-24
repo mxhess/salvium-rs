@@ -145,10 +145,7 @@ pub async fn payments(ctx: &AppContext, payment_id: &str) -> Result {
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:>16} TX Hash",
-        "Height", "Amount"
-    );
+    println!("{:<8} {:>16} TX Hash", "Height", "Amount");
     println!("{}", "-".repeat(60));
 
     for tx in &filtered {

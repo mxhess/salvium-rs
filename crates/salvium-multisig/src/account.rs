@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::constants::{MULTISIG_MAX_SIGNERS, MULTISIG_MIN_THRESHOLD, MultisigMsgType};
+use crate::constants::{MultisigMsgType, MULTISIG_MAX_SIGNERS, MULTISIG_MIN_THRESHOLD};
 use crate::kex::{KexMessage, KexRoundProcessor};
 use crate::signer::MultisigSigner;
 
@@ -110,10 +110,10 @@ impl MultisigAccount {
 
         // Derive public keys from secret keys using real Ed25519 curve operations.
         // spend_pub = sc_reduce32(keccak256(spend_key_bytes)) * G
-        let spend_bytes = hex::decode(spend_key)
-            .map_err(|e| format!("invalid spend key hex: {}", e))?;
-        let view_bytes = hex::decode(view_key)
-            .map_err(|e| format!("invalid view key hex: {}", e))?;
+        let spend_bytes =
+            hex::decode(spend_key).map_err(|e| format!("invalid spend key hex: {}", e))?;
+        let view_bytes =
+            hex::decode(view_key).map_err(|e| format!("invalid view key hex: {}", e))?;
 
         // Reduce the secret key to a valid scalar, then compute the public point.
         let spend_scalar = salvium_crypto::sc_reduce32(&spend_bytes);
@@ -126,7 +126,7 @@ impl MultisigAccount {
 
         let msg = KexMessage {
             round: 1,
-            signer_index: 0,
+            signer_index: self.signer_index,
             keys: vec![hex::encode(&pub_spend), hex::encode(&pub_view)],
             msg_type: MultisigMsgType::KexInit,
         };
@@ -172,19 +172,14 @@ impl MultisigAccount {
             return Err("KEX not initialized — call initialize_kex() first".to_string());
         }
 
-        let spend_hex = self
-            .spend_key
-            .as_ref()
-            .ok_or("no spend key set")?
-            .clone();
+        let spend_hex = self.spend_key.as_ref().ok_or("no spend key set")?.clone();
         let spend_bytes =
             hex::decode(&spend_hex).map_err(|e| format!("invalid spend key hex: {}", e))?;
         let spend_scalar = salvium_crypto::sc_reduce32(&spend_bytes);
         let mut privkey = [0u8; 32];
         privkey.copy_from_slice(&spend_scalar[..32]);
 
-        let main_rounds =
-            crate::kex::kex_rounds_required(self.threshold, self.signer_count);
+        let main_rounds = crate::kex::kex_rounds_required(self.threshold, self.signer_count);
 
         if self.kex_round == 1 {
             // Process round 1
@@ -275,8 +270,8 @@ impl MultisigAccount {
                 .multisig_pubkey
                 .as_ref()
                 .ok_or("multisig_pubkey not set")?;
-            let agg_bytes = hex::decode(agg_hex)
-                .map_err(|e| format!("invalid multisig_pubkey hex: {}", e))?;
+            let agg_bytes =
+                hex::decode(agg_hex).map_err(|e| format!("invalid multisig_pubkey hex: {}", e))?;
             let mut agg = [0u8; 32];
             agg.copy_from_slice(&agg_bytes[..32]);
 
@@ -284,8 +279,8 @@ impl MultisigAccount {
                 .common_privkey
                 .as_ref()
                 .ok_or("common_privkey not set")?;
-            let view_bytes = hex::decode(view_hex)
-                .map_err(|e| format!("invalid common_privkey hex: {}", e))?;
+            let view_bytes =
+                hex::decode(view_hex).map_err(|e| format!("invalid common_privkey hex: {}", e))?;
             let mut view = [0u8; 32];
             view.copy_from_slice(&view_bytes[..32]);
 
@@ -303,11 +298,26 @@ impl MultisigAccount {
     }
 
     /// Register signers from round 1 messages.
-    pub fn register_signers(&mut self, messages: &[KexMessage]) {
+    ///
+    /// # Errors
+    /// Returns `Err` if any message has missing or empty keys.
+    pub fn register_signers(&mut self, messages: &[KexMessage]) -> Result<(), String> {
         self.signers.clear();
         for msg in messages {
-            let spend_key = msg.keys.first().cloned().unwrap_or_default();
-            let view_key = msg.keys.get(1).cloned().unwrap_or_default();
+            let spend_key = msg
+                .keys
+                .first()
+                .filter(|k| !k.is_empty())
+                .cloned()
+                .ok_or_else(|| {
+                    format!("signer {} has missing/empty spend key", msg.signer_index)
+                })?;
+            let view_key = msg
+                .keys
+                .get(1)
+                .filter(|k| !k.is_empty())
+                .cloned()
+                .ok_or_else(|| format!("signer {} has missing/empty view key", msg.signer_index))?;
             self.signers.push(MultisigSigner::with_config(
                 msg.signer_index,
                 spend_key,
@@ -315,6 +325,65 @@ impl MultisigAccount {
                 format!("signer_{}", msg.signer_index),
             ));
         }
+        Ok(())
+    }
+
+    /// Compute the aggregation coefficient for this signer.
+    ///
+    /// Requires that signers have been registered (via `register_signers`).
+    pub fn get_aggregation_coefficient(&self) -> Result<[u8; 32], String> {
+        if self.signers.is_empty() {
+            return Err("no signers registered".to_string());
+        }
+
+        // Collect and sort all signer spend pubkeys
+        let mut all_pubkeys: Vec<[u8; 32]> = Vec::with_capacity(self.signers.len());
+        for signer in &self.signers {
+            let pk_bytes = hex::decode(&signer.public_spend_key)
+                .map_err(|e| format!("invalid signer pubkey hex: {}", e))?;
+            if pk_bytes.len() != 32 {
+                return Err(format!(
+                    "signer {} pubkey: expected 32 bytes, got {}",
+                    signer.index,
+                    pk_bytes.len()
+                ));
+            }
+            let mut pk32 = [0u8; 32];
+            pk32.copy_from_slice(&pk_bytes);
+            all_pubkeys.push(pk32);
+        }
+
+        let mut sorted = all_pubkeys.clone();
+        sorted.sort();
+
+        // Find our own pubkey
+        let my_pubkey = all_pubkeys
+            .get(self.signer_index)
+            .ok_or_else(|| format!("signer_index {} out of range", self.signer_index))?;
+
+        Ok(crate::kex::aggregation_coefficient(my_pubkey, &sorted))
+    }
+
+    /// Compute this signer's weighted spend key share: coeff_i * k_i.
+    ///
+    /// The sum of all signers' weighted shares' public points equals the aggregate
+    /// multisig public key.
+    ///
+    /// # Errors
+    /// Returns `Err` if the spend key is not set or signers are not registered.
+    pub fn get_weighted_spend_key_share(&self) -> Result<[u8; 32], String> {
+        let spend_hex = self.spend_key.as_ref().ok_or("no spend key set")?;
+        let spend_bytes =
+            hex::decode(spend_hex).map_err(|e| format!("invalid spend key hex: {}", e))?;
+        let spend_scalar = salvium_crypto::sc_reduce32(&spend_bytes);
+
+        let coeff = self.get_aggregation_coefficient()?;
+
+        // weighted = coeff * spend_scalar
+        let weighted = salvium_crypto::sc_mul(&coeff, &spend_scalar);
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&weighted[..32]);
+        Ok(result)
     }
 }
 

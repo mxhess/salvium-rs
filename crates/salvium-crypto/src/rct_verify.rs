@@ -13,10 +13,10 @@ use std::panic;
 #[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
+use crate::clsag::{clsag_verify, ClsagSignature};
 use crate::keccak256_internal;
+use crate::tclsag::{tclsag_verify, TclsagSignature};
 use crate::to32;
-use crate::tclsag::{TclsagSignature, tclsag_verify};
-use crate::clsag::{ClsagSignature, clsag_verify};
 
 // ─── RCT Type Constants ─────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ pub fn verify_rct_signatures(
     key_images: &[[u8; 32]],
     pseudo_outs: &[[u8; 32]],
     sigs_flat: &[u8],
-    ring_pubkeys: &[[u8; 32]],   // input_count * ring_size entries
+    ring_pubkeys: &[[u8; 32]],     // input_count * ring_size entries
     ring_commitments: &[[u8; 32]], // input_count * ring_size entries
 ) -> (bool, Option<u32>) {
     if input_count == 0 || ring_size == 0 {
@@ -172,13 +172,13 @@ pub fn verify_rct_signatures_wasm(
     rct_type: u8,
     input_count: u32,
     ring_size: u32,
-    tx_prefix_hash: &[u8],       // 32 bytes
-    rct_base_bytes: &[u8],       // Serialized rctSigBase (variable)
-    bp_components: &[u8],        // Concatenated BP+ fields (variable)
-    key_images_flat: &[u8],      // input_count * 32 bytes
-    pseudo_outs_flat: &[u8],     // input_count * 32 bytes
-    sigs_flat: &[u8],            // Packed sig data (format per rct_type)
-    ring_pubkeys_flat: &[u8],    // input_count * ring_size * 32 bytes
+    tx_prefix_hash: &[u8],        // 32 bytes
+    rct_base_bytes: &[u8],        // Serialized rctSigBase (variable)
+    bp_components: &[u8],         // Concatenated BP+ fields (variable)
+    key_images_flat: &[u8],       // input_count * 32 bytes
+    pseudo_outs_flat: &[u8],      // input_count * 32 bytes
+    sigs_flat: &[u8],             // Packed sig data (format per rct_type)
+    ring_pubkeys_flat: &[u8],     // input_count * ring_size * 32 bytes
     ring_commitments_flat: &[u8], // input_count * ring_size * 32 bytes
 ) -> Vec<u8> {
     let ic = input_count as usize;
@@ -261,24 +261,38 @@ pub fn expand_transaction(
     rct_sig_json: &mut serde_json::Value,
 ) -> Result<(), String> {
     // Get the signature array (MGs for CLSAG, or p.CLSAGs/p.TCLSAGs)
-    let p_key = if rct_sig_json.get("p").is_some() { "p" }
-        else if rct_sig_json.get("prunable").is_some() { "prunable" }
-        else { return Err("missing prunable section".to_string()); };
+    let p_key = if rct_sig_json.get("p").is_some() {
+        "p"
+    } else if rct_sig_json.get("prunable").is_some() {
+        "prunable"
+    } else {
+        return Err("missing prunable section".to_string());
+    };
     let p = rct_sig_json.get_mut(p_key).unwrap();
 
     // Determine which signature key exists
-    let sig_key = if p.get("CLSAGs").is_some() { "CLSAGs" }
-        else if p.get("clsags").is_some() { "clsags" }
-        else if p.get("TCLSAGs").is_some() { "TCLSAGs" }
-        else if p.get("tclsags").is_some() { "tclsags" }
-        else { return Err("no CLSAG or TCLSAG signatures found".to_string()); };
+    let sig_key = if p.get("CLSAGs").is_some() {
+        "CLSAGs"
+    } else if p.get("clsags").is_some() {
+        "clsags"
+    } else if p.get("TCLSAGs").is_some() {
+        "TCLSAGs"
+    } else if p.get("tclsags").is_some() {
+        "tclsags"
+    } else {
+        return Err("no CLSAG or TCLSAG signatures found".to_string());
+    };
 
     let sigs = p.get_mut(sig_key).unwrap();
-    let arr = sigs.as_array_mut().ok_or(format!("{} not an array", sig_key))?;
+    let arr = sigs
+        .as_array_mut()
+        .ok_or(format!("{} not an array", sig_key))?;
     if arr.len() != key_images.len() {
         return Err(format!(
             "{} count {} != key image count {}",
-            sig_key, arr.len(), key_images.len()
+            sig_key,
+            arr.len(),
+            key_images.len()
         ));
     }
     for (i, sig) in arr.iter_mut().enumerate() {
@@ -379,10 +393,9 @@ mod tests {
 
         // T generator
         const T_BYTES: [u8; 32] = [
-            0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf,
-            0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
-            0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00,
-            0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
+            0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf, 0x85, 0xea, 0xec, 0x80, 0x1c, 0x42,
+            0x84, 0x5f, 0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7, 0xde, 0xd2,
+            0x79, 0x4d, 0x09, 0x4f,
         ];
         let t_gen = curve25519_dalek::edwards::CompressedEdwardsY(T_BYTES)
             .decompress()
@@ -631,13 +644,25 @@ mod tests {
         let bp_components = b"bp";
         let message = compute_rct_message(&prefix_hash, rct_base, bp_components);
 
-        let sig = clsag_sign(&message, &[pk], &sk.to_bytes(), &[commitment], &z.to_bytes(), &pseudo_output, 0);
+        let sig = clsag_sign(
+            &message,
+            &[pk],
+            &sk.to_bytes(),
+            &[commitment],
+            &z.to_bytes(),
+            &pseudo_output,
+            0,
+        );
 
         // Use a WRONG key image (different from the one produced by sign)
-        let wrong_ki = (&random_scalar() * ED25519_BASEPOINT_TABLE).compress().to_bytes();
+        let wrong_ki = (&random_scalar() * ED25519_BASEPOINT_TABLE)
+            .compress()
+            .to_bytes();
 
         let mut sigs_flat = Vec::new();
-        for s in &sig.s { sigs_flat.extend_from_slice(s); }
+        for s in &sig.s {
+            sigs_flat.extend_from_slice(s);
+        }
         sigs_flat.extend_from_slice(&sig.c1);
         sigs_flat.extend_from_slice(&sig.commitment_image);
 
@@ -672,10 +697,17 @@ mod tests {
         let sigs_flat = vec![0u8; 96]; // CLSAG: 1 * 32 + 64
 
         let result = verify_rct_signatures_wasm(
-            RCT_TYPE_CLSAG, 1, 1,
-            &prefix_hash, b"base", b"bp",
-            &fake_ki, &fake_po, &sigs_flat,
-            &fake_pk, &fake_comm,
+            RCT_TYPE_CLSAG,
+            1,
+            1,
+            &prefix_hash,
+            b"base",
+            b"bp",
+            &fake_ki,
+            &fake_po,
+            &sigs_flat,
+            &fake_pk,
+            &fake_comm,
         );
 
         assert_eq!(result, vec![0xFF], "Invalid points should return error");
@@ -686,11 +718,13 @@ mod tests {
     /// Helper: build a minimal RCT JSON with a prunable section containing CLSAGs.
     fn make_clsag_rct_json(count: usize) -> serde_json::Value {
         let sigs: Vec<serde_json::Value> = (0..count)
-            .map(|_| serde_json::json!({
-                "s": ["00".repeat(32)],
-                "c1": "00".repeat(32),
-                "D": "00".repeat(32),
-            }))
+            .map(|_| {
+                serde_json::json!({
+                    "s": ["00".repeat(32)],
+                    "c1": "00".repeat(32),
+                    "D": "00".repeat(32),
+                })
+            })
             .collect();
         serde_json::json!({
             "p": {
@@ -702,12 +736,14 @@ mod tests {
     /// Helper: build a minimal RCT JSON with a prunable section containing TCLSAGs.
     fn make_tclsag_rct_json(count: usize) -> serde_json::Value {
         let sigs: Vec<serde_json::Value> = (0..count)
-            .map(|_| serde_json::json!({
-                "sx": ["00".repeat(32)],
-                "sy": ["00".repeat(32)],
-                "c1": "00".repeat(32),
-                "D": "00".repeat(32),
-            }))
+            .map(|_| {
+                serde_json::json!({
+                    "sx": ["00".repeat(32)],
+                    "sy": ["00".repeat(32)],
+                    "c1": "00".repeat(32),
+                    "D": "00".repeat(32),
+                })
+            })
             .collect();
         serde_json::json!({
             "p": {
@@ -724,7 +760,10 @@ mod tests {
         let mut rct = make_clsag_rct_json(2);
 
         let result = expand_transaction(&key_images, &mut rct);
-        assert!(result.is_ok(), "expand_transaction should succeed for CLSAGs");
+        assert!(
+            result.is_ok(),
+            "expand_transaction should succeed for CLSAGs"
+        );
 
         let clsags = rct["p"]["CLSAGs"].as_array().unwrap();
         assert_eq!(clsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
@@ -739,7 +778,10 @@ mod tests {
         let mut rct = make_tclsag_rct_json(2);
 
         let result = expand_transaction(&key_images, &mut rct);
-        assert!(result.is_ok(), "expand_transaction should succeed for TCLSAGs");
+        assert!(
+            result.is_ok(),
+            "expand_transaction should succeed for TCLSAGs"
+        );
 
         let tclsags = rct["p"]["TCLSAGs"].as_array().unwrap();
         assert_eq!(tclsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
@@ -777,7 +819,10 @@ mod tests {
         let mut rct = make_clsag_rct_json(0);
 
         let result = expand_transaction(key_images, &mut rct);
-        assert!(result.is_ok(), "empty key images with empty sigs should succeed");
+        assert!(
+            result.is_ok(),
+            "empty key images with empty sigs should succeed"
+        );
     }
 
     #[test]
@@ -844,9 +889,7 @@ mod tests {
 
     #[test]
     fn test_expand_multiple_inputs() {
-        let key_images: Vec<[u8; 32]> = (0..5)
-            .map(|i| [i as u8; 32])
-            .collect();
+        let key_images: Vec<[u8; 32]> = (0..5).map(|i| [i as u8; 32]).collect();
         let mut rct = make_clsag_rct_json(5);
 
         let result = expand_transaction(&key_images, &mut rct);

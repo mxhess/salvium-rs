@@ -154,8 +154,20 @@ impl Fe {
     /// Field multiplication: a * b mod p
     fn mul(a: &Fe, b: &Fe) -> Fe {
         // Schoolbook multiplication with 128-bit intermediates
-        let (a0, a1, a2, a3, a4) = (a.0[0] as u128, a.0[1] as u128, a.0[2] as u128, a.0[3] as u128, a.0[4] as u128);
-        let (b0, b1, b2, b3, b4) = (b.0[0] as u128, b.0[1] as u128, b.0[2] as u128, b.0[3] as u128, b.0[4] as u128);
+        let (a0, a1, a2, a3, a4) = (
+            a.0[0] as u128,
+            a.0[1] as u128,
+            a.0[2] as u128,
+            a.0[3] as u128,
+            a.0[4] as u128,
+        );
+        let (b0, b1, b2, b3, b4) = (
+            b.0[0] as u128,
+            b.0[1] as u128,
+            b.0[2] as u128,
+            b.0[3] as u128,
+            b.0[4] as u128,
+        );
 
         // Precompute 19*b_i for reduction
         let b1_19 = 19 * b1;
@@ -172,20 +184,38 @@ impl Fe {
         let mut t4 = a0 * b4 + a1 * b3 + a2 * b2 + a3 * b1 + a4 * b0;
 
         // Carry propagation
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
-        let carry = t1 >> 51; t1 &= 0x7FFFFFFFFFFFF; t2 += carry;
-        let carry = t2 >> 51; t2 &= 0x7FFFFFFFFFFFF; t3 += carry;
-        let carry = t3 >> 51; t3 &= 0x7FFFFFFFFFFFF; t4 += carry;
-        let carry = t4 >> 51; t4 &= 0x7FFFFFFFFFFFF; t0 += carry * 19;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
+        let carry = t1 >> 51;
+        t1 &= 0x7FFFFFFFFFFFF;
+        t2 += carry;
+        let carry = t2 >> 51;
+        t2 &= 0x7FFFFFFFFFFFF;
+        t3 += carry;
+        let carry = t3 >> 51;
+        t3 &= 0x7FFFFFFFFFFFF;
+        t4 += carry;
+        let carry = t4 >> 51;
+        t4 &= 0x7FFFFFFFFFFFF;
+        t0 += carry * 19;
         // One more carry for t0
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
 
         Fe([t0 as u64, t1 as u64, t2 as u64, t3 as u64, t4 as u64])
     }
 
     /// Field squaring: a^2 mod p (optimized)
     fn sq(a: &Fe) -> Fe {
-        let (a0, a1, a2, a3, a4) = (a.0[0] as u128, a.0[1] as u128, a.0[2] as u128, a.0[3] as u128, a.0[4] as u128);
+        let (a0, a1, a2, a3, a4) = (
+            a.0[0] as u128,
+            a.0[1] as u128,
+            a.0[2] as u128,
+            a.0[3] as u128,
+            a.0[4] as u128,
+        );
 
         // Double cross terms
         let d0 = 2 * a0;
@@ -202,12 +232,24 @@ impl Fe {
         let mut t3 = d0 * a3 + d1 * a2 + a4_19 * a4;
         let mut t4 = d0 * a4 + d1 * a3 + a2 * a2;
 
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
-        let carry = t1 >> 51; t1 &= 0x7FFFFFFFFFFFF; t2 += carry;
-        let carry = t2 >> 51; t2 &= 0x7FFFFFFFFFFFF; t3 += carry;
-        let carry = t3 >> 51; t3 &= 0x7FFFFFFFFFFFF; t4 += carry;
-        let carry = t4 >> 51; t4 &= 0x7FFFFFFFFFFFF; t0 += carry * 19;
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
+        let carry = t1 >> 51;
+        t1 &= 0x7FFFFFFFFFFFF;
+        t2 += carry;
+        let carry = t2 >> 51;
+        t2 &= 0x7FFFFFFFFFFFF;
+        t3 += carry;
+        let carry = t3 >> 51;
+        t3 &= 0x7FFFFFFFFFFFF;
+        t4 += carry;
+        let carry = t4 >> 51;
+        t4 &= 0x7FFFFFFFFFFFF;
+        t0 += carry * 19;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
 
         Fe([t0 as u64, t1 as u64, t2 as u64, t3 as u64, t4 as u64])
     }
@@ -221,12 +263,24 @@ impl Fe {
         let mut t3 = a.0[3] as u128 * c;
         let mut t4 = a.0[4] as u128 * c;
 
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
-        let carry = t1 >> 51; t1 &= 0x7FFFFFFFFFFFF; t2 += carry;
-        let carry = t2 >> 51; t2 &= 0x7FFFFFFFFFFFF; t3 += carry;
-        let carry = t3 >> 51; t3 &= 0x7FFFFFFFFFFFF; t4 += carry;
-        let carry = t4 >> 51; t4 &= 0x7FFFFFFFFFFFF; t0 += carry * 19;
-        let carry = t0 >> 51; t0 &= 0x7FFFFFFFFFFFF; t1 += carry;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
+        let carry = t1 >> 51;
+        t1 &= 0x7FFFFFFFFFFFF;
+        t2 += carry;
+        let carry = t2 >> 51;
+        t2 &= 0x7FFFFFFFFFFFF;
+        t3 += carry;
+        let carry = t3 >> 51;
+        t3 &= 0x7FFFFFFFFFFFF;
+        t4 += carry;
+        let carry = t4 >> 51;
+        t4 &= 0x7FFFFFFFFFFFF;
+        t0 += carry * 19;
+        let carry = t0 >> 51;
+        t0 &= 0x7FFFFFFFFFFFF;
+        t1 += carry;
 
         Fe([t0 as u64, t1 as u64, t2 as u64, t3 as u64, t4 as u64])
     }
@@ -235,56 +289,72 @@ impl Fe {
     /// Uses the addition chain for p-2 = 2^255 - 21
     fn invert(a: &Fe) -> Fe {
         // Compute a^(p-2) via the standard addition chain for 2^255 - 21
-        let z2 = Fe::sq(a);                     // a^2
+        let z2 = Fe::sq(a); // a^2
         let z9 = {
-            let t = Fe::sq(&z2);                // a^4
-            let t = Fe::sq(&t);                 // a^8
-            Fe::mul(&t, a)                      // a^9
+            let t = Fe::sq(&z2); // a^4
+            let t = Fe::sq(&t); // a^8
+            Fe::mul(&t, a) // a^9
         };
-        let z11 = Fe::mul(&z9, &z2);           // a^11
+        let z11 = Fe::mul(&z9, &z2); // a^11
         let z_5_0 = {
-            let t = Fe::sq(&z11);               // a^22
-            Fe::mul(&t, &z9)                    // a^31 = a^(2^5 - 1)
+            let t = Fe::sq(&z11); // a^22
+            Fe::mul(&t, &z9) // a^31 = a^(2^5 - 1)
         };
         let z_10_0 = {
-            let mut t = Fe::sq(&z_5_0);         // a^(2^6 - 2)
-            for _ in 1..5 { t = Fe::sq(&t); }   // a^(2^10 - 2^5)
-            Fe::mul(&t, &z_5_0)                 // a^(2^10 - 1)
+            let mut t = Fe::sq(&z_5_0); // a^(2^6 - 2)
+            for _ in 1..5 {
+                t = Fe::sq(&t);
+            } // a^(2^10 - 2^5)
+            Fe::mul(&t, &z_5_0) // a^(2^10 - 1)
         };
         let z_20_0 = {
             let mut t = Fe::sq(&z_10_0);
-            for _ in 1..10 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_10_0)                // a^(2^20 - 1)
+            for _ in 1..10 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_10_0) // a^(2^20 - 1)
         };
         let z_40_0 = {
             let mut t = Fe::sq(&z_20_0);
-            for _ in 1..20 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_20_0)                // a^(2^40 - 1)
+            for _ in 1..20 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_20_0) // a^(2^40 - 1)
         };
         let z_50_0 = {
             let mut t = Fe::sq(&z_40_0);
-            for _ in 1..10 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_10_0)                // a^(2^50 - 1)
+            for _ in 1..10 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_10_0) // a^(2^50 - 1)
         };
         let z_100_0 = {
             let mut t = Fe::sq(&z_50_0);
-            for _ in 1..50 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_50_0)                // a^(2^100 - 1)
+            for _ in 1..50 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_50_0) // a^(2^100 - 1)
         };
         let z_200_0 = {
             let mut t = Fe::sq(&z_100_0);
-            for _ in 1..100 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_100_0)               // a^(2^200 - 1)
+            for _ in 1..100 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_100_0) // a^(2^200 - 1)
         };
         let z_250_0 = {
             let mut t = Fe::sq(&z_200_0);
-            for _ in 1..50 { t = Fe::sq(&t); }
-            Fe::mul(&t, &z_50_0)                // a^(2^250 - 1)
+            for _ in 1..50 {
+                t = Fe::sq(&t);
+            }
+            Fe::mul(&t, &z_50_0) // a^(2^250 - 1)
         };
         {
             let mut t = Fe::sq(&z_250_0);
-            for _ in 1..5 { t = Fe::sq(&t); }   // a^(2^255 - 32)
-            Fe::mul(&t, &z11)                   // a^(2^255 - 21) = a^(p-2)
+            for _ in 1..5 {
+                t = Fe::sq(&t);
+            } // a^(2^255 - 32)
+            Fe::mul(&t, &z11) // a^(2^255 - 21) = a^(p-2)
         }
     }
 
@@ -512,7 +582,7 @@ mod tests {
     fn hex_to_bytes32(hex: &str) -> [u8; 32] {
         let mut out = [0u8; 32];
         for i in 0..32 {
-            out[i] = u8::from_str_radix(&hex[i*2..i*2+2], 16).unwrap();
+            out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
         }
         out
     }

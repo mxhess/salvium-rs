@@ -25,13 +25,13 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod daemon;
 pub mod error;
 pub mod handles;
-pub mod strings;
-pub mod wallet;
-pub mod daemon;
-pub mod transfer;
 pub mod multisig;
+pub mod strings;
+pub mod transfer;
+pub mod wallet;
 
 use std::sync::OnceLock;
 use tokio::runtime::Runtime;
@@ -41,9 +41,7 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 /// Get (or lazily create) the singleton tokio runtime.
 pub fn runtime() -> &'static Runtime {
-    RUNTIME.get_or_init(|| {
-        Runtime::new().expect("failed to create tokio runtime")
-    })
+    RUNTIME.get_or_init(|| Runtime::new().expect("failed to create tokio runtime"))
 }
 
 /// Explicitly initialize the FFI runtime.

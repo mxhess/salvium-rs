@@ -107,7 +107,10 @@ pub fn detect_language(mnemonic: &str) -> Result<&'static WordList, MnemonicErro
 /// Get a language by name.
 pub fn get_language(name: &str) -> Option<&'static WordList> {
     let normalized = name.to_lowercase();
-    ALL_LANGUAGES.iter().find(|l| l.english_name == normalized).copied()
+    ALL_LANGUAGES
+        .iter()
+        .find(|l| l.english_name == normalized)
+        .copied()
 }
 
 /// Decode a 25-word mnemonic to a 256-bit seed.
@@ -128,8 +131,9 @@ pub fn mnemonic_to_seed(
     // Resolve language
     let word_list = match language {
         Some("auto") | None => detect_language(mnemonic)?,
-        Some(name) => get_language(name)
-            .ok_or_else(|| MnemonicError::UnknownLanguage(name.to_string()))?,
+        Some(name) => {
+            get_language(name).ok_or_else(|| MnemonicError::UnknownLanguage(name.to_string()))?
+        }
     };
 
     // Convert words to indices
@@ -170,9 +174,7 @@ pub fn mnemonic_to_seed(
         let w2 = indices[i * 3 + 1];
         let w3 = indices[i * 3 + 2];
 
-        let val = w1
-            + n * (((n - w1) + w2) % n)
-            + n * n * (((n - w2) + w3) % n);
+        let val = w1 + n * (((n - w1) + w2) % n) + n * n * (((n - w2) + w3) % n);
 
         // Verify encoding
         if val % n != w1 {
@@ -193,13 +195,11 @@ pub fn mnemonic_to_seed(
 }
 
 /// Encode a 256-bit seed to a 25-word mnemonic.
-pub fn seed_to_mnemonic(
-    seed: &[u8; 32],
-    language: Option<&str>,
-) -> Result<String, MnemonicError> {
+pub fn seed_to_mnemonic(seed: &[u8; 32], language: Option<&str>) -> Result<String, MnemonicError> {
     let word_list = match language {
-        Some(name) => get_language(name)
-            .ok_or_else(|| MnemonicError::UnknownLanguage(name.to_string()))?,
+        Some(name) => {
+            get_language(name).ok_or_else(|| MnemonicError::UnknownLanguage(name.to_string()))?
+        }
         None => wordlists::english(),
     };
 
@@ -262,10 +262,9 @@ mod tests {
     #[test]
     fn test_seed_mnemonic_roundtrip() {
         let seed = [
-            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-            0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
-            0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77, 0x88, 0x99,
         ];
 
         let mnemonic = seed_to_mnemonic(&seed, Some("english")).unwrap();

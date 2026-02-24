@@ -63,7 +63,7 @@ pub fn estimate_tx_size(
         + 4            // asset_type ("SAL\0" varint-len + bytes)
         + 1            // key_offsets count varint
         + ring_size * 4  // key_offsets (varints, avg ~4 bytes each)
-        + 32;          // key_image
+        + 32; // key_image
     size += num_inputs * per_input;
 
     // Per-output size.
@@ -74,7 +74,7 @@ pub fn estimate_tx_size(
             + 32  // one-time key
             + 4   // asset_type
             + 3   // view tag (3 bytes for CARROT)
-            + 16  // encrypted janus anchor
+            + 16 // encrypted janus anchor
         }
         output_type::TAGGED_KEY => {
             1 + 1 + 32 + 4 + 1 // type + amount + key + asset + view_tag(1)
@@ -301,7 +301,10 @@ mod tests {
     fn test_weight_includes_clawback() {
         let size = estimate_tx_size(2, 8, 16, true, output_type::CARROT_V1);
         let weight = estimate_tx_weight(2, 8, 16, true, output_type::CARROT_V1);
-        assert!(weight > size, "weight should include clawback for 8 outputs");
+        assert!(
+            weight > size,
+            "weight should include clawback for 8 outputs"
+        );
     }
 
     #[test]

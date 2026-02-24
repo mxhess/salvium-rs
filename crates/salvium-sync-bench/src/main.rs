@@ -11,7 +11,7 @@ use clap::Parser;
 use salvium_crypto::storage::OutputQuery;
 use salvium_rpc::DaemonRpc;
 use salvium_types::constants::{self, Network};
-use salvium_wallet::{Wallet, WalletKeys, WalletType, SyncEvent};
+use salvium_wallet::{SyncEvent, Wallet, WalletKeys, WalletType};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -135,9 +135,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 2. Connect to daemon ────────────────────────────────────────────
     let daemon = DaemonRpc::new(daemon_url);
-    let info = daemon.get_info().await.map_err(|e| {
-        format!("cannot reach daemon at {daemon_url}: {e}")
-    })?;
+    let info = daemon
+        .get_info()
+        .await
+        .map_err(|e| format!("cannot reach daemon at {daemon_url}: {e}"))?;
 
     let daemon_height = info.height;
     let synchronized = info.synchronized;
@@ -181,7 +182,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let keys = WalletKeys::from_seed(spend_sk, network);
             // Verify the view key matches
             if keys.cn.view_secret_key != view_sk {
-                return Err("--view-key does not match the view key derived from --spend-key".into());
+                return Err(
+                    "--view-key does not match the view key derived from --spend-key".into(),
+                );
             }
             Wallet::open(keys, &db_path, &db_key)?
         } else if let Some(ref spend_pub_hex) = args.spend_pub {
@@ -213,7 +216,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "Daemon:         {} (height: {}, {})",
         daemon_url,
         daemon_height,
-        if synchronized { "synchronized" } else { "syncing" }
+        if synchronized {
+            "synchronized"
+        } else {
+            "syncing"
+        }
     );
     println!(
         "Wallet type:    {} (from {})",
@@ -280,18 +287,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     from_height,
                     to_height,
                 } => {
-                    println!(
-                        "  ** Reorg detected: {} -> {} **",
-                        from_height, to_height
-                    );
+                    println!("  ** Reorg detected: {} -> {} **", from_height, to_height);
                 }
                 SyncEvent::Error(ref msg) => {
                     log::error!("sync error: {}", msg);
                 }
-                SyncEvent::ParseError { height, blob_len, ref error } => {
+                SyncEvent::ParseError {
+                    height,
+                    blob_len,
+                    ref error,
+                } => {
                     log::error!(
                         "block parse error at height {} (blob_len={}): {}",
-                        height, blob_len, error
+                        height,
+                        blob_len,
+                        error
                     );
                 }
                 SyncEvent::Complete { height } => {
@@ -373,7 +383,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("{}", "-".repeat(110));
         for o in &unspent_outputs {
-            let height_str = o.block_height.map(|h| h.to_string()).unwrap_or_else(|| "?".into());
+            let height_str = o
+                .block_height
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "?".into());
             let ki_str = o.key_image.as_deref().unwrap_or("(none)");
             let tx_type_str = match o.tx_type {
                 1 => "miner",
@@ -403,16 +416,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let all_stakes = wallet.get_stakes(None)?;
     if !all_stakes.is_empty() {
         let locked_stakes: Vec<_> = all_stakes.iter().filter(|s| s.status == "locked").collect();
-        let returned_stakes: Vec<_> = all_stakes.iter().filter(|s| s.status == "returned").collect();
-        let txid_matched: Vec<_> = returned_stakes.iter()
+        let returned_stakes: Vec<_> = all_stakes
+            .iter()
+            .filter(|s| s.status == "returned")
+            .collect();
+        let txid_matched: Vec<_> = returned_stakes
+            .iter()
             .filter(|s| s.return_output_key.is_some())
             .collect();
-        let height_matched: Vec<_> = returned_stakes.iter()
+        let height_matched: Vec<_> = returned_stakes
+            .iter()
             .filter(|s| s.return_output_key.is_none())
             .collect();
 
         println!();
-        println!("Stakes ({} total: {} locked, {} returned)", all_stakes.len(), locked_stakes.len(), returned_stakes.len());
+        println!(
+            "Stakes ({} total: {} locked, {} returned)",
+            all_stakes.len(),
+            locked_stakes.len(),
+            returned_stakes.len()
+        );
         println!("{}", "-".repeat(100));
         println!(
             "{:<18} {:>8} {:>16} {:>8} {:<10} {:<10}",
@@ -422,7 +445,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         for s in &all_stakes {
             let method = if s.status == "returned" {
-                if s.return_output_key.is_some() { "tx-id" } else { "height" }
+                if s.return_output_key.is_some() {
+                    "tx-id"
+                } else {
+                    "height"
+                }
             } else if s.return_output_key.is_some() {
                 "has-key"
             } else {
@@ -442,7 +469,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", "-".repeat(100));
         println!(
             "Return tracking: {} via tx-id match, {} via height-based fallback",
-            txid_matched.len(), height_matched.len()
+            txid_matched.len(),
+            height_matched.len()
         );
     }
 

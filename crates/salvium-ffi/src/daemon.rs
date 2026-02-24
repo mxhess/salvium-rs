@@ -36,9 +36,7 @@ pub unsafe extern "C" fn salvium_daemon_get_info(handle: *mut c_void) -> *mut c_
     ffi_try_string(|| {
         let daemon = unsafe { borrow_handle::<DaemonRpc>(handle) }?;
         let rt = crate::runtime();
-        let info = rt
-            .block_on(daemon.get_info())
-            .map_err(|e| e.to_string())?;
+        let info = rt.block_on(daemon.get_info()).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| e.to_string())
     })
 }

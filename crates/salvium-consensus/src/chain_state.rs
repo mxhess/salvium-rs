@@ -7,9 +7,8 @@
 //! Reference: salvium/src/cryptonote_core/blockchain.cpp, consensus.js
 
 use salvium_types::consensus::{
-    BLOCK_GRANTED_FULL_REWARD_ZONE_V5, DIFFICULTY_TARGET_V2, DIFFICULTY_WINDOW_V2,
-    SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR,
-    next_difficulty_v2,
+    next_difficulty_v2, BLOCK_GRANTED_FULL_REWARD_ZONE_V5, DIFFICULTY_TARGET_V2,
+    DIFFICULTY_WINDOW_V2, SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR,
 };
 
 // =============================================================================
@@ -109,9 +108,7 @@ impl ChainState {
 
     /// Cumulative difficulty at the tip (0 when chain is empty).
     pub fn get_cumulative_difficulty(&self) -> u128 {
-        self.blocks
-            .last()
-            .map_or(0, |b| b.cumulative_difficulty)
+        self.blocks.last().map_or(0, |b| b.cumulative_difficulty)
     }
 
     // -------------------------------------------------------------------------
@@ -149,7 +146,10 @@ impl ChainState {
     /// weights when the chain is shorter).
     pub fn get_short_term_weights(&self) -> Vec<u64> {
         let start = self.blocks.len().saturating_sub(REWARD_BLOCKS_WINDOW);
-        self.blocks[start..].iter().map(|b| b.block_weight).collect()
+        self.blocks[start..]
+            .iter()
+            .map(|b| b.block_weight)
+            .collect()
     }
 
     /// Compute the dynamic block weight limit.
@@ -175,8 +175,8 @@ impl ChainState {
 
         let mut effective_median = long_term_effective_median.max(short_term_median);
         // Clamp to surge factor
-        effective_median = effective_median
-            .min(SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * long_term_effective_median);
+        effective_median =
+            effective_median.min(SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * long_term_effective_median);
         // Floor at full reward zone
         effective_median = effective_median.max(BLOCK_GRANTED_FULL_REWARD_ZONE_V5);
 
@@ -288,7 +288,10 @@ mod tests {
 
     #[test]
     fn median_all_same() {
-        assert_eq!(get_median_block_weight(&[300_000, 300_000, 300_000]), 300_000);
+        assert_eq!(
+            get_median_block_weight(&[300_000, 300_000, 300_000]),
+            300_000
+        );
     }
 
     // ---- ChainState ----------------------------------------------------------

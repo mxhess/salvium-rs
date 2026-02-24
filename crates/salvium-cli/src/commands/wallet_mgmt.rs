@@ -27,7 +27,9 @@ pub async fn create_wallet(ctx: &AppContext, name: Option<String>) -> Result {
     let keys = WalletKeys::from_seed(seed, ctx.network);
     let mnemonic = wallet.mnemonic().and_then(|r| r.ok());
 
-    let spend_sk = keys.cn.spend_secret_key
+    let spend_sk = keys
+        .cn
+        .spend_secret_key
         .ok_or("wallet has no spend secret key")?;
     let secrets = salvium_wallet::WalletSecrets {
         seed: hex::encode(seed),

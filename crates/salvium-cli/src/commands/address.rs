@@ -48,13 +48,22 @@ pub async fn account_list(ctx: &AppContext) -> Result {
         .unwrap_or_else(|| "1".to_string());
     let count: u32 = count_str.parse().unwrap_or(1);
 
-    println!("{:<6} {:<20} {:>20} {:>20}", "Index", "Label", "Balance", "Unlocked");
+    println!(
+        "{:<6} {:<20} {:>20} {:>20}",
+        "Index", "Label", "Balance", "Unlocked"
+    );
     println!("{}", "-".repeat(70));
 
     for i in 0..count {
         let label = wallet
             .get_attribute(&format!("account_label:{}", i))?
-            .unwrap_or_else(|| if i == 0 { "Primary".to_string() } else { format!("Account #{}", i) });
+            .unwrap_or_else(|| {
+                if i == 0 {
+                    "Primary".to_string()
+                } else {
+                    format!("Account #{}", i)
+                }
+            });
         let bal = wallet.get_balance("SAL", i as i32)?;
         println!(
             "{:<6} {:<20} {:>20} {:>20}",
@@ -228,7 +237,10 @@ pub async fn address_book_list(ctx: &AppContext) -> Result {
     println!("{}", "-".repeat(70));
 
     for entry in &entries {
-        println!("{:<4} {:<20} {}", entry.row_id, &entry.label, &entry.address);
+        println!(
+            "{:<4} {:<20} {}",
+            entry.row_id, &entry.label, &entry.address
+        );
         if !entry.description.is_empty() {
             println!("     {}", &entry.description);
         }

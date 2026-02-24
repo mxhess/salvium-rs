@@ -5,12 +5,7 @@
 use super::*;
 use crate::tx_common::{self, TxPipeline};
 
-pub async fn transfer(
-    ctx: &AppContext,
-    address: &str,
-    amount_str: &str,
-    priority: &str,
-) -> Result {
+pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priority: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -243,7 +238,11 @@ pub async fn convert(
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
-    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), source_asset);
+    println!(
+        "  Estimated fee: {} {}",
+        format_sal_u64(est_fee),
+        source_asset
+    );
 
     let balance = wallet.get_balance(source_asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
@@ -538,7 +537,10 @@ pub async fn sweep_below(
         return Ok(());
     }
 
-    let total: u64 = below.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
+    let total: u64 = below
+        .iter()
+        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
+        .sum();
     let est_fee = salvium_tx::estimate_tx_fee(below.len(), 1, 16, true, 0x04, fee_priority);
 
     if total <= est_fee {
@@ -688,7 +690,10 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
         return Ok(());
     }
 
-    let total: u64 = unmixable.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
+    let total: u64 = unmixable
+        .iter()
+        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
+        .sum();
     println!(
         "Found {} unmixable outputs totalling {} SAL",
         unmixable.len(),
@@ -802,16 +807,15 @@ pub async fn locked_sweep_all(
         .set_fee(actual_fee);
 
     let result = pipeline.build_sign_submit(builder).await?;
-    println!("Locked sweep submitted! TX hash: {}", hex::encode(result.tx_hash));
+    println!(
+        "Locked sweep submitted! TX hash: {}",
+        hex::encode(result.tx_hash)
+    );
 
     Ok(())
 }
 
-pub async fn return_payment(
-    ctx: &AppContext,
-    tx_hash: &str,
-    priority: &str,
-) -> Result {
+pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -899,7 +903,10 @@ pub async fn return_payment(
         .set_fee(actual_fee);
 
     let result = pipeline.build_sign_submit(builder).await?;
-    println!("Return payment submitted! TX hash: {}", hex::encode(result.tx_hash));
+    println!(
+        "Return payment submitted! TX hash: {}",
+        hex::encode(result.tx_hash)
+    );
 
     Ok(())
 }

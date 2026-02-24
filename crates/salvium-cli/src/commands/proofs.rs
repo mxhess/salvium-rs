@@ -52,12 +52,7 @@ pub async fn set_tx_key(ctx: &AppContext, tx_hash: &str, tx_key: &str) -> Result
     Ok(())
 }
 
-pub async fn check_tx_key(
-    ctx: &AppContext,
-    tx_hash: &str,
-    tx_key: &str,
-    address: &str,
-) -> Result {
+pub async fn check_tx_key(ctx: &AppContext, tx_hash: &str, tx_key: &str, address: &str) -> Result {
     let _wallet = open_wallet(ctx)?;
 
     let parsed_addr = salvium_types::address::parse_address(address)
@@ -66,10 +61,8 @@ pub async fn check_tx_key(
     let tx_hash_bytes = hex_to_32(tx_hash)?;
 
     // Derive the key derivation: D = tx_key * view_pubkey.
-    let derivation = salvium_crypto::generate_key_derivation(
-        &parsed_addr.view_public_key,
-        &tx_key_bytes,
-    );
+    let derivation =
+        salvium_crypto::generate_key_derivation(&parsed_addr.view_public_key, &tx_key_bytes);
 
     println!("Tx hash:    {}", tx_hash);
     println!("Tx key:     {}", tx_key);
@@ -85,12 +78,7 @@ pub async fn check_tx_key(
     Ok(())
 }
 
-pub async fn get_tx_proof(
-    ctx: &AppContext,
-    tx_hash: &str,
-    address: &str,
-    message: &str,
-) -> Result {
+pub async fn get_tx_proof(ctx: &AppContext, tx_hash: &str, address: &str, message: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     // Try to get the tx secret key from attributes.
@@ -105,10 +93,8 @@ pub async fn get_tx_proof(
 
     // Generate proof: shared_secret = tx_key * view_pubkey
     // proof = sign(message || tx_hash || shared_secret) with tx_key
-    let derivation = salvium_crypto::generate_key_derivation(
-        &parsed_addr.view_public_key,
-        &tx_key_bytes,
-    );
+    let derivation =
+        salvium_crypto::generate_key_derivation(&parsed_addr.view_public_key, &tx_key_bytes);
 
     let proof_data = [
         message.as_bytes(),
@@ -241,12 +227,15 @@ pub async fn get_spend_proof(ctx: &AppContext, tx_hash: &str, message: &str) -> 
         .spend_secret_key
         .ok_or("wallet has no spend secret key")?;
 
-    let proof_data = [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default()].concat();
+    let proof_data = [
+        message.as_bytes(),
+        &hex::decode(tx_hash).unwrap_or_default(),
+    ]
+    .concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
 
     // Sign with the spend key.
-    let r_scalar =
-        salvium_crypto::keccak256(&[&spend_secret[..], &proof_hash].concat());
+    let r_scalar = salvium_crypto::keccak256(&[&spend_secret[..], &proof_hash].concat());
     let mut r32 = [0u8; 32];
     r32.copy_from_slice(&salvium_crypto::sc_reduce32(&r_scalar));
     let r_pub = salvium_crypto::scalar_mult_base(&r32);
@@ -290,7 +279,11 @@ pub async fn check_spend_proof(
         .first()
         .ok_or("transaction not found on daemon")?;
 
-    let proof_data = [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default()].concat();
+    let proof_data = [
+        message.as_bytes(),
+        &hex::decode(tx_hash).unwrap_or_default(),
+    ]
+    .concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
     let mut proof_hash32 = [0u8; 32];
     proof_hash32.copy_from_slice(&proof_hash[..32]);
@@ -329,8 +322,7 @@ pub async fn get_reserve_proof(ctx: &AppContext, amount_str: &str, message: &str
     let proof_data = format!("{}:{}:{}", addr, amount, message);
     let proof_hash = salvium_crypto::keccak256(proof_data.as_bytes());
 
-    let r_scalar =
-        salvium_crypto::keccak256(&[&spend_secret[..], &proof_hash].concat());
+    let r_scalar = salvium_crypto::keccak256(&[&spend_secret[..], &proof_hash].concat());
     let mut r32 = [0u8; 32];
     r32.copy_from_slice(&salvium_crypto::sc_reduce32(&r_scalar));
     let r_pub = salvium_crypto::scalar_mult_base(&r32);

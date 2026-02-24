@@ -52,7 +52,9 @@ pub async fn set_daemon(ctx: &AppContext, url: &str) -> Result {
 
 pub async fn start_mining(ctx: &AppContext, address: &str, threads: u32) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
-    daemon.start_mining(address, threads as u64, false, false).await?;
+    daemon
+        .start_mining(address, threads as u64, false, false)
+        .await?;
     println!("Mining started with {} threads.", threads);
     Ok(())
 }
@@ -86,7 +88,10 @@ pub async fn net_stats(ctx: &AppContext) -> Result {
     println!("  Start time:    {}", stats.start_time);
     println!("  Total recv:    {} bytes", stats.total_bytes_in);
     println!("  Total sent:    {} bytes", stats.total_bytes_out);
-    println!("  Total packets: {} in / {} out", stats.total_packets_in, stats.total_packets_out);
+    println!(
+        "  Total packets: {} in / {} out",
+        stats.total_packets_in, stats.total_packets_out
+    );
     Ok(())
 }
 
@@ -186,10 +191,16 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                 SyncEvent::Error(msg) => {
                     log::error!("sync error: {}", msg);
                 }
-                SyncEvent::ParseError { height, blob_len, ref error } => {
+                SyncEvent::ParseError {
+                    height,
+                    blob_len,
+                    ref error,
+                } => {
                     log::error!(
                         "block parse error at height {} (blob_len={}): {}",
-                        height, blob_len, error
+                        height,
+                        blob_len,
+                        error
                     );
                 }
             }
@@ -224,7 +235,10 @@ fn supply_field_u64(supply: &salvium_rpc::daemon::SupplyInfo, field: &str) -> u6
     supply
         .extra
         .get(field)
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(0)
 }
 
@@ -232,19 +246,40 @@ pub async fn price_info(ctx: &AppContext) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
     let supply = daemon.get_supply_info().await?;
     println!("Supply info:");
-    println!("  Circulating:   {} SAL", format_sal_u64(supply_field_u64(&supply, "circulating_supply")));
-    println!("  Total staked:  {} SAL", format_sal_u64(supply_field_u64(&supply, "total_staked")));
-    println!("  Total burned:  {} SAL", format_sal_u64(supply_field_u64(&supply, "total_burned")));
+    println!(
+        "  Circulating:   {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "circulating_supply"))
+    );
+    println!(
+        "  Total staked:  {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "total_staked"))
+    );
+    println!(
+        "  Total burned:  {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "total_burned"))
+    );
     Ok(())
 }
 
 pub async fn supply_info(ctx: &AppContext) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
     let supply = daemon.get_supply_info().await?;
-    println!("Circulating supply: {} SAL", format_sal_u64(supply_field_u64(&supply, "circulating_supply")));
-    println!("Total staked:       {} SAL", format_sal_u64(supply_field_u64(&supply, "total_staked")));
-    println!("Total burned:       {} SAL", format_sal_u64(supply_field_u64(&supply, "total_burned")));
-    println!("Total converted:    {} SAL", format_sal_u64(supply_field_u64(&supply, "total_converted")));
+    println!(
+        "Circulating supply: {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "circulating_supply"))
+    );
+    println!(
+        "Total staked:       {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "total_staked"))
+    );
+    println!(
+        "Total burned:       {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "total_burned"))
+    );
+    println!(
+        "Total converted:    {} SAL",
+        format_sal_u64(supply_field_u64(&supply, "total_converted"))
+    );
     Ok(())
 }
 
@@ -273,12 +308,18 @@ pub async fn scan_tx(ctx: &AppContext, tx_hashes: &[String]) -> Result {
     for entry in &tx_entries {
         // Basic scan: check if any output can be derived with our view key.
         // Full scanning is done by the sync engine; this is a quick check.
-        println!("  TX {}: height={}, in_pool={}", entry.tx_hash, entry.block_height, entry.in_pool);
+        println!(
+            "  TX {}: height={}, in_pool={}",
+            entry.tx_hash, entry.block_height, entry.in_pool
+        );
         found += 1;
     }
     let _ = keys;
 
-    println!("Processed {} transaction(s). Run 'sync' for full output scanning.", found);
+    println!(
+        "Processed {} transaction(s). Run 'sync' for full output scanning.",
+        found
+    );
 
     Ok(())
 }
@@ -321,7 +362,10 @@ pub async fn rescan_spent(ctx: &AppContext) -> Result {
         }
     }
 
-    println!("Rescan complete. {} outputs newly marked as spent.", newly_spent);
+    println!(
+        "Rescan complete. {} outputs newly marked as spent.",
+        newly_spent
+    );
     Ok(())
 }
 

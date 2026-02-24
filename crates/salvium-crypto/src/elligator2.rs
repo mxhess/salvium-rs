@@ -1,3 +1,4 @@
+use curve25519_dalek::edwards::CompressedEdwardsY;
 /// Elligator 2 map: 32-byte hash -> Ed25519 point
 /// Ported from Salvium C++ crypto-ops.c ge_fromfe_frombytes_vartime
 ///
@@ -5,7 +6,6 @@
 /// Elligator 2 algorithm. The result is NOT cofactor-cleared — caller
 /// must multiply by 8.
 use curve25519_dalek::edwards::EdwardsPoint;
-use curve25519_dalek::edwards::CompressedEdwardsY;
 
 /// 256-bit unsigned integer for field arithmetic mod p = 2^255 - 19
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -29,8 +29,14 @@ impl U256 {
         for (i, limb) in limbs.iter_mut().enumerate() {
             let offset = i * 8;
             *limb = u64::from_le_bytes([
-                bytes[offset], bytes[offset+1], bytes[offset+2], bytes[offset+3],
-                bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7],
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
             ]);
         }
         U256(limbs)
@@ -40,7 +46,7 @@ impl U256 {
         let mut out = [0u8; 32];
         for i in 0..4 {
             let bytes = self.0[i].to_le_bytes();
-            out[i*8..i*8+8].copy_from_slice(&bytes);
+            out[i * 8..i * 8 + 8].copy_from_slice(&bytes);
         }
         out
     }
@@ -57,8 +63,12 @@ impl U256 {
     /// Compare: self >= other
     fn ge(&self, other: &Self) -> bool {
         for i in (0..4).rev() {
-            if self.0[i] > other.0[i] { return true; }
-            if self.0[i] < other.0[i] { return false; }
+            if self.0[i] > other.0[i] {
+                return true;
+            }
+            if self.0[i] < other.0[i] {
+                return false;
+            }
         }
         true // equal
     }
@@ -129,11 +139,11 @@ fn fe_mul(a: &U256, b: &U256) -> U256 {
     for i in 0..4 {
         let mut carry = 0u128;
         for j in 0..4 {
-            let v = (a.0[i] as u128) * (b.0[j] as u128) + prod[i+j] + carry;
-            prod[i+j] = v & 0xFFFFFFFFFFFFFFFF;
+            let v = (a.0[i] as u128) * (b.0[j] as u128) + prod[i + j] + carry;
+            prod[i + j] = v & 0xFFFFFFFFFFFFFFFF;
             carry = v >> 64;
         }
-        prod[i+4] += carry;
+        prod[i + 4] += carry;
     }
 
     // Convert to bytes and reduce mod p using Barrett reduction
@@ -151,7 +161,7 @@ fn reduce_512(prod: &[u128; 8]) -> U256 {
     let mut bytes = [0u8; 64];
     for i in 0..8 {
         let b = (prod[i] as u64).to_le_bytes();
-        bytes[i*8..i*8+8].copy_from_slice(&b);
+        bytes[i * 8..i * 8 + 8].copy_from_slice(&b);
     }
 
     // Use iterative reduction: take top bits, multiply by 19, add to bottom
@@ -163,8 +173,18 @@ fn reduce_512(prod: &[u128; 8]) -> U256 {
 
     // Actually, let's do this properly with a simple approach:
     // Load as two U256 halves and use 2^256 ≡ 2*19 = 38 (mod p)
-    let lo = U256([prod[0] as u64, prod[1] as u64, prod[2] as u64, prod[3] as u64]);
-    let hi = U256([prod[4] as u64, prod[5] as u64, prod[6] as u64, prod[7] as u64]);
+    let lo = U256([
+        prod[0] as u64,
+        prod[1] as u64,
+        prod[2] as u64,
+        prod[3] as u64,
+    ]);
+    let hi = U256([
+        prod[4] as u64,
+        prod[5] as u64,
+        prod[6] as u64,
+        prod[7] as u64,
+    ]);
 
     // result = lo + hi * 2^256 mod p
     // 2^256 = 2 * 2^255 = 2 * (p + 19) = 2p + 38 ≡ 38 (mod p)
@@ -268,7 +288,9 @@ fn fe_divpowm1(u: &U256, v: &U256) -> U256 {
 
 /// Square root mod p
 fn fe_sqrt(a: &U256) -> Option<U256> {
-    if a.is_zero() { return Some(U256::ZERO); }
+    if a.is_zero() {
+        return Some(U256::ZERO);
+    }
 
     // candidate = a^((p+3)/8)
     let exp = U256([
@@ -279,17 +301,20 @@ fn fe_sqrt(a: &U256) -> Option<U256> {
     ]);
     let candidate = fe_pow(a, &exp);
 
-    if fe_sq(&candidate) == *a { return Some(candidate); }
+    if fe_sq(&candidate) == *a {
+        return Some(candidate);
+    }
 
     // sqrt(-1) mod p
     let sqrt_m1 = U256::from_bytes_le(&[
-        0xb0, 0xa0, 0x0e, 0x4a, 0x27, 0x1b, 0xee, 0xc4,
-        0x78, 0xe4, 0x2f, 0xad, 0x06, 0x18, 0x43, 0x2f,
-        0xa7, 0xd7, 0xfb, 0x3d, 0x99, 0x00, 0x4d, 0x2b,
-        0x0b, 0xdf, 0xc1, 0x4f, 0x80, 0x24, 0x83, 0x2b,
+        0xb0, 0xa0, 0x0e, 0x4a, 0x27, 0x1b, 0xee, 0xc4, 0x78, 0xe4, 0x2f, 0xad, 0x06, 0x18, 0x43,
+        0x2f, 0xa7, 0xd7, 0xfb, 0x3d, 0x99, 0x00, 0x4d, 0x2b, 0x0b, 0xdf, 0xc1, 0x4f, 0x80, 0x24,
+        0x83, 0x2b,
     ]);
     let adjusted = fe_mul(&candidate, &sqrt_m1);
-    if fe_sq(&adjusted) == *a { return Some(adjusted); }
+    if fe_sq(&adjusted) == *a {
+        return Some(adjusted);
+    }
 
     None
 }
@@ -297,10 +322,9 @@ fn fe_sqrt(a: &U256) -> Option<U256> {
 /// Precomputed constants
 fn sqrt_m1() -> U256 {
     U256::from_bytes_le(&[
-        0xb0, 0xa0, 0x0e, 0x4a, 0x27, 0x1b, 0xee, 0xc4,
-        0x78, 0xe4, 0x2f, 0xad, 0x06, 0x18, 0x43, 0x2f,
-        0xa7, 0xd7, 0xfb, 0x3d, 0x99, 0x00, 0x4d, 0x2b,
-        0x0b, 0xdf, 0xc1, 0x4f, 0x80, 0x24, 0x83, 0x2b,
+        0xb0, 0xa0, 0x0e, 0x4a, 0x27, 0x1b, 0xee, 0xc4, 0x78, 0xe4, 0x2f, 0xad, 0x06, 0x18, 0x43,
+        0x2f, 0xa7, 0xd7, 0xfb, 0x3d, 0x99, 0x00, 0x4d, 0x2b, 0x0b, 0xdf, 0xc1, 0x4f, 0x80, 0x24,
+        0x83, 0x2b,
     ])
 }
 
@@ -421,5 +445,7 @@ pub fn ge_fromfe_frombytes_vartime(hash: &[u8; 32]) -> EdwardsPoint {
         compressed[31] |= 0x80;
     }
 
-    CompressedEdwardsY(compressed).decompress().expect("elligator2 produced invalid point")
+    CompressedEdwardsY(compressed)
+        .decompress()
+        .expect("elligator2 produced invalid point")
 }

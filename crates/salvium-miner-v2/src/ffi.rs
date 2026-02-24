@@ -7,11 +7,7 @@ extern "C" {
     pub fn randomx_get_flags() -> u32;
 
     pub fn randomx_alloc_cache(flags: u32) -> *mut std::ffi::c_void;
-    pub fn randomx_init_cache(
-        cache: *mut std::ffi::c_void,
-        key: *const u8,
-        key_size: usize,
-    );
+    pub fn randomx_init_cache(cache: *mut std::ffi::c_void, key: *const u8, key_size: usize);
     pub fn randomx_release_cache(cache: *mut std::ffi::c_void);
 
     pub fn randomx_alloc_dataset(flags: u32) -> *mut std::ffi::c_void;
@@ -48,10 +44,7 @@ extern "C" {
         input_size: usize,
         output: *mut u8,
     );
-    pub fn randomx_calculate_hash_last(
-        vm: *mut std::ffi::c_void,
-        output: *mut u8,
-    );
+    pub fn randomx_calculate_hash_last(vm: *mut std::ffi::c_void, output: *mut u8);
 
     /// v2-specific: calculate commitment = Blake2b(input || hash)
     pub fn randomx_calculate_commitment(

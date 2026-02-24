@@ -15,10 +15,10 @@ use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
 use salvium_tx::sign::sign_transaction;
 use salvium_tx::types::output_type;
-use salvium_wallet::utxo::SelectionStrategy;
-use salvium_wallet::{decrypt_js_wallet, Wallet};
 use salvium_types::address::parse_address;
 use salvium_types::constants::Network;
+use salvium_wallet::utxo::SelectionStrategy;
+use salvium_wallet::{decrypt_js_wallet, Wallet};
 
 use std::path::PathBuf;
 
@@ -65,9 +65,13 @@ async fn test_real_testnet_transfer() {
     let db_path = temp_dir.path().join("wallet-a.db");
     let db_key = [0u8; 32];
 
-    let wallet =
-        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &db_key)
-            .expect("failed to create wallet");
+    let wallet = Wallet::create(
+        secrets.seed,
+        Network::Testnet,
+        db_path.to_str().unwrap(),
+        &db_key,
+    )
+    .expect("failed to create wallet");
     println!("  CN address:     {}", wallet.cn_address().unwrap());
     println!("  CARROT address: {}", wallet.carrot_address().unwrap());
 
@@ -86,7 +90,10 @@ async fn test_real_testnet_transfer() {
     // HF >= 6 (SALVIUM_ONE_PROOFS): "SAL1" for TRANSFER/MINER/STAKE
     // HF < 6: "SAL"
     // Future hardforks may introduce additional asset types.
-    let hf_info = daemon.hard_fork_info().await.expect("failed to get hard_fork_info");
+    let hf_info = daemon
+        .hard_fork_info()
+        .await
+        .expect("failed to get hard_fork_info");
     let hf_version = hf_info.version;
     let tx_asset_type = if hf_version >= 6 { "SAL1" } else { "SAL" };
     // DB stores outputs with whatever asset type was on-chain at scan time.
@@ -171,20 +178,31 @@ async fn test_real_testnet_transfer() {
     println!("\n[5/8] Selecting outputs...");
 
     // Use daemon's dynamic fee estimate (accounts for current block size/reward).
-    let fee_estimate = daemon.get_fee_estimate(10).await.expect("failed to get fee estimate");
+    let fee_estimate = daemon
+        .get_fee_estimate(10)
+        .await
+        .expect("failed to get fee estimate");
     let daemon_fee_per_byte = fee_estimate.fee;
     println!("  Daemon fee per byte: {} atomic", daemon_fee_per_byte);
 
     // Estimate TX weight and compute fee using daemon's rate.
-    let est_weight = fee::estimate_tx_weight(
-        1, 2, DEFAULT_RING_SIZE, true, output_type::CARROT_V1,
-    );
-    let estimated_fee = (est_weight as u64) * daemon_fee_per_byte * FeePriority::Normal.multiplier();
+    let est_weight = fee::estimate_tx_weight(1, 2, DEFAULT_RING_SIZE, true, output_type::CARROT_V1);
+    let estimated_fee =
+        (est_weight as u64) * daemon_fee_per_byte * FeePriority::Normal.multiplier();
     println!("  Estimated weight: {} bytes", est_weight);
-    println!("  Estimated fee: {:.9} SAL ({} atomic)", estimated_fee as f64 / 1e9, estimated_fee);
+    println!(
+        "  Estimated fee: {:.9} SAL ({} atomic)",
+        estimated_fee as f64 / 1e9,
+        estimated_fee
+    );
 
     let selection = wallet
-        .select_carrot_outputs(SEND_AMOUNT, estimated_fee, db_asset_type, SelectionStrategy::Default)
+        .select_carrot_outputs(
+            SEND_AMOUNT,
+            estimated_fee,
+            db_asset_type,
+            SelectionStrategy::Default,
+        )
         .expect("CARROT output selection failed (no CARROT outputs?)");
     println!(
         "  Selected {} output(s), total: {:.9} SAL, change: {:.9} SAL",
@@ -285,13 +303,21 @@ async fn test_real_testnet_transfer() {
             block_height, h_idx, start_h
         );
         if h_idx > 0 && h_idx < rct_offsets.len() {
-            let before = if h_idx >= 2 { rct_offsets[h_idx - 2] } else { 0 };
+            let before = if h_idx >= 2 {
+                rct_offsets[h_idx - 2]
+            } else {
+                0
+            };
             println!(
                 "    cumDist[h-2]={}, cumDist[h-1]={}, cumDist[h]={}, cumDist[h+1]={}",
                 before,
                 rct_offsets[h_idx - 1],
                 rct_offsets[h_idx],
-                if h_idx + 1 < rct_offsets.len() { rct_offsets[h_idx + 1] } else { 0 }
+                if h_idx + 1 < rct_offsets.len() {
+                    rct_offsets[h_idx + 1]
+                } else {
+                    0
+                }
             );
         }
 
@@ -299,7 +325,8 @@ async fn test_real_testnet_transfer() {
         {
             // Global index lookup is done via get_transactions output_indices below.
             // Actually let's get the global index from get_transactions output_indices
-            let (_, ref global_indices_for_tx) = tx_entries.iter()
+            let (_, ref global_indices_for_tx) = tx_entries
+                .iter()
                 .zip(tx_hashes_to_resolve.iter())
                 .find(|(_, h)| **h == output_row.tx_hash)
                 .map(|(e, h)| (h.clone(), e.output_indices.clone()))
@@ -308,13 +335,21 @@ async fn test_real_testnet_transfer() {
                 let gi = global_indices_for_tx[output_row.output_index as usize];
                 println!("    Global index (from get_transactions): {}", gi);
                 let probe_global = daemon
-                    .get_outs(&[OutputRequest { amount: 0, index: gi }], false, "")
+                    .get_outs(
+                        &[OutputRequest {
+                            amount: 0,
+                            index: gi,
+                        }],
+                        false,
+                        "",
+                    )
                     .await
                     .expect("probe global index");
                 if !probe_global.is_empty() {
                     println!(
                         "    Global probe key: {}, height: {}",
-                        &probe_global[0].key[..32], probe_global[0].height
+                        &probe_global[0].key[..32],
+                        probe_global[0].height
                     );
                     if probe_global[0].key == *output_pub_key_hex {
                         println!("    Global probe: KEY MATCHES our output");
@@ -405,15 +440,14 @@ async fn test_real_testnet_transfer() {
             };
 
             // Adjust keys for subaddress outputs.
-            let (adj_gik, adj_psk) =
-                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
-                    &generate_image_key,
-                    &prove_spend_key,
-                    &keys.carrot.generate_address_secret,
-                    &keys.carrot.account_spend_pubkey,
-                    output_row.subaddress_index.major as u32,
-                    output_row.subaddress_index.minor as u32,
-                );
+            let (adj_gik, adj_psk) = salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                &generate_image_key,
+                &prove_spend_key,
+                &keys.carrot.generate_address_secret,
+                &keys.carrot.account_spend_pubkey,
+                output_row.subaddress_index.major as u32,
+                output_row.subaddress_index.minor as u32,
+            );
             let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
                 &adj_psk,
                 &adj_gik,
@@ -427,8 +461,7 @@ async fn test_real_testnet_transfer() {
             // CryptoNote output: derive one-time spending key.
             let spend_secret = keys.cn.spend_secret_key.expect("not a full wallet");
             let view_secret = keys.cn.view_secret_key;
-            let tx_pub_key_hex =
-                output_row.tx_pub_key.as_ref().expect("missing tx_pub_key");
+            let tx_pub_key_hex = output_row.tx_pub_key.as_ref().expect("missing tx_pub_key");
             let tx_pub_key = hex_to_32(tx_pub_key_hex);
             let subaddr_major = output_row.subaddress_index.major as u32;
             let subaddr_minor = output_row.subaddress_index.minor as u32;
@@ -561,9 +594,29 @@ async fn test_real_testnet_transfer() {
     let verify_output_amounts = unsigned.output_amounts.clone();
     let verify_output_commitments = unsigned.output_commitments.clone();
     #[allow(clippy::type_complexity)]
-    let verify_inputs: Vec<(u64, [u8; 32], [u8; 32], Option<[u8; 32]>, Vec<[u8; 32]>, Vec<[u8; 32]>, usize)> = unsigned.inputs.iter().map(|i| {
-        (i.amount, i.public_key, i.secret_key, i.secret_key_y, i.ring.clone(), i.ring_commitments.clone(), i.real_index)
-    }).collect();
+    let verify_inputs: Vec<(
+        u64,
+        [u8; 32],
+        [u8; 32],
+        Option<[u8; 32]>,
+        Vec<[u8; 32]>,
+        Vec<[u8; 32]>,
+        usize,
+    )> = unsigned
+        .inputs
+        .iter()
+        .map(|i| {
+            (
+                i.amount,
+                i.public_key,
+                i.secret_key,
+                i.secret_key_y,
+                i.ring.clone(),
+                i.ring_commitments.clone(),
+                i.real_index,
+            )
+        })
+        .collect();
     let verify_fee = unsigned.fee;
     let verify_rct_type = unsigned.rct_type;
     let verify_input_masks: Vec<[u8; 32]> = unsigned.inputs.iter().map(|i| i.mask).collect();
@@ -581,47 +634,59 @@ async fn test_real_testnet_transfer() {
     let rct = signed_tx.rct.as_ref().unwrap();
 
     // 1. Verify output commitments: C = mask*G + amount*H
-    for (i, (mask, amount)) in verify_output_masks.iter().zip(verify_output_amounts.iter()).enumerate() {
-        let expected = to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), mask));
+    for (i, (mask, amount)) in verify_output_masks
+        .iter()
+        .zip(verify_output_amounts.iter())
+        .enumerate()
+    {
+        let expected = to_32(&salvium_crypto::pedersen_commit(
+            &amount.to_le_bytes(),
+            mask,
+        ));
         if expected == verify_output_commitments[i] {
             println!("  Output {} commitment: MATCH", i);
         } else {
             println!("  Output {} commitment: MISMATCH!", i);
             println!("    Expected: {}", hex::encode(expected));
-            println!("    Got:      {}", hex::encode(verify_output_commitments[i]));
+            println!(
+                "    Got:      {}",
+                hex::encode(verify_output_commitments[i])
+            );
         }
     }
 
     // 2. Verify pseudo-output commitments match input amounts.
     for (i, pseudo_out) in rct.pseudo_outs.iter().enumerate() {
         let (input_amount, _, _, _, _, _, _) = &verify_inputs[i];
-        println!("  Input {} pseudo-out: {} (amount={})", i, hex::encode(pseudo_out), input_amount);
+        println!(
+            "  Input {} pseudo-out: {} (amount={})",
+            i,
+            hex::encode(pseudo_out),
+            input_amount
+        );
     }
 
     // 3. Balance check: sum(pseudo_outs) == sum(out_pk) + fee*H
     {
         // Compute fee commitment: fee * H (with zero mask)
         let zero_mask = [0u8; 32];
-        let fee_commit = to_32(&salvium_crypto::pedersen_commit(&verify_fee.to_le_bytes(), &zero_mask));
+        let fee_commit = to_32(&salvium_crypto::pedersen_commit(
+            &verify_fee.to_le_bytes(),
+            &zero_mask,
+        ));
 
         // Sum pseudo_outs
         let mut pseudo_sum = rct.pseudo_outs[0];
         for po in &rct.pseudo_outs[1..] {
-            pseudo_sum = to_32(&salvium_crypto::point_add_compressed(
-                &pseudo_sum, po
-            ));
+            pseudo_sum = to_32(&salvium_crypto::point_add_compressed(&pseudo_sum, po));
         }
 
         // Sum out_pk + fee
         let mut out_sum = rct.out_pk[0];
         for pk in &rct.out_pk[1..] {
-            out_sum = to_32(&salvium_crypto::point_add_compressed(
-                &out_sum, pk
-            ));
+            out_sum = to_32(&salvium_crypto::point_add_compressed(&out_sum, pk));
         }
-        out_sum = to_32(&salvium_crypto::point_add_compressed(
-            &out_sum, &fee_commit
-        ));
+        out_sum = to_32(&salvium_crypto::point_add_compressed(&out_sum, &fee_commit));
 
         if pseudo_sum == out_sum {
             println!("  Balance check: PASS");
@@ -642,15 +707,23 @@ async fn test_real_testnet_transfer() {
                 loop {
                     let mut byte = (val & 0x7F) as u8;
                     val >>= 7;
-                    if val > 0 { byte |= 0x80; }
+                    if val > 0 {
+                        byte |= 0x80;
+                    }
                     buf.push(byte);
-                    if val == 0 { break; }
+                    if val == 0 {
+                        break;
+                    }
                 }
             }
             wv(&mut buf, verify_rct_type as u64);
             wv(&mut buf, verify_fee);
-            for ei in &rct.ecdh_info { buf.extend_from_slice(&ei.amount); }
-            for pk in &rct.out_pk { buf.extend_from_slice(pk); }
+            for ei in &rct.ecdh_info {
+                buf.extend_from_slice(&ei.amount);
+            }
+            for pk in &rct.out_pk {
+                buf.extend_from_slice(pk);
+            }
             // p_r (from signed TX)
             if let Some(ref pr) = rct.p_r {
                 buf.extend_from_slice(pr);
@@ -661,13 +734,19 @@ async fn test_real_testnet_transfer() {
             }
             // salvium_data (extract actual pr_proof from signed TX)
             if let Some(ref sd) = rct.salvium_data {
-                let dt = sd.get("salvium_data_type").and_then(|v| v.as_u64()).unwrap_or(0);
+                let dt = sd
+                    .get("salvium_data_type")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 wv(&mut buf, dt);
                 // pr_proof
                 if let Some(pr) = sd.get("pr_proof") {
-                    let r = hex::decode(pr.get("R").and_then(|v| v.as_str()).unwrap_or("")).unwrap_or_default();
-                    let z1 = hex::decode(pr.get("z1").and_then(|v| v.as_str()).unwrap_or("")).unwrap_or_default();
-                    let z2 = hex::decode(pr.get("z2").and_then(|v| v.as_str()).unwrap_or("")).unwrap_or_default();
+                    let r = hex::decode(pr.get("R").and_then(|v| v.as_str()).unwrap_or(""))
+                        .unwrap_or_default();
+                    let z1 = hex::decode(pr.get("z1").and_then(|v| v.as_str()).unwrap_or(""))
+                        .unwrap_or_default();
+                    let z2 = hex::decode(pr.get("z2").and_then(|v| v.as_str()).unwrap_or(""))
+                        .unwrap_or_default();
                     buf.extend_from_slice(&r);
                     buf.extend_from_slice(&z1);
                     buf.extend_from_slice(&z2);
@@ -684,23 +763,34 @@ async fn test_real_testnet_transfer() {
         // get_pre_mlsag_hash rctSigs.cpp:830-843 — NO varint size prefixes).
         let bp_bytes = {
             let mut buf = Vec::new();
-            buf.extend_from_slice(&bp.a); buf.extend_from_slice(&bp.a1);
-            buf.extend_from_slice(&bp.b); buf.extend_from_slice(&bp.r1);
-            buf.extend_from_slice(&bp.s1); buf.extend_from_slice(&bp.d1);
-            for l in &bp.l_vec { buf.extend_from_slice(l); }
-            for r in &bp.r_vec { buf.extend_from_slice(r); }
+            buf.extend_from_slice(&bp.a);
+            buf.extend_from_slice(&bp.a1);
+            buf.extend_from_slice(&bp.b);
+            buf.extend_from_slice(&bp.r1);
+            buf.extend_from_slice(&bp.s1);
+            buf.extend_from_slice(&bp.d1);
+            for l in &bp.l_vec {
+                buf.extend_from_slice(l);
+            }
+            for r in &bp.r_vec {
+                buf.extend_from_slice(r);
+            }
             buf
         };
-        let message = salvium_crypto::rct_verify::compute_rct_message(
-            &prefix_hash, &rct_base, &bp_bytes
-        );
+        let message =
+            salvium_crypto::rct_verify::compute_rct_message(&prefix_hash, &rct_base, &bp_bytes);
         println!("  Message hash: {}", hex::encode(message));
 
         for (i, tclsag) in rct.tclsags.iter().enumerate() {
             let (_, input_pk, input_sk_x, _, ring, ring_commits, real_idx) = &verify_inputs[i];
             let ki = to_32(&salvium_crypto::generate_key_image(input_pk, input_sk_x));
             println!("  TCLSAG {} key_image: {}", i, hex::encode(ki));
-            println!("  TCLSAG {} ring_size: {}, real_idx: {}", i, ring.len(), real_idx);
+            println!(
+                "  TCLSAG {} ring_size: {}, real_idx: {}",
+                i,
+                ring.len(),
+                real_idx
+            );
             println!("  TCLSAG {} real key: {}", i, hex::encode(ring[*real_idx]));
             println!("  TCLSAG {} input pk: {}", i, hex::encode(input_pk));
             // Check key match.
@@ -716,25 +806,38 @@ async fn test_real_testnet_transfer() {
                 commitment_image: tclsag.d,
             };
             let valid = salvium_crypto::tclsag::tclsag_verify(
-                &message, &sig, ring, ring_commits, &rct.pseudo_outs[i],
+                &message,
+                &sig,
+                ring,
+                ring_commits,
+                &rct.pseudo_outs[i],
             );
-            println!("  TCLSAG {} verify: {}", i, if valid { "PASS" } else { "FAIL" });
+            println!(
+                "  TCLSAG {} verify: {}",
+                i,
+                if valid { "PASS" } else { "FAIL" }
+            );
 
             // Debug: verify Ko = sk_x*G + sk_y*T
             let (_, _, sk_x, sk_y_opt, _, _, _) = &verify_inputs[i];
             if let Some(sk_y) = sk_y_opt {
                 let g_part = salvium_crypto::scalar_mult_base(sk_x);
                 let t_bytes: [u8; 32] = [
-                    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf,
-                    0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
-                    0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00,
-                    0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
+                    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf, 0x85, 0xea, 0xec, 0x80, 0x1c,
+                    0x42, 0x84, 0x5f, 0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7,
+                    0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
                 ];
                 let t_part = salvium_crypto::scalar_mult_point(sk_y, &t_bytes);
                 let expected_pk = to_32(&salvium_crypto::point_add_compressed(&g_part, &t_part));
                 println!("  TCLSAG {} Ko verification:", i);
-                println!("    Expected Ko = sk_x*G + sk_y*T: {}", hex::encode(expected_pk));
-                println!("    Actual Ko (from DB):           {}", hex::encode(input_pk));
+                println!(
+                    "    Expected Ko = sk_x*G + sk_y*T: {}",
+                    hex::encode(expected_pk)
+                );
+                println!(
+                    "    Actual Ko (from DB):           {}",
+                    hex::encode(input_pk)
+                );
                 println!("    Match: {}", expected_pk == *input_pk);
                 println!("    sk_x: {}", hex::encode(sk_x));
                 println!("    sk_y: {}", hex::encode(sk_y));
@@ -744,11 +847,19 @@ async fn test_real_testnet_transfer() {
             let input_mask = &verify_input_masks[i];
             let input_commitment = ring_commits[*real_idx];
             let expected_commit = to_32(&salvium_crypto::pedersen_commit(
-                &verify_inputs[i].0.to_le_bytes(), input_mask,
+                &verify_inputs[i].0.to_le_bytes(),
+                input_mask,
             ));
             println!("  TCLSAG {} commitment at real_idx:", i);
-            println!("    Ring commit[{}]: {}", real_idx, hex::encode(input_commitment));
-            println!("    Expected C=mask*G+amt*H: {}", hex::encode(expected_commit));
+            println!(
+                "    Ring commit[{}]: {}",
+                real_idx,
+                hex::encode(input_commitment)
+            );
+            println!(
+                "    Expected C=mask*G+amt*H: {}",
+                hex::encode(expected_commit)
+            );
             println!("    Match: {}", input_commitment == expected_commit);
         }
     }
@@ -762,18 +873,23 @@ async fn test_real_testnet_transfer() {
     println!("  TX JSON prefix version: {}", tx_json["prefix"]["version"]);
     println!("  TX JSON prefix txType: {}", tx_json["prefix"]["txType"]);
     println!("  TX JSON rct type: {}", tx_json["rct"]["type"]);
-    println!("  TX JSON vout count: {}", tx_json["prefix"]["vout"].as_array().map_or(0, |a| a.len()));
+    println!(
+        "  TX JSON vout count: {}",
+        tx_json["prefix"]["vout"].as_array().map_or(0, |a| a.len())
+    );
     if let Some(vout) = tx_json["prefix"]["vout"].as_array() {
         for (i, out) in vout.iter().enumerate() {
-            println!("    Output {}: type={}, assetType={}, viewTag={}",
-                i,
-                out["type"],
-                out["assetType"],
-                out["viewTag"]);
+            println!(
+                "    Output {}: type={}, assetType={}, viewTag={}",
+                i, out["type"], out["assetType"], out["viewTag"]
+            );
         }
     }
     println!("  TX JSON extra: {:?}", tx_json["prefix"]["extra"]);
-    println!("  TX JSON salvium_data: {:?}", tx_json["rct"]["salvium_data"]);
+    println!(
+        "  TX JSON salvium_data: {:?}",
+        tx_json["rct"]["salvium_data"]
+    );
 
     // Try parsing the bytes back.
     let roundtrip_json_str = salvium_crypto::parse_transaction_bytes(&tx_bytes);
@@ -783,25 +899,39 @@ async fn test_real_testnet_transfer() {
             println!("    version: {}", parsed["prefix"]["version"]);
             println!("    txType: {}", parsed["prefix"]["txType"]);
             println!("    rct type: {}", parsed["rct"]["type"]);
-            println!("    vout count: {}", parsed["prefix"]["vout"].as_array().map_or(0, |a| a.len()));
+            println!(
+                "    vout count: {}",
+                parsed["prefix"]["vout"].as_array().map_or(0, |a| a.len())
+            );
             if let Some(vout) = parsed["prefix"]["vout"].as_array() {
                 for (i, out) in vout.iter().enumerate() {
-                    println!("    Output {}: type={}, assetType={}", i, out["type"], out["assetType"]);
+                    println!(
+                        "    Output {}: type={}, assetType={}",
+                        i, out["type"], out["assetType"]
+                    );
                 }
             }
 
             // Re-serialize and compare.
             let roundtrip_bytes = salvium_crypto::serialize_transaction_json(&roundtrip_json_str);
             if roundtrip_bytes == tx_bytes {
-                println!("  Re-serialization: MATCH ({} bytes)", roundtrip_bytes.len());
+                println!(
+                    "  Re-serialization: MATCH ({} bytes)",
+                    roundtrip_bytes.len()
+                );
             } else {
-                println!("  Re-serialization: MISMATCH (original={}, roundtrip={})",
-                    tx_bytes.len(), roundtrip_bytes.len());
+                println!(
+                    "  Re-serialization: MISMATCH (original={}, roundtrip={})",
+                    tx_bytes.len(),
+                    roundtrip_bytes.len()
+                );
                 // Find first difference.
                 for i in 0..tx_bytes.len().min(roundtrip_bytes.len()) {
                     if tx_bytes[i] != roundtrip_bytes[i] {
-                        println!("    First diff at byte {}: original=0x{:02x}, roundtrip=0x{:02x}",
-                            i, tx_bytes[i], roundtrip_bytes[i]);
+                        println!(
+                            "    First diff at byte {}: original=0x{:02x}, roundtrip=0x{:02x}",
+                            i, tx_bytes[i], roundtrip_bytes[i]
+                        );
                         break;
                     }
                 }
@@ -809,7 +939,10 @@ async fn test_real_testnet_transfer() {
         }
         Err(e) => {
             println!("  Roundtrip parse FAILED: {}", e);
-            println!("  Raw parse result: {}...", &roundtrip_json_str[..200.min(roundtrip_json_str.len())]);
+            println!(
+                "  Raw parse result: {}...",
+                &roundtrip_json_str[..200.min(roundtrip_json_str.len())]
+            );
         }
     }
 
@@ -817,8 +950,14 @@ async fn test_real_testnet_transfer() {
     println!("\n[7d/8] TX hex dump analysis...");
     let tx_bytes_for_dump = hex::decode(&tx_hex).unwrap();
     println!("  Total TX size: {} bytes", tx_bytes_for_dump.len());
-    println!("  First 128 bytes: {}", hex::encode(&tx_bytes_for_dump[..128.min(tx_bytes_for_dump.len())]));
-    println!("  Last 64 bytes: {}", hex::encode(&tx_bytes_for_dump[tx_bytes_for_dump.len().saturating_sub(64)..]));
+    println!(
+        "  First 128 bytes: {}",
+        hex::encode(&tx_bytes_for_dump[..128.min(tx_bytes_for_dump.len())])
+    );
+    println!(
+        "  Last 64 bytes: {}",
+        hex::encode(&tx_bytes_for_dump[tx_bytes_for_dump.len().saturating_sub(64)..])
+    );
     // Manual decode of prefix start
     {
         let b = &tx_bytes_for_dump;
@@ -827,11 +966,15 @@ async fn test_real_testnet_transfer() {
             let mut result: u64 = 0;
             let mut shift = 0;
             loop {
-                if *pos >= b.len() { break; }
+                if *pos >= b.len() {
+                    break;
+                }
                 let byte = b[*pos];
                 *pos += 1;
                 result |= ((byte & 0x7f) as u64) << shift;
-                if byte & 0x80 == 0 { break; }
+                if byte & 0x80 == 0 {
+                    break;
+                }
                 shift += 7;
             }
             result
@@ -839,21 +982,37 @@ async fn test_real_testnet_transfer() {
         let version = read_varint(b, &mut pos);
         let unlock_time = read_varint(b, &mut pos);
         let vin_count = read_varint(b, &mut pos);
-        println!("  Decoded prefix: version={}, unlock_time={}, vin_count={}", version, unlock_time, vin_count);
+        println!(
+            "  Decoded prefix: version={}, unlock_time={}, vin_count={}",
+            version, unlock_time, vin_count
+        );
 
         for i in 0..vin_count {
-            let tag = b[pos]; pos += 1;
-            if tag == 0x02 { // txin_to_key
+            let tag = b[pos];
+            pos += 1;
+            if tag == 0x02 {
+                // txin_to_key
                 let amount = read_varint(b, &mut pos);
                 let at_len = read_varint(b, &mut pos);
-                let asset_type = std::str::from_utf8(&b[pos..pos+at_len as usize]).unwrap_or("?");
+                let asset_type = std::str::from_utf8(&b[pos..pos + at_len as usize]).unwrap_or("?");
                 pos += at_len as usize;
                 let ko_count = read_varint(b, &mut pos);
-                println!("  Input {}: tag=0x{:02x}, amount={}, asset_type={}, key_offsets_count={}", i, tag, amount, asset_type, ko_count);
-                for j in 0..ko_count { let ko = read_varint(b, &mut pos); if j < 3 { print!("    offset[{}]={} ", j, ko); } }
-                if ko_count > 3 { print!("... "); }
+                println!(
+                    "  Input {}: tag=0x{:02x}, amount={}, asset_type={}, key_offsets_count={}",
+                    i, tag, amount, asset_type, ko_count
+                );
+                for j in 0..ko_count {
+                    let ko = read_varint(b, &mut pos);
+                    if j < 3 {
+                        print!("    offset[{}]={} ", j, ko);
+                    }
+                }
+                if ko_count > 3 {
+                    print!("... ");
+                }
                 println!();
-                println!("    key_image: {}", hex::encode(&b[pos..pos+32])); pos += 32;
+                println!("    key_image: {}", hex::encode(&b[pos..pos + 32]));
+                pos += 32;
             } else {
                 println!("  Input {}: tag=0x{:02x}", i, tag);
                 break;
@@ -864,15 +1023,28 @@ async fn test_real_testnet_transfer() {
         println!("  vout_count={}", vout_count);
         for i in 0..vout_count {
             let amount = read_varint(b, &mut pos);
-            let tag = b[pos]; pos += 1;
-            if tag == 0x04 { // txout_to_carrot_v1
-                let key = hex::encode(&b[pos..pos+32]); pos += 32;
+            let tag = b[pos];
+            pos += 1;
+            if tag == 0x04 {
+                // txout_to_carrot_v1
+                let key = hex::encode(&b[pos..pos + 32]);
+                pos += 32;
                 let at_len = read_varint(b, &mut pos);
-                let asset_type = std::str::from_utf8(&b[pos..pos+at_len as usize]).unwrap_or("?");
+                let asset_type = std::str::from_utf8(&b[pos..pos + at_len as usize]).unwrap_or("?");
                 pos += at_len as usize;
-                let view_tag = hex::encode(&b[pos..pos+3]); pos += 3;
-                let janus = hex::encode(&b[pos..pos+16]); pos += 16;
-                println!("  Output {}: amount={}, tag=CARROT, key={}..., asset={}, vt={}, janus={}...", i, amount, &key[..16], asset_type, view_tag, &janus[..16]);
+                let view_tag = hex::encode(&b[pos..pos + 3]);
+                pos += 3;
+                let janus = hex::encode(&b[pos..pos + 16]);
+                pos += 16;
+                println!(
+                    "  Output {}: amount={}, tag=CARROT, key={}..., asset={}, vt={}, janus={}...",
+                    i,
+                    amount,
+                    &key[..16],
+                    asset_type,
+                    view_tag,
+                    &janus[..16]
+                );
             } else {
                 println!("  Output {}: amount={}, tag=0x{:02x}", i, amount, tag);
                 break;
@@ -880,39 +1052,57 @@ async fn test_real_testnet_transfer() {
         }
 
         let extra_len = read_varint(b, &mut pos);
-        println!("  extra: {} bytes, pos_after_extra={}", extra_len, pos + extra_len as usize);
+        println!(
+            "  extra: {} bytes, pos_after_extra={}",
+            extra_len,
+            pos + extra_len as usize
+        );
         pos += extra_len as usize;
 
         let tx_type = read_varint(b, &mut pos);
         println!("  txType={}", tx_type);
-        if tx_type != 0 && tx_type != 2 { // not UNSET, not PROTOCOL
+        if tx_type != 0 && tx_type != 2 {
+            // not UNSET, not PROTOCOL
             let amount_burnt = read_varint(b, &mut pos);
             println!("  amount_burnt={}", amount_burnt);
-            if tx_type != 1 { // not MINER
-                if tx_type == 3 && version >= 3 { // TRANSFER v3+
+            if tx_type != 1 {
+                // not MINER
+                if tx_type == 3 && version >= 3 {
+                    // TRANSFER v3+
                     let ral_count = read_varint(b, &mut pos);
                     println!("  return_address_list: {} entries", ral_count);
                     for j in 0..ral_count {
-                        println!("    [{}]: {}", j, hex::encode(&b[pos..pos+32])); pos += 32;
+                        println!("    [{}]: {}", j, hex::encode(&b[pos..pos + 32]));
+                        pos += 32;
                     }
                     let mask_len = read_varint(b, &mut pos);
-                    println!("  return_address_change_mask: {} bytes = {:?}", mask_len, &b[pos..pos+mask_len as usize]);
+                    println!(
+                        "  return_address_change_mask: {} bytes = {:?}",
+                        mask_len,
+                        &b[pos..pos + mask_len as usize]
+                    );
                     pos += mask_len as usize;
                 }
                 let sat_len = read_varint(b, &mut pos);
-                let source_asset = std::str::from_utf8(&b[pos..pos+sat_len as usize]).unwrap_or("?");
+                let source_asset =
+                    std::str::from_utf8(&b[pos..pos + sat_len as usize]).unwrap_or("?");
                 pos += sat_len as usize;
                 let dat_len = read_varint(b, &mut pos);
-                let dest_asset = std::str::from_utf8(&b[pos..pos+dat_len as usize]).unwrap_or("?");
+                let dest_asset =
+                    std::str::from_utf8(&b[pos..pos + dat_len as usize]).unwrap_or("?");
                 pos += dat_len as usize;
                 let slippage = read_varint(b, &mut pos);
-                println!("  source_asset={}, dest_asset={}, slippage={}", source_asset, dest_asset, slippage);
+                println!(
+                    "  source_asset={}, dest_asset={}, slippage={}",
+                    source_asset, dest_asset, slippage
+                );
             }
         }
         println!("  --- PREFIX END at byte {} ---", pos);
 
         // RCT base
-        let rct_type = b[pos]; pos += 1;
+        let rct_type = b[pos];
+        pos += 1;
         println!("  RCT type={}", rct_type);
         if rct_type != 0 {
             let fee = read_varint(b, &mut pos);
@@ -923,17 +1113,23 @@ async fn test_real_testnet_transfer() {
             pos += (vout_count as usize) * 8;
             println!("  outPk starts at byte {}", pos);
             pos += (vout_count as usize) * 32;
-            println!("  p_r at byte {}: {}", pos, hex::encode(&b[pos..pos+32]));
+            println!("  p_r at byte {}: {}", pos, hex::encode(&b[pos..pos + 32]));
             pos += 32;
             println!("  salvium_data starts at byte {}", pos);
             let sd_type = read_varint(b, &mut pos);
             println!("  salvium_data_type={}", sd_type);
-            println!("  pr_proof.R: {}", hex::encode(&b[pos..pos+32])); pos += 32;
-            println!("  pr_proof.z1: {}", hex::encode(&b[pos..pos+32])); pos += 32;
-            println!("  pr_proof.z2: {}", hex::encode(&b[pos..pos+32])); pos += 32;
-            println!("  sa_proof.R: {}", hex::encode(&b[pos..pos+32])); pos += 32;
-            println!("  sa_proof.z1: {}", hex::encode(&b[pos..pos+32])); pos += 32;
-            println!("  sa_proof.z2: {}", hex::encode(&b[pos..pos+32])); pos += 32;
+            println!("  pr_proof.R: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
+            println!("  pr_proof.z1: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
+            println!("  pr_proof.z2: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
+            println!("  sa_proof.R: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
+            println!("  sa_proof.z1: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
+            println!("  sa_proof.z2: {}", hex::encode(&b[pos..pos + 32]));
+            pos += 32;
             println!("  --- RCT BASE END at byte {} ---", pos);
 
             // RCT prunable
@@ -950,9 +1146,16 @@ async fn test_real_testnet_transfer() {
             // TCLSAG: ring_size * 32 (sx) + ring_size * 32 (sy) + 32 (c1) + 32 (D)
             let ring_size = 16; // known
             let tclsag_size = ring_size * 32 * 2 + 64;
-            println!("  TCLSAG expected size: {} bytes (ring={})", tclsag_size, ring_size);
+            println!(
+                "  TCLSAG expected size: {} bytes (ring={})",
+                tclsag_size, ring_size
+            );
             pos += tclsag_size;
-            println!("  pseudoOuts at byte {}: {}", pos, hex::encode(&b[pos..pos+32]));
+            println!(
+                "  pseudoOuts at byte {}: {}",
+                pos,
+                hex::encode(&b[pos..pos + 32])
+            );
             pos += 32;
             println!("  --- END at byte {} (total={}) ---", pos, b.len());
         }
@@ -1002,11 +1205,7 @@ async fn test_real_testnet_transfer() {
 
 fn hex_to_32(s: &str) -> [u8; 32] {
     let bytes = hex::decode(s).expect("invalid hex");
-    assert!(
-        bytes.len() == 32,
-        "expected 32 bytes, got {}",
-        bytes.len()
-    );
+    assert!(bytes.len() == 32, "expected 32 bytes, got {}", bytes.len());
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     arr

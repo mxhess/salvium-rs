@@ -108,7 +108,9 @@ pub unsafe extern "C" fn salvium_wallet_get_address(
         match addr_type {
             0 => wallet.cn_address().map_err(|e| e.to_string()),
             1 => wallet.carrot_address().map_err(|e| e.to_string()),
-            _ => Err(format!("invalid address type: {addr_type} (expected 0=CN or 1=CARROT)")),
+            _ => Err(format!(
+                "invalid address type: {addr_type} (expected 0=CN or 1=CARROT)"
+            )),
         }
     })
 }
@@ -216,7 +218,9 @@ pub unsafe extern "C" fn salvium_wallet_get_balance(
     ffi_try_string(|| {
         let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
         let asset = unsafe { c_str_to_str(asset_type) }?;
-        let result = wallet.get_balance(asset, account_index).map_err(|e| e.to_string())?;
+        let result = wallet
+            .get_balance(asset, account_index)
+            .map_err(|e| e.to_string())?;
         serde_json::to_string(&result).map_err(|e| e.to_string())
     })
 }
@@ -232,7 +236,9 @@ pub unsafe extern "C" fn salvium_wallet_get_all_balances(
 ) -> *mut c_char {
     ffi_try_string(|| {
         let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
-        let result = wallet.get_all_balances(account_index).map_err(|e| e.to_string())?;
+        let result = wallet
+            .get_all_balances(account_index)
+            .map_err(|e| e.to_string())?;
         serde_json::to_string(&result).map_err(|e| e.to_string())
     })
 }
@@ -277,10 +283,7 @@ pub unsafe extern "C" fn salvium_wallet_get_attribute(
 
 /// Reset the sync height (for rescanning).
 #[no_mangle]
-pub unsafe extern "C" fn salvium_wallet_reset_sync_height(
-    handle: *mut c_void,
-    height: u64,
-) -> i32 {
+pub unsafe extern "C" fn salvium_wallet_reset_sync_height(handle: *mut c_void, height: u64) -> i32 {
     ffi_try(|| {
         let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
         wallet.reset_sync_height(height).map_err(|e| e.to_string())
@@ -365,7 +368,13 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
             outputs_found,
             ..
         } => unsafe {
-            cb(1, *current_height, *target_height, *outputs_found as u32, std::ptr::null());
+            cb(
+                1,
+                *current_height,
+                *target_height,
+                *outputs_found as u32,
+                std::ptr::null(),
+            );
         },
         SyncEvent::Complete { height } => unsafe {
             cb(2, *height, *height, 0, std::ptr::null());
@@ -378,16 +387,29 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
         },
         SyncEvent::Error(msg) => {
             if let Ok(cs) = std::ffi::CString::new(msg.as_str()) {
-                unsafe { cb(4, 0, 0, 0, cs.as_ptr()); }
+                unsafe {
+                    cb(4, 0, 0, 0, cs.as_ptr());
+                }
             } else {
                 let fallback = std::ffi::CString::new("sync error").unwrap();
-                unsafe { cb(4, 0, 0, 0, fallback.as_ptr()); }
+                unsafe {
+                    cb(4, 0, 0, 0, fallback.as_ptr());
+                }
             }
         }
-        SyncEvent::ParseError { height, blob_len, ref error } => {
-            let msg = format!("parse error at height {} (blob_len={}): {}", height, blob_len, error);
+        SyncEvent::ParseError {
+            height,
+            blob_len,
+            ref error,
+        } => {
+            let msg = format!(
+                "parse error at height {} (blob_len={}): {}",
+                height, blob_len, error
+            );
             if let Ok(cs) = std::ffi::CString::new(msg) {
-                unsafe { cb(5, *height, 0, 0, cs.as_ptr()); }
+                unsafe {
+                    cb(5, *height, 0, 0, cs.as_ptr());
+                }
             }
         }
     }
@@ -626,9 +648,11 @@ pub unsafe extern "C" fn salvium_wallet_export_blob(
         let db_key_bytes = wallet.db_key();
 
         let secrets = salvium_wallet::WalletSecrets {
-            seed: keys.seed.map(|s| hex::encode(s)).unwrap_or_default(),
-            spend_secret_key: keys.cn.spend_secret_key
-                .map(|k| hex::encode(k))
+            seed: keys.seed.map(hex::encode).unwrap_or_default(),
+            spend_secret_key: keys
+                .cn
+                .spend_secret_key
+                .map(hex::encode)
                 .unwrap_or_default(),
             view_secret_key: hex::encode(keys.cn.view_secret_key),
             data_key: hex::encode(db_key_bytes),
@@ -636,8 +660,8 @@ pub unsafe extern "C" fn salvium_wallet_export_blob(
             network: format!("{:?}", keys.network).to_lowercase(),
         };
 
-        let envelope_bytes = salvium_wallet::encrypt_envelope(&secrets, pin_str)
-            .map_err(|e| e.to_string())?;
+        let envelope_bytes =
+            salvium_wallet::encrypt_envelope(&secrets, pin_str).map_err(|e| e.to_string())?;
 
         String::from_utf8(envelope_bytes).map_err(|e| e.to_string())
     })
@@ -716,8 +740,8 @@ pub unsafe extern "C" fn salvium_wallet_rekey_blob(
         let secrets = salvium_wallet::decrypt_envelope(blob_str.as_bytes(), old_pin_str)
             .map_err(|e| e.to_string())?;
 
-        let envelope_bytes = salvium_wallet::encrypt_envelope(&secrets, new_pin_str)
-            .map_err(|e| e.to_string())?;
+        let envelope_bytes =
+            salvium_wallet::encrypt_envelope(&secrets, new_pin_str).map_err(|e| e.to_string())?;
 
         String::from_utf8(envelope_bytes).map_err(|e| e.to_string())
     })
@@ -732,7 +756,9 @@ fn int_to_network(n: i32) -> Result<salvium_types::constants::Network, String> {
         0 => Ok(salvium_types::constants::Network::Mainnet),
         1 => Ok(salvium_types::constants::Network::Testnet),
         2 => Ok(salvium_types::constants::Network::Stagenet),
-        _ => Err(format!("invalid network: {n} (expected 0=Mainnet, 1=Testnet, 2=Stagenet)")),
+        _ => Err(format!(
+            "invalid network: {n} (expected 0=Mainnet, 1=Testnet, 2=Stagenet)"
+        )),
     }
 }
 
@@ -769,7 +795,8 @@ fn wallet_keys_from_json(json_str: &str) -> Result<salvium_wallet::WalletKeys, S
         .as_str()
         .ok_or("missing 'spend_public_key' in keys JSON")?;
 
-    let view_bytes = hex::decode(view_hex).map_err(|e| format!("invalid view_secret_key hex: {e}"))?;
+    let view_bytes =
+        hex::decode(view_hex).map_err(|e| format!("invalid view_secret_key hex: {e}"))?;
     let spend_bytes =
         hex::decode(spend_pub_hex).map_err(|e| format!("invalid spend_public_key hex: {e}"))?;
 

@@ -118,10 +118,7 @@ pub fn derive_keys(
 }
 
 /// Combine classical + quantum keys via HKDF-SHA256 into a 32-byte AES key.
-fn derive_aes_key(
-    classical_key: &[u8; 32],
-    quantum_key: &[u8],
-) -> Result<[u8; 32], WalletError> {
+fn derive_aes_key(classical_key: &[u8; 32], quantum_key: &[u8]) -> Result<[u8; 32], WalletError> {
     let mut ikm = Vec::with_capacity(64);
     ikm.extend_from_slice(classical_key);
     ikm.extend_from_slice(quantum_key);
@@ -143,10 +140,7 @@ fn derive_aes_key(
 /// 6. AES-256-GCM encrypt(secrets_json, aes_key, nonce)
 /// 7. Return JSON envelope bytes
 #[allow(deprecated)]
-pub fn encrypt_envelope(
-    secrets: &WalletSecrets,
-    pin: &str,
-) -> Result<Vec<u8>, WalletError> {
+pub fn encrypt_envelope(secrets: &WalletSecrets, pin: &str) -> Result<Vec<u8>, WalletError> {
     let mut rng = rand::thread_rng();
 
     // 1. Generate random salts and nonce.
@@ -182,8 +176,8 @@ pub fn encrypt_envelope(
     let aes_key = derive_aes_key(&keys.classical_key, quantum_key.as_slice())?;
 
     // 6. AES-256-GCM encrypt the secrets JSON.
-    let plaintext = serde_json::to_vec(secrets)
-        .map_err(|e| WalletError::Encryption(e.to_string()))?;
+    let plaintext =
+        serde_json::to_vec(secrets).map_err(|e| WalletError::Encryption(e.to_string()))?;
 
     let key = Key::<Aes256Gcm>::from_slice(&aes_key);
     let cipher = Aes256Gcm::new(key);
@@ -207,8 +201,7 @@ pub fn encrypt_envelope(
         },
     };
 
-    serde_json::to_vec_pretty(&envelope)
-        .map_err(|e| WalletError::Encryption(e.to_string()))
+    serde_json::to_vec_pretty(&envelope).map_err(|e| WalletError::Encryption(e.to_string()))
 }
 
 /// Decrypt a PQC envelope to recover wallet secrets.
@@ -221,10 +214,7 @@ pub fn encrypt_envelope(
 /// 6. AES-256-GCM decrypt(ciphertext, aes_key, iv)
 /// 7. Parse JSON -> WalletSecrets
 #[allow(deprecated)]
-pub fn decrypt_envelope(
-    envelope_bytes: &[u8],
-    pin: &str,
-) -> Result<WalletSecrets, WalletError> {
+pub fn decrypt_envelope(envelope_bytes: &[u8], pin: &str) -> Result<WalletSecrets, WalletError> {
     // 1. Parse envelope.
     let envelope: PqcEnvelope = serde_json::from_slice(envelope_bytes)
         .map_err(|e| WalletError::InvalidFile(format!("invalid PQC envelope: {}", e)))?;

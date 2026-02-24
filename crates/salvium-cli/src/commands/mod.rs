@@ -1,17 +1,17 @@
 //! CLI command implementations, split by domain.
 
-mod wallet_mgmt;
+mod address;
 mod balance;
-mod transfers;
+mod daemon;
 mod history;
 mod keys;
-mod proofs;
-mod address;
-mod notes;
-mod outputs;
-mod daemon;
 mod misc;
 mod multisig;
+mod notes;
+mod outputs;
+mod proofs;
+mod transfers;
+mod wallet_mgmt;
 
 use crate::AppContext;
 use salvium_rpc::DaemonRpc;
@@ -21,18 +21,18 @@ use std::path::PathBuf;
 pub type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 
 // Re-export all public command functions so main.rs can call `commands::foo()`.
-pub use wallet_mgmt::*;
+pub use address::*;
 pub use balance::*;
-pub use transfers::*;
+pub use daemon::*;
 pub use history::*;
 pub use keys::*;
-pub use proofs::*;
-pub use address::*;
-pub use notes::*;
-pub use outputs::*;
-pub use daemon::*;
 pub use misc::*;
 pub use multisig::*;
+pub use notes::*;
+pub use outputs::*;
+pub use proofs::*;
+pub use transfers::*;
+pub use wallet_mgmt::*;
 
 // ─── Shared helpers used across multiple command modules ─────────────────────
 
@@ -56,8 +56,7 @@ pub(crate) fn prompt_password(
     Ok(pass)
 }
 
-pub(crate) fn prompt_password_confirm(
-) -> std::result::Result<String, Box<dyn std::error::Error>> {
+pub(crate) fn prompt_password_confirm() -> std::result::Result<String, Box<dyn std::error::Error>> {
     let pass = prompt_password("Wallet password: ")?;
     let confirm = prompt_password("Confirm password: ")?;
     if pass != confirm {
@@ -134,11 +133,8 @@ pub(crate) fn load_wallet_meta(
         Ok(secrets)
     } else if salvium_wallet::encryption::is_encrypted_wallet(&raw) {
         // Legacy SALW-magic format -> decrypt and migrate.
-        let decrypted = salvium_wallet::encryption::decrypt_wallet_data(
-            &raw,
-            password.as_bytes(),
-        )
-        .map_err(|e| format!("failed to decrypt wallet metadata (wrong password?): {}", e))?;
+        let decrypted = salvium_wallet::encryption::decrypt_wallet_data(&raw, password.as_bytes())
+            .map_err(|e| format!("failed to decrypt wallet metadata (wrong password?): {}", e))?;
 
         let text = String::from_utf8(decrypted).map_err(|_| "corrupted wallet metadata")?;
         let parts: Vec<&str> = text.splitn(2, ':').collect();
@@ -241,9 +237,7 @@ pub fn format_sal_u64(atomic: u64) -> String {
     }
 }
 
-pub(crate) fn parse_sal_amount(
-    s: &str,
-) -> std::result::Result<u64, Box<dyn std::error::Error>> {
+pub(crate) fn parse_sal_amount(s: &str) -> std::result::Result<u64, Box<dyn std::error::Error>> {
     use salvium_types::constants::COIN;
     let parts: Vec<&str> = s.split('.').collect();
     let whole: u64 = if parts[0].is_empty() {

@@ -125,12 +125,7 @@ impl AlternativeChainManager {
     /// `hashes` is a slice of `(hash, height)` pairs representing every block
     /// on the current main chain. `height` is the current tip height, and
     /// `cum_diff` is the cumulative difficulty at that tip.
-    pub fn set_main_chain(
-        &mut self,
-        hashes: &[(String, u64)],
-        height: u64,
-        cum_diff: u128,
-    ) {
+    pub fn set_main_chain(&mut self, hashes: &[(String, u64)], height: u64, cum_diff: u128) {
         self.main_chain_hashes.clear();
         for (h, ht) in hashes {
             self.main_chain_hashes.insert(h.clone(), *ht);
@@ -193,8 +188,7 @@ impl AlternativeChainManager {
                 let new_height = self.main_chain_height; // 0-indexed: next slot
                 self.main_chain_cum_diff += difficulty;
                 self.main_chain_height = new_height + 1;
-                self.main_chain_hashes
-                    .insert(hash.to_string(), new_height);
+                self.main_chain_hashes.insert(hash.to_string(), new_height);
                 bvc.added_to_main_chain = true;
 
                 // Prune stale alt blocks while we are here.

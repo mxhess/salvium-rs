@@ -26,13 +26,19 @@ async fn debug_protocol_tx_content() {
         // Post-CARROT transition
         (417800, 417850, "HF10 CARROT transition"),
         // Recent blocks (known to work)
-        (top.saturating_sub(10), top.saturating_sub(1), "recent blocks"),
+        (
+            top.saturating_sub(10),
+            top.saturating_sub(1),
+            "recent blocks",
+        ),
     ];
 
     for (start, end, label) in &check_ranges {
         let end = (*end).min(top.saturating_sub(1));
         let start = *start;
-        if start >= end { continue; }
+        if start >= end {
+            continue;
+        }
 
         println!("=== {} (heights {}-{}) ===", label, start, end);
 
@@ -70,17 +76,19 @@ async fn debug_protocol_tx_content() {
                     let has_pubkey = prefix
                         .get("extra")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().any(|e| {
-                            e.get("type").and_then(|v| v.as_u64()) == Some(1)
-                        }))
+                        .map(|arr| {
+                            arr.iter()
+                                .any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(1))
+                        })
                         .unwrap_or(false);
 
                     let has_additional = prefix
                         .get("extra")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().any(|e| {
-                            e.get("type").and_then(|v| v.as_u64()) == Some(4)
-                        }))
+                        .map(|arr| {
+                            arr.iter()
+                                .any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(4))
+                        })
                         .unwrap_or(false);
 
                     // Only print first 3 matches per range
@@ -94,12 +102,19 @@ async fn debug_protocol_tx_content() {
                         println!("    extra: {:?}", extra);
 
                         for (j, out) in vout.unwrap().iter().enumerate().take(3) {
-                            let asset = out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
+                            let asset =
+                                out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
                             let amount = out.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
                             let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
                             let key = out.get("key").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("    out[{}]: type={} asset={} amount={} key={}...",
-                                j, out_type, asset, amount, &key[..key.len().min(16)]);
+                            println!(
+                                "    out[{}]: type={} asset={} amount={} key={}...",
+                                j,
+                                out_type,
+                                asset,
+                                amount,
+                                &key[..key.len().min(16)]
+                            );
                         }
                     }
                 }
@@ -107,6 +122,9 @@ async fn debug_protocol_tx_content() {
         }
 
         let total_blocks = heights.len();
-        println!("  {}/{} blocks had protocol_tx outputs\n", found_with_outputs, total_blocks);
+        println!(
+            "  {}/{} blocks had protocol_tx outputs\n",
+            found_with_outputs, total_blocks
+        );
     }
 }

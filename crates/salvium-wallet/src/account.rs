@@ -32,11 +32,7 @@ impl SubaddressMaps {
     ///
     /// * `num_accounts` — number of accounts (major indices 0..num_accounts).
     /// * `minor_per_account` — subaddresses per account (minor indices 0..minor_per_account).
-    pub fn generate(
-        keys: &WalletKeys,
-        num_accounts: u32,
-        minor_per_account: u32,
-    ) -> Self {
+    pub fn generate(keys: &WalletKeys, num_accounts: u32, minor_per_account: u32) -> Self {
         let major_count = num_accounts.saturating_sub(1);
         let minor_count = minor_per_account.saturating_sub(1);
 

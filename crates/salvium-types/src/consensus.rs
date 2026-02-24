@@ -5,9 +5,7 @@
 //!
 //! Reference: salvium/src/cryptonote_config.h, cryptonote_basic_impl.cpp, difficulty.cpp
 
-use crate::constants::{
-    network_config, AssetType, HfVersion, Network, TxType,
-};
+use crate::constants::{network_config, AssetType, HfVersion, Network, TxType};
 
 // =============================================================================
 // Core Constants
@@ -312,7 +310,11 @@ pub fn next_difficulty(
     }
 
     let length = ts.len();
-    assert_eq!(length, cd.len(), "timestamps and difficulties must have same length");
+    assert_eq!(
+        length,
+        cd.len(),
+        "timestamps and difficulties must have same length"
+    );
 
     if length <= 1 {
         return 1;
@@ -413,10 +415,14 @@ pub fn next_difficulty_v2(
     }
 
     // Next difficulty = avgD × T × adjust / LWMA
-    let next_diff = total_difficulty as i128 * t * ADJUST_NUM * SCALE
-        / (n_big * ADJUST_DEN * lwma_scaled);
+    let next_diff =
+        total_difficulty as i128 * t * ADJUST_NUM * SCALE / (n_big * ADJUST_DEN * lwma_scaled);
 
-    if next_diff < 1 { 1 } else { next_diff as u128 }
+    if next_diff < 1 {
+        1
+    } else {
+        next_diff as u128
+    }
 }
 
 /// Check if a hash meets difficulty target: hash × difficulty ≤ 2^256.
@@ -1197,8 +1203,10 @@ mod tests {
         let testnet = Network::Testnet;
         let stagenet = Network::Stagenet;
 
-        let heights = [0, 1, 100, 249, 250, 499, 500, 599, 600, 799, 800,
-                       814, 815, 899, 900, 949, 950, 999, 1000, 1099, 1100, 2000];
+        let heights = [
+            0, 1, 100, 249, 250, 499, 500, 599, 600, 799, 800, 814, 815, 899, 900, 949, 950, 999,
+            1000, 1099, 1100, 2000,
+        ];
 
         for &h in &heights {
             assert_eq!(

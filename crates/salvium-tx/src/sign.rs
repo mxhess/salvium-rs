@@ -55,8 +55,7 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
         compute_pseudo_outputs(&unsigned.inputs, &unsigned.output_masks)?;
 
     // 4. Generate Bulletproofs+ range proof for all outputs.
-    let bp_data =
-        generate_bp_proof(&unsigned.output_amounts, &unsigned.output_masks)?;
+    let bp_data = generate_bp_proof(&unsigned.output_amounts, &unsigned.output_masks)?;
 
     // 4b. Compute p_r and PRProof.
     //     Required for FULL_PROOFS (7), SALVIUM_ZERO (8), SALVIUM_ONE (9).
@@ -76,7 +75,11 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
             sd_bytes.extend_from_slice(&[0u8; 96]); // sa_proof (zeroed)
         } else {
             // SALVIUM_ZERO/ONE: type varint + pr_proof + sa_proof.
-            let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
+            let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE {
+                2
+            } else {
+                0
+            };
             write_varint(&mut sd_bytes, sd_type);
             sd_bytes.extend_from_slice(&proof.0); // pr_proof.R
             sd_bytes.extend_from_slice(&proof.1); // pr_proof.z1
@@ -180,7 +183,11 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
             }))
         } else {
             // SALVIUM_ZERO/ONE: includes salvium_data_type.
-            let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
+            let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE {
+                2
+            } else {
+                0
+            };
             Some(serde_json::json!({
                 "salvium_data_type": sd_type_val,
                 "pr_proof": pr_json,
@@ -215,10 +222,9 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
 /// Compute the prefix hash (keccak256 of serialized prefix).
 fn compute_prefix_hash(prefix: &TxPrefix) -> Result<[u8; 32], TxError> {
     let json = prefix.to_json();
-    let json_str =
-        serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
-    let prefix_bytes = salvium_crypto::tx_serialize::serialize_tx_prefix(&json_str)
-        .map_err(TxError::Serialize)?;
+    let json_str = serde_json::to_string(&json).map_err(|e| TxError::Serialize(e.to_string()))?;
+    let prefix_bytes =
+        salvium_crypto::tx_serialize::serialize_tx_prefix(&json_str).map_err(TxError::Serialize)?;
     Ok(to_32(&salvium_crypto::keccak256(&prefix_bytes)))
 }
 
@@ -275,20 +281,14 @@ fn compute_pseudo_outputs(
 /// Generate a Bulletproofs+ range proof for all outputs.
 ///
 /// Proves that each output commitment opens to a value in [0, 2^64).
-fn generate_bp_proof(
-    amounts: &[u64],
-    masks: &[[u8; 32]],
-) -> Result<BpPlusData, TxError> {
+fn generate_bp_proof(amounts: &[u64], masks: &[[u8; 32]]) -> Result<BpPlusData, TxError> {
     // Convert masks from [u8; 32] to curve25519-dalek Scalars.
     let scalar_masks: Vec<Scalar> = masks
         .iter()
         .map(|m| Scalar::from_bytes_mod_order(*m))
         .collect();
 
-    let proof = salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(
-        amounts,
-        &scalar_masks,
-    );
+    let proof = salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(amounts, &scalar_masks);
 
     // Convert BulletproofPlusProof to our BpPlusData type.
     Ok(BpPlusData {
@@ -497,10 +497,9 @@ mod tests {
 
     /// The T generator used by TCLSAG (must match the constant in tclsag.rs).
     const T_BYTES: [u8; 32] = [
-        0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf,
-        0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
-        0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00,
-        0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
+        0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf, 0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84,
+        0x5f, 0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d,
+        0x09, 0x4f,
     ];
 
     /// Generate a valid keypair with both x and y components (for TCLSAG).
@@ -600,8 +599,7 @@ mod tests {
             make_valid_input(500_000_000, false),
         ];
 
-        let (pseudo_masks, _pseudo_outs) =
-            compute_pseudo_outputs(&inputs, &output_masks).unwrap();
+        let (pseudo_masks, _pseudo_outs) = compute_pseudo_outputs(&inputs, &output_masks).unwrap();
 
         let pseudo_sum = sum_scalars(&pseudo_masks);
         let output_sum = sum_scalars(&output_masks);
@@ -933,9 +931,7 @@ mod tests {
                     amount: 0,
                     asset_type: "SAL".to_string(),
                     key_offsets: vec![100],
-                    key_image: to_32(&salvium_crypto::generate_key_image(
-                        &input_pk, &input_sk,
-                    )),
+                    key_image: to_32(&salvium_crypto::generate_key_image(&input_pk, &input_sk)),
                 }],
                 outputs: vec![
                     TxOutput::CarrotV1 {
@@ -981,12 +977,18 @@ mod tests {
         // Reconstruct the message hash.
         let prefix_hash = compute_prefix_hash(&tx.prefix).unwrap();
         let rct_base_bytes = serialize_rct_base_bytes(
-            rct.rct_type, rct.txn_fee, &rct.ecdh_info, &rct.out_pk,
-            &ED25519_IDENTITY, None,
+            rct.rct_type,
+            rct.txn_fee,
+            &rct.ecdh_info,
+            &rct.out_pk,
+            &ED25519_IDENTITY,
+            None,
         );
         let bp_bytes = serialize_bp_components(&rct.bulletproof_plus[0]);
         let message = salvium_crypto::rct_verify::compute_rct_message(
-            &prefix_hash, &rct_base_bytes, &bp_bytes,
+            &prefix_hash,
+            &rct_base_bytes,
+            &bp_bytes,
         );
 
         // Verify the CLSAG signature independently.
@@ -1043,9 +1045,7 @@ mod tests {
                     amount: 0,
                     asset_type: "SAL".to_string(),
                     key_offsets: vec![100],
-                    key_image: to_32(&salvium_crypto::generate_key_image(
-                        &input_pk, &input_sk_x,
-                    )),
+                    key_image: to_32(&salvium_crypto::generate_key_image(&input_pk, &input_sk_x)),
                 }],
                 outputs: vec![
                     TxOutput::CarrotV1 {
@@ -1092,12 +1092,18 @@ mod tests {
         let prefix_hash = compute_prefix_hash(&tx.prefix).unwrap();
         let sd_bytes = reconstruct_salvium_data_bytes(rct);
         let rct_base_bytes = serialize_rct_base_bytes(
-            rct.rct_type, rct.txn_fee, &rct.ecdh_info, &rct.out_pk,
-            &ED25519_IDENTITY, sd_bytes.as_deref(),
+            rct.rct_type,
+            rct.txn_fee,
+            &rct.ecdh_info,
+            &rct.out_pk,
+            &ED25519_IDENTITY,
+            sd_bytes.as_deref(),
         );
         let bp_bytes = serialize_bp_components(&rct.bulletproof_plus[0]);
         let message = salvium_crypto::rct_verify::compute_rct_message(
-            &prefix_hash, &rct_base_bytes, &bp_bytes,
+            &prefix_hash,
+            &rct_base_bytes,
+            &bp_bytes,
         );
 
         // Verify the TCLSAG signature independently.
@@ -1133,16 +1139,11 @@ mod tests {
             .collect();
 
         // Prove directly using the crypto API.
-        let proof = salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(
-            &amounts,
-            &scalar_masks,
-        );
+        let proof =
+            salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(&amounts, &scalar_masks);
 
         // Verify using the proof's own commitments (the authoritative source).
-        let valid = salvium_crypto::bulletproofs_plus::bulletproof_plus_verify(
-            &proof.v,
-            &proof,
-        );
+        let valid = salvium_crypto::bulletproofs_plus::bulletproof_plus_verify(&proof.v, &proof);
         assert!(valid, "BP+ range proof should verify");
 
         // Also test that generate_bp_proof produces valid BpPlusData.

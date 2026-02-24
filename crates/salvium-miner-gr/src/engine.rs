@@ -42,12 +42,7 @@ impl HashAlgorithm for GhostRiderEngine {
     fn hash(&mut self, input: &[u8]) -> [u8; 32] {
         let mut output = [0u8; 32];
         let ret = unsafe {
-            ffi::ghostrider_hash(
-                input.as_ptr(),
-                input.len(),
-                output.as_mut_ptr(),
-                self.ctx,
-            )
+            ffi::ghostrider_hash(input.as_ptr(), input.len(), output.as_mut_ptr(), self.ctx)
         };
         if ret != 0 {
             return [0u8; 32];
@@ -77,9 +72,13 @@ mod tests {
     fn test_ghostrider_hash_produces_nonzero_output() {
         let mut engine = GhostRiderEngine::new();
         // Input must be >= 43 bytes for CN V1 requirement
-        let input = b"test input for ghostrider hash verification!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+        let input =
+            b"test input for ghostrider hash verification!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
         let hash = engine.hash(input);
-        assert!(!hash.iter().all(|&b| b == 0), "hash should not be all zeros");
+        assert!(
+            !hash.iter().all(|&b| b == 0),
+            "hash should not be all zeros"
+        );
     }
 
     #[test]
@@ -96,7 +95,10 @@ mod tests {
         let mut engine = GhostRiderEngine::new();
         let hash1 = engine.hash(b"input A for ghostrider that is long enough for cn v1 hash");
         let hash2 = engine.hash(b"input B for ghostrider that is long enough for cn v1 hash");
-        assert_ne!(hash1, hash2, "different inputs should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "different inputs should produce different hashes"
+        );
     }
 
     #[test]
@@ -111,7 +113,10 @@ mod tests {
         let mut engine = GhostRiderEngine::new();
         // Input less than 43 bytes should fail (return zeros)
         let hash = engine.hash(b"too short");
-        assert!(hash.iter().all(|&b| b == 0), "short input should return zeros");
+        assert!(
+            hash.iter().all(|&b| b == 0),
+            "short input should return zeros"
+        );
     }
 
     // ── SPH individual hash function verification ─────────────────────
@@ -159,7 +164,11 @@ mod tests {
         let mut hashes = Vec::new();
         for algo in 0..15 {
             let hash = sph_hash(algo, input);
-            assert!(!hash.iter().all(|&b| b == 0), "algo {} returned all zeros", algo);
+            assert!(
+                !hash.iter().all(|&b| b == 0),
+                "algo {} returned all zeros",
+                algo
+            );
             hashes.push(hex::encode(hash));
         }
         hashes.sort();
@@ -225,9 +234,11 @@ mod tests {
         let xor: Vec<u8> = hash1.iter().zip(hash2.iter()).map(|(a, b)| a ^ b).collect();
         let expected = &TEST_OUTPUT_GR[0..32];
         assert_eq!(
-            &xor[..], expected,
+            &xor[..],
+            expected,
             "GhostRider XOR-differential mismatch for slot 0\n  got:    {}\n  expect: {}",
-            hex::encode(&xor), hex::encode(expected)
+            hex::encode(&xor),
+            hex::encode(expected)
         );
     }
 
@@ -251,9 +262,12 @@ mod tests {
             let xor: Vec<u8> = hash1.iter().zip(hash2.iter()).map(|(a, b)| a ^ b).collect();
             let expected = &TEST_OUTPUT_GR[(i as usize) * 32..(i as usize + 1) * 32];
             assert_eq!(
-                &xor[..], expected,
+                &xor[..],
+                expected,
                 "GhostRider XOR-differential mismatch for slot {}\n  got:    {}\n  expect: {}",
-                i, hex::encode(&xor), hex::encode(expected)
+                i,
+                hex::encode(&xor),
+                hex::encode(expected)
             );
         }
     }
@@ -262,13 +276,12 @@ mod tests {
 
     #[test]
     fn test_ghostrider_mining_loop_smoke() {
-        use salvium_miner::mining::MiningLoop;
         use salvium_miner::miner::MiningJob;
+        use salvium_miner::mining::MiningLoop;
         use std::sync::atomic::Ordering;
 
-        let mining_loop = MiningLoop::new(1, |_| {
-            Ok(Box::new(GhostRiderEngine::new()))
-        }).expect("failed to create mining loop");
+        let mining_loop = MiningLoop::new(1, |_| Ok(Box::new(GhostRiderEngine::new())))
+            .expect("failed to create mining loop");
 
         let mut hashing_blob = vec![0u8; 76];
         hashing_blob[0] = 10;
@@ -293,10 +306,16 @@ mod tests {
         assert!(hashes > 0, "should have computed at least some hashes");
 
         let block = mining_loop.try_recv_block();
-        assert!(block.is_some(), "should have found a block with difficulty=1");
+        assert!(
+            block.is_some(),
+            "should have found a block with difficulty=1"
+        );
 
         let block = block.unwrap();
-        assert!(!block.hash.iter().all(|&b| b == 0), "found block hash should be non-zero");
+        assert!(
+            !block.hash.iter().all(|&b| b == 0),
+            "found block hash should be non-zero"
+        );
 
         mining_loop.stop();
     }

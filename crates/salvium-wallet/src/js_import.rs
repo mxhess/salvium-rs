@@ -61,21 +61,15 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
     let iv = hex_decode_field(enc, "iv")?;
     let ciphertext = hex_decode_field(enc, "ciphertext")?;
 
-    let argon2_params = enc.get("argon2").ok_or_else(|| {
-        WalletError::InvalidFile("missing argon2 parameters".into())
-    })?;
-    let t_cost = argon2_params
-        .get("t")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(3) as u32;
+    let argon2_params = enc
+        .get("argon2")
+        .ok_or_else(|| WalletError::InvalidFile("missing argon2 parameters".into()))?;
+    let t_cost = argon2_params.get("t").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
     let m_cost = argon2_params
         .get("m")
         .and_then(|v| v.as_u64())
         .unwrap_or(65536) as u32;
-    let parallelism = argon2_params
-        .get("p")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(4) as u32;
+    let parallelism = argon2_params.get("p").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
 
     // 1-2. Derive classical key + KEM seed via shared PQC primitives.
     let keys = crate::pqc::derive_keys(
@@ -213,20 +207,21 @@ mod tests {
         }
 
         let wallet_json = std::fs::read_to_string(&wallet_path).unwrap();
-        let pin = std::fs::read_to_string(&pin_path).unwrap().trim().to_string();
+        let pin = std::fs::read_to_string(&pin_path)
+            .unwrap()
+            .trim()
+            .to_string();
 
         let secrets = decrypt_js_wallet(&wallet_json, &pin).unwrap();
 
         // Verify seed is non-zero.
         assert_ne!(secrets.seed, [0u8; 32], "seed should not be zero");
         assert_ne!(
-            secrets.spend_secret_key,
-            [0u8; 32],
+            secrets.spend_secret_key, [0u8; 32],
             "spend key should not be zero"
         );
         assert_ne!(
-            secrets.view_secret_key,
-            [0u8; 32],
+            secrets.view_secret_key, [0u8; 32],
             "view key should not be zero"
         );
 

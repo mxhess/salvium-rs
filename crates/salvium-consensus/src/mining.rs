@@ -6,7 +6,6 @@
 //!
 //! Reference: salvium/src/cryptonote_basic/miner.cpp, difficulty.cpp, mining.js
 
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -100,8 +99,7 @@ pub fn set_extra_nonce(
     if extra_nonce.len() > MAX_EXTRA_NONCE_SIZE {
         return Err("extra nonce too large");
     }
-    blob[reserved_offset..reserved_offset + extra_nonce.len()]
-        .copy_from_slice(extra_nonce);
+    blob[reserved_offset..reserved_offset + extra_nonce.len()].copy_from_slice(extra_nonce);
     Ok(())
 }
 
@@ -259,22 +257,13 @@ mod tests {
 
     #[test]
     fn test_parse_difficulty_wide() {
-        assert_eq!(
-            parse_difficulty(0, Some("0xff"), None),
-            255u128
-        );
-        assert_eq!(
-            parse_difficulty(0, Some("100"), None),
-            256u128
-        );
+        assert_eq!(parse_difficulty(0, Some("0xff"), None), 255u128);
+        assert_eq!(parse_difficulty(0, Some("100"), None), 256u128);
     }
 
     #[test]
     fn test_parse_difficulty_top64() {
-        assert_eq!(
-            parse_difficulty(1, None, Some(1)),
-            (1u128 << 64) | 1
-        );
+        assert_eq!(parse_difficulty(1, None, Some(1)), (1u128 << 64) | 1);
     }
 
     #[test]

@@ -51,7 +51,10 @@ async fn test_decoy_selector_real_distribution() {
         .expect("build_ring should succeed");
 
     assert_eq!(ring.len(), DEFAULT_RING_SIZE);
-    assert_eq!(ring[real_pos], real_index, "real output should be at real_pos");
+    assert_eq!(
+        ring[real_pos], real_index,
+        "real output should be at real_pos"
+    );
 
     // Ring should be sorted ascending.
     for i in 1..ring.len() {
@@ -60,7 +63,12 @@ async fn test_decoy_selector_real_distribution() {
 
     // All indices should be in range.
     for &idx in &ring {
-        assert!(idx < total_outputs, "ring member {} out of range (max {})", idx, total_outputs);
+        assert!(
+            idx < total_outputs,
+            "ring member {} out of range (max {})",
+            idx,
+            total_outputs
+        );
     }
 
     println!(
@@ -90,7 +98,12 @@ async fn test_decoy_selector_multiple_rings() {
         // Check no duplicates.
         let mut sorted = ring.clone();
         sorted.dedup();
-        assert_eq!(sorted.len(), ring.len(), "ring {} should have no duplicates", i);
+        assert_eq!(
+            sorted.len(),
+            ring.len(),
+            "ring {} should have no duplicates",
+            i
+        );
     }
     println!("Built 10 unique rings successfully");
 }
@@ -117,10 +130,16 @@ async fn test_fetch_ring_members() {
     // Fetch all ring members from daemon.
     let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices
         .iter()
-        .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
+        .map(|&idx| salvium_rpc::daemon::OutputRequest {
+            amount: 0,
+            index: idx,
+        })
         .collect();
 
-    let outs = d.get_outs(&requests, false, "").await.expect("get_outs failed");
+    let outs = d
+        .get_outs(&requests, false, "")
+        .await
+        .expect("get_outs failed");
     assert_eq!(outs.len(), DEFAULT_RING_SIZE);
 
     // Parse all keys and commitments.
@@ -131,7 +150,10 @@ async fn test_fetch_ring_members() {
         let mask = hex_to_32(&out.mask);
         ring_keys.push(key);
         ring_commitments.push(mask);
-        assert!(out.unlocked || out.height == 0, "ring member should be unlocked or genesis");
+        assert!(
+            out.unlocked || out.height == 0,
+            "ring member should be unlocked or genesis"
+        );
     }
 
     println!(
@@ -139,7 +161,11 @@ async fn test_fetch_ring_members() {
         ring_keys.len(),
         ring_commitments.len()
     );
-    println!("Real output at ring position {}: key={}", real_pos, &outs[real_pos].key[..16]);
+    println!(
+        "Real output at ring position {}: key={}",
+        real_pos,
+        &outs[real_pos].key[..16]
+    );
 }
 
 // ─── 3. Coinbase TX Parsing ─────────────────────────────────────────────────
@@ -151,9 +177,15 @@ async fn test_parse_coinbase_from_chain() {
     let header = d.get_block_header_by_height(1250).await.unwrap();
 
     // Fetch the block to get the miner TX hash.
-    let miner_tx_hash = header.miner_tx_hash.expect("block should have miner_tx_hash");
+    let miner_tx_hash = header
+        .miner_tx_hash
+        .expect("block should have miner_tx_hash");
     println!("Miner TX hash: {}", miner_tx_hash);
-    println!("Reward: {} ({:.9} SAL)", header.reward, header.reward as f64 / 1e9);
+    println!(
+        "Reward: {} ({:.9} SAL)",
+        header.reward,
+        header.reward as f64 / 1e9
+    );
 
     // Note: coinbase TXs may not be directly fetchable via get_transactions
     // on all daemons. The reward and hash confirm the block is valid.
@@ -167,8 +199,8 @@ async fn test_parse_coinbase_from_chain() {
 #[tokio::test]
 #[ignore]
 async fn test_address_generation_testnet() {
-    use salvium_types::address::{create_address_raw, parse_address, is_valid_address};
-    use salvium_types::constants::{Network, AddressFormat, AddressType};
+    use salvium_types::address::{create_address_raw, is_valid_address, parse_address};
+    use salvium_types::constants::{AddressFormat, AddressType, Network};
 
     // Generate a random keypair.
     let seed = [42u8; 32];
@@ -188,22 +220,48 @@ async fn test_address_generation_testnet() {
 
     // Test all address types for testnet.
     let test_cases = [
-        (AddressFormat::Legacy, AddressType::Standard, "Legacy standard"),
-        (AddressFormat::Legacy, AddressType::Subaddress, "Legacy subaddress"),
-        (AddressFormat::Carrot, AddressType::Standard, "CARROT standard"),
-        (AddressFormat::Carrot, AddressType::Subaddress, "CARROT subaddress"),
+        (
+            AddressFormat::Legacy,
+            AddressType::Standard,
+            "Legacy standard",
+        ),
+        (
+            AddressFormat::Legacy,
+            AddressType::Subaddress,
+            "Legacy subaddress",
+        ),
+        (
+            AddressFormat::Carrot,
+            AddressType::Standard,
+            "CARROT standard",
+        ),
+        (
+            AddressFormat::Carrot,
+            AddressType::Subaddress,
+            "CARROT subaddress",
+        ),
     ];
 
     for (format, addr_type, label) in &test_cases {
         let addr = create_address_raw(
-            Network::Testnet, *format, *addr_type,
-            &spend_pub, &view_pub, None,
+            Network::Testnet,
+            *format,
+            *addr_type,
+            &spend_pub,
+            &view_pub,
+            None,
         )
         .unwrap_or_else(|_| panic!("{} address creation failed", label));
 
-        assert!(is_valid_address(&addr), "{} address should be valid: {}", label, &addr[..20]);
+        assert!(
+            is_valid_address(&addr),
+            "{} address should be valid: {}",
+            label,
+            &addr[..20]
+        );
 
-        let parsed = parse_address(&addr).unwrap_or_else(|_| panic!("{} address parsing failed", label));
+        let parsed =
+            parse_address(&addr).unwrap_or_else(|_| panic!("{} address parsing failed", label));
         assert_eq!(parsed.network, Network::Testnet);
         assert_eq!(parsed.format, *format);
         assert_eq!(parsed.address_type, *addr_type);
@@ -216,8 +274,12 @@ async fn test_address_generation_testnet() {
     // Test integrated address (with payment ID).
     let payment_id = [0x42u8; 8];
     let addr = create_address_raw(
-        Network::Testnet, AddressFormat::Legacy, AddressType::Integrated,
-        &spend_pub, &view_pub, Some(&payment_id),
+        Network::Testnet,
+        AddressFormat::Legacy,
+        AddressType::Integrated,
+        &spend_pub,
+        &view_pub,
+        Some(&payment_id),
     )
     .expect("integrated address creation failed");
 
@@ -239,8 +301,14 @@ async fn test_fee_estimation_realistic() {
     assert!(fee > 0, "fee should be positive");
 
     let fee_sal = fee as f64 / 1e9;
-    println!("Standard 2-in/2-out TCLSAG fee: {} atomic ({:.9} SAL)", fee, fee_sal);
-    assert!(fee_sal < 1.0, "fee should be less than 1 SAL for a normal TX");
+    println!(
+        "Standard 2-in/2-out TCLSAG fee: {} atomic ({:.9} SAL)",
+        fee, fee_sal
+    );
+    assert!(
+        fee_sal < 1.0,
+        "fee should be less than 1 SAL for a normal TX"
+    );
 
     // Compare priorities.
     let fee_low = estimate_tx_fee(2, 2, 16, true, 0x04, FeePriority::Low);
@@ -249,9 +317,15 @@ async fn test_fee_estimation_realistic() {
 
     assert!(fee_low <= fee, "low priority fee should be <= normal");
     assert!(fee_high >= fee, "high priority fee should be >= normal");
-    assert!(fee_highest >= fee_high, "highest priority should be >= high");
+    assert!(
+        fee_highest >= fee_high,
+        "highest priority should be >= high"
+    );
 
-    println!("Fees by priority: low={} normal={} high={} highest={}", fee_low, fee, fee_high, fee_highest);
+    println!(
+        "Fees by priority: low={} normal={} high={} highest={}",
+        fee_low, fee, fee_high, fee_highest
+    );
 }
 
 // ─── 6. Full Build + Sign (synthetic, no daemon submission) ──────────────────
@@ -287,7 +361,10 @@ async fn test_build_and_sign_with_real_decoys() {
     // 4. Fetch real ring member keys and commitments.
     let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices
         .iter()
-        .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
+        .map(|&idx| salvium_rpc::daemon::OutputRequest {
+            amount: 0,
+            index: idx,
+        })
         .collect();
     let outs = d.get_outs(&requests, false, "").await.unwrap();
 
@@ -314,14 +391,26 @@ async fn test_build_and_sign_with_real_decoys() {
 
     // 5. Build unsigned transaction.
     let send_amount = 1_000_000_000u64;
-    let fee = salvium_tx::estimate_tx_fee(1, 2, DEFAULT_RING_SIZE, true, 0x04,
-        salvium_tx::fee::FeePriority::Normal);
+    let fee = salvium_tx::estimate_tx_fee(
+        1,
+        2,
+        DEFAULT_RING_SIZE,
+        true,
+        0x04,
+        salvium_tx::fee::FeePriority::Normal,
+    );
     let change = amount - send_amount - fee;
 
     let output_mask1 = random_scalar();
     let output_mask2 = random_scalar();
-    let out_commit1 = to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
-    let out_commit2 = to_32(&salvium_crypto::pedersen_commit(&change.to_le_bytes(), &output_mask2));
+    let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
+        &send_amount.to_le_bytes(),
+        &output_mask1,
+    ));
+    let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
+        &change.to_le_bytes(),
+        &output_mask2,
+    ));
 
     let ki = to_32(&salvium_crypto::generate_key_image(&pk, &sk_x));
 
@@ -399,12 +488,18 @@ async fn test_build_and_sign_with_real_decoys() {
     match signed.to_bytes() {
         Ok(bytes) => {
             println!("  Serialized size: {} bytes", bytes.len());
-            println!("  TX hex (first 64): {}", &hex::encode(&bytes[..32.min(bytes.len())]));
+            println!(
+                "  TX hex (first 64): {}",
+                &hex::encode(&bytes[..32.min(bytes.len())])
+            );
         }
         Err(e) => {
             // Serialization may fail because our output keys aren't real CARROT outputs.
             // That's OK for this test — we're testing the signing pipeline, not output construction.
-            println!("  Serialization note: {} (expected with synthetic outputs)", e);
+            println!(
+                "  Serialization note: {} (expected with synthetic outputs)",
+                e
+            );
         }
     }
 }
@@ -427,10 +522,8 @@ fn to_32(v: &[u8]) -> [u8; 32] {
 
 /// The TCLSAG T generator constant.
 const T_BYTES: [u8; 32] = [
-    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf,
-    0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
-    0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00,
-    0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
+    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf, 0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
+    0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
 ];
 
 fn test_keypair_tclsag() -> ([u8; 32], [u8; 32], [u8; 32]) {

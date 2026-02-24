@@ -46,8 +46,8 @@
 //! ```
 
 use salvium_rpc::DaemonRpc;
-use salvium_wallet::{SyncEvent, Wallet, WalletKeys};
 use salvium_types::constants::Network;
+use salvium_wallet::{SyncEvent, Wallet, WalletKeys};
 use std::time::Instant;
 
 // =============================================================================
@@ -75,13 +75,21 @@ fn parse_network(s: &str) -> Network {
         "mainnet" | "main" => Network::Mainnet,
         "testnet" | "test" => Network::Testnet,
         "stagenet" | "stage" => Network::Stagenet,
-        _ => panic!("invalid SYNC_NETWORK: '{}' (expected mainnet/testnet/stagenet)", s),
+        _ => panic!(
+            "invalid SYNC_NETWORK: '{}' (expected mainnet/testnet/stagenet)",
+            s
+        ),
     }
 }
 
 fn hex_to_32(hex_str: &str) -> [u8; 32] {
     let bytes = hex::decode(hex_str).unwrap_or_else(|e| panic!("invalid hex '{}': {}", hex_str, e));
-    assert_eq!(bytes.len(), 32, "expected 32 bytes, got {} from hex", bytes.len());
+    assert_eq!(
+        bytes.len(),
+        32,
+        "expected 32 bytes, got {} from hex",
+        bytes.len()
+    );
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     arr
@@ -97,7 +105,12 @@ fn fmt_duration(secs: f64) -> String {
     } else if secs < 3600.0 {
         format!("{}m {:02}s", secs as u64 / 60, secs as u64 % 60)
     } else {
-        format!("{}h {:02}m {:02}s", secs as u64 / 3600, (secs as u64 % 3600) / 60, secs as u64 % 60)
+        format!(
+            "{}h {:02}m {:02}s",
+            secs as u64 / 3600,
+            (secs as u64 % 3600) / 60,
+            secs as u64 % 60
+        )
     }
 }
 
@@ -124,10 +137,14 @@ async fn wallet_sync_and_balance_check() {
     let daemon_url = env_or("SYNC_DAEMON_URL", default_daemon_url(network));
     // Asset type is only used for optional balance assertions, not for filtering sync.
     let assert_asset = env_or("SYNC_ASSET_TYPE", DEFAULT_ASSET_TYPE);
-    let expected_balance: Option<u64> = env_opt("SYNC_EXPECTED_BALANCE")
-        .map(|s| s.parse().expect("invalid SYNC_EXPECTED_BALANCE (must be u64 atomic units)"));
-    let min_balance: Option<u64> = env_opt("SYNC_MIN_BALANCE")
-        .map(|s| s.parse().expect("invalid SYNC_MIN_BALANCE (must be u64 atomic units)"));
+    let expected_balance: Option<u64> = env_opt("SYNC_EXPECTED_BALANCE").map(|s| {
+        s.parse()
+            .expect("invalid SYNC_EXPECTED_BALANCE (must be u64 atomic units)")
+    });
+    let min_balance: Option<u64> = env_opt("SYNC_MIN_BALANCE").map(|s| {
+        s.parse()
+            .expect("invalid SYNC_MIN_BALANCE (must be u64 atomic units)")
+    });
 
     let db_key = env_opt("SYNC_DB_KEY")
         .map(|h| hex::decode(&h).expect("invalid SYNC_DB_KEY hex"))
@@ -138,15 +155,17 @@ async fn wallet_sync_and_balance_check() {
         let seed = hex_to_32(&seed_hex);
         (WalletKeys::from_seed(seed, network), "full (from seed)")
     } else if let Some(mnemonic) = env_opt("SYNC_MNEMONIC") {
-        let keys = WalletKeys::from_mnemonic(&mnemonic, network)
-            .expect("invalid SYNC_MNEMONIC");
+        let keys = WalletKeys::from_mnemonic(&mnemonic, network).expect("invalid SYNC_MNEMONIC");
         (keys, "full (from mnemonic)")
     } else if let Some(view_key_hex) = env_opt("SYNC_VIEW_KEY") {
-        let spend_pub_hex = env_opt("SYNC_SPEND_PUB")
-            .expect("SYNC_SPEND_PUB is required when using SYNC_VIEW_KEY");
+        let spend_pub_hex =
+            env_opt("SYNC_SPEND_PUB").expect("SYNC_SPEND_PUB is required when using SYNC_VIEW_KEY");
         let view_key = hex_to_32(&view_key_hex);
         let spend_pub = hex_to_32(&spend_pub_hex);
-        (WalletKeys::view_only(view_key, spend_pub, network), "view-only")
+        (
+            WalletKeys::view_only(view_key, spend_pub, network),
+            "view-only",
+        )
     } else {
         panic!(
             "No wallet key material provided.\n\
@@ -161,24 +180,38 @@ async fn wallet_sync_and_balance_check() {
 
     // Print addresses
     if let Ok(addr) = keys.cn_address() {
-        println!("  CN address:   {}...{}", &addr[..20], &addr[addr.len()-8..]);
+        println!(
+            "  CN address:   {}...{}",
+            &addr[..20],
+            &addr[addr.len() - 8..]
+        );
     }
     if let Ok(addr) = keys.carrot_address() {
-        println!("  CARROT addr:  {}...{}", &addr[..20], &addr[addr.len()-8..]);
+        println!(
+            "  CARROT addr:  {}...{}",
+            &addr[..20],
+            &addr[addr.len() - 8..]
+        );
     }
 
     // ── Create wallet + database ────────────────────────────────────────
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
     let db_path = temp_dir.path().join("sync_test.db");
-    let wallet = Wallet::open(keys, db_path.to_str().unwrap(), &db_key)
-        .expect("failed to open wallet");
+    let wallet =
+        Wallet::open(keys, db_path.to_str().unwrap(), &db_key).expect("failed to open wallet");
 
     // ── Connect to daemon ───────────────────────────────────────────────
     let daemon = DaemonRpc::new(&daemon_url);
-    let info = daemon.get_info().await.expect("failed to connect to daemon");
+    let info = daemon
+        .get_info()
+        .await
+        .expect("failed to connect to daemon");
     println!("\n  Daemon height:       {}", info.height);
     println!("  Daemon synchronized: {}", info.synchronized);
-    assert!(info.synchronized, "daemon is not fully synchronized — wait and retry");
+    assert!(
+        info.synchronized,
+        "daemon is not fully synchronized — wait and retry"
+    );
 
     // ── Sync wallet ─────────────────────────────────────────────────────
     println!("\n  Starting full sync from genesis...\n");
@@ -195,7 +228,12 @@ async fn wallet_sync_and_balance_check() {
                 SyncEvent::Started { target_height } => {
                     println!("  Sync started — target height: {}", target_height);
                 }
-                SyncEvent::Progress { current_height, target_height, outputs_found, .. } => {
+                SyncEvent::Progress {
+                    current_height,
+                    target_height,
+                    outputs_found,
+                    ..
+                } => {
                     total_outputs += outputs_found as u32;
                     let percent = if target_height > 0 {
                         (current_height * 100) / target_height
@@ -206,23 +244,35 @@ async fn wallet_sync_and_balance_check() {
                     if percent >= last_percent + 5 || outputs_found > 0 {
                         println!(
                             "  [{:>3}%] height {}/{} — {} outputs found (batch: {})",
-                            percent, current_height, target_height,
-                            total_outputs, outputs_found
+                            percent, current_height, target_height, total_outputs, outputs_found
                         );
                         last_percent = percent;
                     }
                 }
                 SyncEvent::Complete { height } => {
-                    println!("  Sync complete at height {} — {} total outputs", height, total_outputs);
+                    println!(
+                        "  Sync complete at height {} — {} total outputs",
+                        height, total_outputs
+                    );
                 }
-                SyncEvent::Reorg { from_height, to_height } => {
+                SyncEvent::Reorg {
+                    from_height,
+                    to_height,
+                } => {
                     println!("  REORG detected: {} -> {}", from_height, to_height);
                 }
                 SyncEvent::Error(msg) => {
                     eprintln!("  SYNC ERROR: {}", msg);
                 }
-                SyncEvent::ParseError { height, blob_len, ref error } => {
-                    eprintln!("  PARSE ERROR at height {} (blob_len={}): {}", height, blob_len, error);
+                SyncEvent::ParseError {
+                    height,
+                    blob_len,
+                    ref error,
+                } => {
+                    eprintln!(
+                        "  PARSE ERROR at height {} (blob_len={}): {}",
+                        height, blob_len, error
+                    );
                 }
             }
         }
@@ -241,14 +291,12 @@ async fn wallet_sync_and_balance_check() {
     println!("  Final sync height: {}", sync_height);
 
     // ── Verify sync height ──────────────────────────────────────────────
-    assert!(
-        sync_height > 0,
-        "sync height should be > 0"
-    );
+    assert!(sync_height > 0, "sync height should be > 0");
     assert!(
         sync_height >= info.height.saturating_sub(2),
         "sync height ({}) should be near daemon tip ({})",
-        sync_height, info.height
+        sync_height,
+        info.height
     );
 
     // ── Check balances (all asset types) ────────────────────────────────
@@ -267,7 +315,10 @@ async fn wallet_sync_and_balance_check() {
         let locked: u64 = bal.locked_balance.parse().unwrap_or(0);
         println!(
             "  {:>6}: total = {:>15}  unlocked = {:>15}  locked = {:>15}",
-            asset, fmt_sal(total), fmt_sal(unlocked), fmt_sal(locked)
+            asset,
+            fmt_sal(total),
+            fmt_sal(unlocked),
+            fmt_sal(locked)
         );
     }
 
@@ -284,11 +335,23 @@ async fn wallet_sync_and_balance_check() {
         let target_unlocked: u64 = target_balance.unlocked_balance.parse().unwrap_or(0);
 
         println!("\n  Assertion target '{}' balance:", assert_asset);
-        println!("    total:    {} ({} atomic units)", fmt_sal(target_total), target_total);
-        println!("    unlocked: {} ({} atomic units)", fmt_sal(target_unlocked), target_unlocked);
+        println!(
+            "    total:    {} ({} atomic units)",
+            fmt_sal(target_total),
+            target_total
+        );
+        println!(
+            "    unlocked: {} ({} atomic units)",
+            fmt_sal(target_unlocked),
+            target_unlocked
+        );
 
         if let Some(expected) = expected_balance {
-            println!("  Expected: {} ({} atomic units)", fmt_sal(expected), expected);
+            println!(
+                "  Expected: {} ({} atomic units)",
+                fmt_sal(expected),
+                expected
+            );
             assert_eq!(
                 target_total, expected,
                 "\n  BALANCE MISMATCH for '{}'!\n  Expected: {} ({} atomic)\n  Got:      {} ({} atomic)\n  Diff:     {} atomic units",
@@ -314,16 +377,18 @@ async fn wallet_sync_and_balance_check() {
     }
 
     // ── Output statistics ───────────────────────────────────────────────
-    let all_outputs = wallet.get_outputs(&salvium_wallet::OutputQuery {
-        is_spent: None,
-        is_frozen: None,
-        asset_type: None,
-        tx_type: None,
-        account_index: None,
-        subaddress_index: None,
-        min_amount: None,
-        max_amount: None,
-    }).unwrap();
+    let all_outputs = wallet
+        .get_outputs(&salvium_wallet::OutputQuery {
+            is_spent: None,
+            is_frozen: None,
+            asset_type: None,
+            tx_type: None,
+            account_index: None,
+            subaddress_index: None,
+            min_amount: None,
+            max_amount: None,
+        })
+        .unwrap();
 
     let unspent = all_outputs.iter().filter(|o| !o.is_spent).count();
     let spent = all_outputs.iter().filter(|o| o.is_spent).count();
@@ -338,16 +403,18 @@ async fn wallet_sync_and_balance_check() {
     println!("    CARROT:          {}", carrot);
 
     // ── Transfer history ────────────────────────────────────────────────
-    let transfers = wallet.get_transfers(&salvium_wallet::TxQuery {
-        is_incoming: None,
-        is_outgoing: None,
-        is_confirmed: None,
-        in_pool: None,
-        tx_type: None,
-        min_height: None,
-        max_height: None,
-        tx_hash: None,
-    }).unwrap();
+    let transfers = wallet
+        .get_transfers(&salvium_wallet::TxQuery {
+            is_incoming: None,
+            is_outgoing: None,
+            is_confirmed: None,
+            in_pool: None,
+            tx_type: None,
+            min_height: None,
+            max_height: None,
+            tx_hash: None,
+        })
+        .unwrap();
 
     let incoming = transfers.iter().filter(|t| t.is_incoming).count();
     let outgoing = transfers.iter().filter(|t| t.is_outgoing).count();
@@ -365,17 +432,25 @@ async fn wallet_sync_and_balance_check() {
             let amount: u64 = stake.amount_staked.parse().unwrap_or(0);
             println!(
                 "    tx={:.16}...  amount={}  status={}",
-                stake.stake_tx_hash, fmt_sal(amount), stake.status
+                stake.stake_tx_hash,
+                fmt_sal(amount),
+                stake.status
             );
         }
     }
 
     // ── Sync idempotency check ──────────────────────────────────────────
     println!("\n  Verifying sync idempotency...");
-    let height2 = wallet.sync(&daemon, None).await.expect("second sync failed");
+    let height2 = wallet
+        .sync(&daemon, None)
+        .await
+        .expect("second sync failed");
     let all_balances_2 = wallet.get_all_balances(0).unwrap();
 
-    assert!(height2 >= sync_height, "second sync should not go backwards");
+    assert!(
+        height2 >= sync_height,
+        "second sync should not go backwards"
+    );
     for (asset, bal1) in &all_balances {
         if let Some(bal2) = all_balances_2.get(asset) {
             assert_eq!(
@@ -391,7 +466,10 @@ async fn wallet_sync_and_balance_check() {
     println!("\n{}", "=".repeat(64));
     println!("  WALLET SYNC TEST PASSED");
     println!("  Height:     {}", sync_height);
-    println!("  Assets:     {}", all_balances.keys().cloned().collect::<Vec<_>>().join(", "));
+    println!(
+        "  Assets:     {}",
+        all_balances.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
     println!("  Time:       {}", fmt_duration(elapsed));
     println!("{}\n", "=".repeat(64));
 }
@@ -418,8 +496,8 @@ fn ffi_wallet_sync_and_balance_check() {
     let network = parse_network(&env_or("SYNC_NETWORK", "mainnet"));
     let daemon_url = env_or("SYNC_DAEMON_URL", default_daemon_url(network));
     let assert_asset = env_or("SYNC_ASSET_TYPE", DEFAULT_ASSET_TYPE);
-    let expected_balance: Option<u64> = env_opt("SYNC_EXPECTED_BALANCE")
-        .map(|s| s.parse().expect("invalid SYNC_EXPECTED_BALANCE"));
+    let expected_balance: Option<u64> =
+        env_opt("SYNC_EXPECTED_BALANCE").map(|s| s.parse().expect("invalid SYNC_EXPECTED_BALANCE"));
 
     let seed = hex_to_32(&seed_hex);
     let network_int: i32 = match network {
@@ -447,25 +525,37 @@ fn ffi_wallet_sync_and_balance_check() {
             db_key.len(),
         )
     };
-    assert!(!wallet_handle.is_null(), "salvium_wallet_create failed: {:?}",
-        get_last_error());
+    assert!(
+        !wallet_handle.is_null(),
+        "salvium_wallet_create failed: {:?}",
+        get_last_error()
+    );
 
     // ── FFI: Check address ──────────────────────────────────────────────
-    let addr_ptr = unsafe {
-        salvium_ffi::wallet::salvium_wallet_get_address(wallet_handle, 0)
-    };
+    let addr_ptr = unsafe { salvium_ffi::wallet::salvium_wallet_get_address(wallet_handle, 0) };
     assert!(!addr_ptr.is_null(), "get_address failed");
-    let addr = unsafe { CStr::from_ptr(addr_ptr) }.to_str().unwrap().to_string();
-    println!("  Wallet address: {}...{}", &addr[..20], &addr[addr.len()-8..]);
-    unsafe { salvium_ffi::strings::salvium_string_free(addr_ptr); }
+    let addr = unsafe { CStr::from_ptr(addr_ptr) }
+        .to_str()
+        .unwrap()
+        .to_string();
+    println!(
+        "  Wallet address: {}...{}",
+        &addr[..20],
+        &addr[addr.len() - 8..]
+    );
+    unsafe {
+        salvium_ffi::strings::salvium_string_free(addr_ptr);
+    }
 
     // ── FFI: Connect daemon ─────────────────────────────────────────────
     let daemon_url_cstr = CString::new(daemon_url.as_str()).unwrap();
-    let daemon_handle = unsafe {
-        salvium_ffi::daemon::salvium_daemon_connect(daemon_url_cstr.as_ptr())
-    };
-    assert!(!daemon_handle.is_null(), "salvium_daemon_connect failed: {:?}",
-        get_last_error());
+    let daemon_handle =
+        unsafe { salvium_ffi::daemon::salvium_daemon_connect(daemon_url_cstr.as_ptr()) };
+    assert!(
+        !daemon_handle.is_null(),
+        "salvium_daemon_connect failed: {:?}",
+        get_last_error()
+    );
 
     // ── FFI: Get daemon height ──────────────────────────────────────────
     let height = unsafe { salvium_ffi::daemon::salvium_daemon_get_height(daemon_handle) };
@@ -487,9 +577,16 @@ fn ffi_wallet_sync_and_balance_check() {
         match event_type {
             0 => println!("  [FFI] Sync started — target: {}", target_height),
             1 => {
-                let pct = if target_height > 0 { (current_height * 100) / target_height } else { 0 };
+                let pct = if target_height > 0 {
+                    (current_height * 100) / target_height
+                } else {
+                    0
+                };
                 if pct % 10 == 0 || outputs_found > 0 {
-                    println!("  [FFI] [{:>3}%] {}/{} outputs_found={}", pct, current_height, target_height, outputs_found);
+                    println!(
+                        "  [FFI] [{:>3}%] {}/{} outputs_found={}",
+                        pct, current_height, target_height, outputs_found
+                    );
                 }
             }
             2 => println!("  [FFI] Sync complete at height {}", current_height),
@@ -498,7 +595,9 @@ fn ffi_wallet_sync_and_balance_check() {
                 let msg = if _error_msg.is_null() {
                     "unknown error"
                 } else {
-                    unsafe { CStr::from_ptr(_error_msg) }.to_str().unwrap_or("?")
+                    unsafe { CStr::from_ptr(_error_msg) }
+                        .to_str()
+                        .unwrap_or("?")
                 };
                 eprintln!("  [FFI] Error: {}", msg);
             }
@@ -507,31 +606,44 @@ fn ffi_wallet_sync_and_balance_check() {
     }
 
     let rc = unsafe {
-        salvium_ffi::wallet::salvium_wallet_sync(
-            wallet_handle,
-            daemon_handle,
-            Some(sync_callback),
-        )
+        salvium_ffi::wallet::salvium_wallet_sync(wallet_handle, daemon_handle, Some(sync_callback))
     };
     let elapsed = start.elapsed().as_secs_f64();
     assert_eq!(rc, 0, "salvium_wallet_sync failed: {:?}", get_last_error());
     println!("  Sync completed in {}", fmt_duration(elapsed));
 
     // ── FFI: Check all balances ────────────────────────────────────────
-    let all_bal_ptr = unsafe {
-        salvium_ffi::wallet::salvium_wallet_get_all_balances(wallet_handle, 0)
-    };
-    assert!(!all_bal_ptr.is_null(), "get_all_balances failed: {:?}", get_last_error());
-    let all_bal_json = unsafe { CStr::from_ptr(all_bal_ptr) }.to_str().unwrap().to_string();
-    unsafe { salvium_ffi::strings::salvium_string_free(all_bal_ptr); }
+    let all_bal_ptr =
+        unsafe { salvium_ffi::wallet::salvium_wallet_get_all_balances(wallet_handle, 0) };
+    assert!(
+        !all_bal_ptr.is_null(),
+        "get_all_balances failed: {:?}",
+        get_last_error()
+    );
+    let all_bal_json = unsafe { CStr::from_ptr(all_bal_ptr) }
+        .to_str()
+        .unwrap()
+        .to_string();
+    unsafe {
+        salvium_ffi::strings::salvium_string_free(all_bal_ptr);
+    }
 
     let all_bal: serde_json::Value = serde_json::from_str(&all_bal_json).unwrap();
     println!("\n  Balances (all asset types):");
     if let Some(obj) = all_bal.as_object() {
         for (asset, bal) in obj {
             let total: u64 = bal["balance"].as_str().unwrap_or("0").parse().unwrap_or(0);
-            let unlocked: u64 = bal["unlocked_balance"].as_str().unwrap_or("0").parse().unwrap_or(0);
-            println!("    {:>6}: total = {}  unlocked = {}", asset, fmt_sal(total), fmt_sal(unlocked));
+            let unlocked: u64 = bal["unlocked_balance"]
+                .as_str()
+                .unwrap_or("0")
+                .parse()
+                .unwrap_or(0);
+            println!(
+                "    {:>6}: total = {}  unlocked = {}",
+                asset,
+                fmt_sal(total),
+                fmt_sal(unlocked)
+            );
         }
     }
 
@@ -539,15 +651,21 @@ fn ffi_wallet_sync_and_balance_check() {
     if let Some(expected) = expected_balance {
         let asset_cstr = CString::new(assert_asset.as_str()).unwrap();
         let balance_ptr = unsafe {
-            salvium_ffi::wallet::salvium_wallet_get_balance(
-                wallet_handle,
-                asset_cstr.as_ptr(),
-                0,
-            )
+            salvium_ffi::wallet::salvium_wallet_get_balance(wallet_handle, asset_cstr.as_ptr(), 0)
         };
-        assert!(!balance_ptr.is_null(), "get_balance('{}') failed: {:?}", assert_asset, get_last_error());
-        let balance_json = unsafe { CStr::from_ptr(balance_ptr) }.to_str().unwrap().to_string();
-        unsafe { salvium_ffi::strings::salvium_string_free(balance_ptr); }
+        assert!(
+            !balance_ptr.is_null(),
+            "get_balance('{}') failed: {:?}",
+            assert_asset,
+            get_last_error()
+        );
+        let balance_json = unsafe { CStr::from_ptr(balance_ptr) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe {
+            salvium_ffi::strings::salvium_string_free(balance_ptr);
+        }
 
         let bal: serde_json::Value = serde_json::from_str(&balance_json).unwrap();
         let total: u64 = bal["balance"].as_str().unwrap().parse().unwrap();

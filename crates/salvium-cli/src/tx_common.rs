@@ -25,7 +25,11 @@ pub struct TxPipeline<'a> {
 }
 
 impl<'a> TxPipeline<'a> {
-    pub fn new(wallet: &'a Wallet, ctx: &AppContext, fee_priority: salvium_tx::fee::FeePriority) -> Self {
+    pub fn new(
+        wallet: &'a Wallet,
+        ctx: &AppContext,
+        fee_priority: salvium_tx::fee::FeePriority,
+    ) -> Self {
         Self {
             wallet,
             daemon: DaemonRpc::new(&ctx.daemon_url),
@@ -42,7 +46,9 @@ impl<'a> TxPipeline<'a> {
         asset_type: &str,
         strategy: salvium_wallet::utxo::SelectionStrategy,
     ) -> Result<(Vec<InputData>, u64)> {
-        let selection = self.wallet.select_outputs(amount, estimated_fee, asset_type, strategy)?;
+        let selection = self
+            .wallet
+            .select_outputs(amount, estimated_fee, asset_type, strategy)?;
         println!(
             "Selected {} input(s), total {} SAL",
             selection.selected.len(),
@@ -212,9 +218,7 @@ impl<'a> TxPipeline<'a> {
             .to_bytes()
             .map_err(|e| format!("serialize: {}", e))?;
         let tx_hex = hex::encode(&tx_bytes);
-        let tx_hash = signed_tx
-            .tx_hash()
-            .map_err(|e| format!("tx hash: {}", e))?;
+        let tx_hash = signed_tx.tx_hash().map_err(|e| format!("tx hash: {}", e))?;
 
         println!("Submitting transaction...");
         let result = self

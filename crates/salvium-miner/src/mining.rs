@@ -4,7 +4,9 @@
 //! the `HashAlgorithm` trait and plug into `MiningLoop` to get multi-threaded
 //! mining with job management, difficulty checking, and block submission.
 
-use crate::miner::{check_hash, check_hash_target, find_nonce_offset, set_nonce, FoundBlock, MiningJob};
+use crate::miner::{
+    check_hash, check_hash_target, find_nonce_offset, set_nonce, FoundBlock, MiningJob,
+};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -63,8 +65,7 @@ impl MiningLoop {
             let running = Arc::clone(&running);
             let result_tx = result_tx.clone();
             let create_hasher = Arc::clone(&create_hasher);
-            let nonce_start =
-                (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
+            let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
 
             let handle = thread::spawn(move || {
                 let mut hasher = match create_hasher(worker_id) {
@@ -130,7 +131,9 @@ fn generic_worker_loop(
             Err(_) => break,
         };
 
-        let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+        let nonce_offset = job
+            .nonce_offset
+            .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
         let mut blob = job.hashing_blob.clone();
 
@@ -141,7 +144,15 @@ fn generic_worker_loop(
 
             // Check for new job (non-blocking)
             if let Ok(new_job) = job_rx.try_recv() {
-                mine_single_job(hasher, &new_job, running, hash_count, result_tx, nonce_start, job_rx);
+                mine_single_job(
+                    hasher,
+                    &new_job,
+                    running,
+                    hash_count,
+                    result_tx,
+                    nonce_start,
+                    job_rx,
+                );
                 return;
             }
 
@@ -156,7 +167,9 @@ fn generic_worker_loop(
             };
             if meets {
                 let mut template = job.template_blob.clone();
-                let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
+                let tmpl_offset = job
+                    .nonce_offset
+                    .unwrap_or_else(|| find_nonce_offset(&template));
                 set_nonce(&mut template, tmpl_offset, nonce);
 
                 let _ = result_tx.send(FoundBlock {
@@ -185,7 +198,9 @@ fn mine_single_job(
     nonce_start: u32,
     job_rx: &mpsc::Receiver<MiningJob>,
 ) {
-    let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+    let nonce_offset = job
+        .nonce_offset
+        .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
     let mut nonce = nonce_start;
     let mut blob = job.hashing_blob.clone();
 
@@ -195,7 +210,15 @@ fn mine_single_job(
         }
 
         if let Ok(new_job) = job_rx.try_recv() {
-            mine_single_job(hasher, &new_job, running, hash_count, result_tx, nonce_start, job_rx);
+            mine_single_job(
+                hasher,
+                &new_job,
+                running,
+                hash_count,
+                result_tx,
+                nonce_start,
+                job_rx,
+            );
             return;
         }
 
@@ -210,7 +233,9 @@ fn mine_single_job(
         };
         if meets {
             let mut template = job.template_blob.clone();
-            let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
+            let tmpl_offset = job
+                .nonce_offset
+                .unwrap_or_else(|| find_nonce_offset(&template));
             set_nonce(&mut template, tmpl_offset, nonce);
 
             let _ = result_tx.send(FoundBlock {

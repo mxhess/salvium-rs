@@ -83,9 +83,7 @@ pub unsafe extern "C" fn salvium_multisig_exchange_keys(
 pub unsafe extern "C" fn salvium_multisig_export_info(handle: *mut c_void) -> *mut c_char {
     ffi_try_string(|| {
         let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
-        let info = wallet
-            .export_multisig_info()
-            .map_err(|e| e.to_string())?;
+        let info = wallet.export_multisig_info().map_err(|e| e.to_string())?;
         Ok(hex::encode(&info))
     })
 }

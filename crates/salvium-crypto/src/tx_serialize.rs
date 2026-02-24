@@ -63,8 +63,7 @@ fn write_u64_le(buf: &mut Vec<u8>, val: u64) {
 ///
 /// Input JSON format matches the output of `tx_parse::parse_transaction()`.
 pub fn serialize_transaction(json_str: &str) -> Result<Vec<u8>, String> {
-    let tx: Value =
-        serde_json::from_str(json_str).map_err(|e| format!("JSON parse error: {e}"))?;
+    let tx: Value = serde_json::from_str(json_str).map_err(|e| format!("JSON parse error: {e}"))?;
     let mut buf = Vec::with_capacity(4096);
 
     // 1. TX prefix
@@ -86,8 +85,7 @@ pub fn serialize_transaction(json_str: &str) -> Result<Vec<u8>, String> {
 
 /// Serialize just the transaction prefix from JSON to binary.
 pub fn serialize_tx_prefix(json_str: &str) -> Result<Vec<u8>, String> {
-    let tx: Value =
-        serde_json::from_str(json_str).map_err(|e| format!("JSON parse error: {e}"))?;
+    let tx: Value = serde_json::from_str(json_str).map_err(|e| format!("JSON parse error: {e}"))?;
     let mut buf = Vec::with_capacity(2048);
     serialize_tx_prefix_inner(&tx, &mut buf)?;
     Ok(buf)
@@ -537,15 +535,14 @@ mod tests {
         let hex_str = "043c01ffa50a01c4ac84892e04432aa8ffd2cd1d0edb8bbe5c191bf75b3435911f9794edbf15dccaacfb79d96f0453414c318b02fb52bcbcaf26be71a922be126c1e69ab072b013c54483190fbb1bc81c39b4c67e9f2166da31dd0f41049747d86e943bc064d450208000000000000000001908ba1c20b00";
         let original = hex::decode(hex_str).unwrap();
 
-        let json = tx_parse::parse_transaction(&original)
-            .expect("Failed to parse real miner TX");
+        let json = tx_parse::parse_transaction(&original).expect("Failed to parse real miner TX");
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["prefix"]["version"], 4);
         assert_eq!(parsed["prefix"]["txType"], 1); // MINER
         assert_eq!(parsed["prefix"]["vout"][0]["type"], TXOUT_CARROT_V1 as u64);
 
-        let reserialized = serialize_transaction(&json)
-            .expect("Failed to re-serialize real miner TX");
+        let reserialized =
+            serialize_transaction(&json).expect("Failed to re-serialize real miner TX");
 
         assert_eq!(
             hex_str,

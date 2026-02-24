@@ -24,8 +24,14 @@ const TEST_HEIGHTS: &[u64] = &[
 #[ignore]
 async fn debug_block_parse_at_heights() {
     let daemon = DaemonRpc::new("http://node12.whiskymine.io:19081");
-    let info = daemon.get_info().await.expect("cannot reach mainnet daemon");
-    println!("Daemon height: {} (synchronized: {})", info.height, info.synchronized);
+    let info = daemon
+        .get_info()
+        .await
+        .expect("cannot reach mainnet daemon");
+    println!(
+        "Daemon height: {} (synchronized: {})",
+        info.height, info.synchronized
+    );
     println!();
 
     let mut pass = 0usize;
@@ -33,7 +39,10 @@ async fn debug_block_parse_at_heights() {
 
     for &height in TEST_HEIGHTS {
         if height >= info.height {
-            println!("SKIP  height={} (beyond daemon tip {})", height, info.height);
+            println!(
+                "SKIP  height={} (beyond daemon tip {})",
+                height, info.height
+            );
             continue;
         }
 
@@ -85,7 +94,12 @@ async fn debug_block_parse_at_heights() {
                 &block_json_str[..block_json_str.len().min(300)]
             );
             // Print first 64 bytes of blob as hex for debugging
-            let hex_preview: String = entry.block.iter().take(64).map(|b| format!("{:02x}", b)).collect();
+            let hex_preview: String = entry
+                .block
+                .iter()
+                .take(64)
+                .map(|b| format!("{:02x}", b))
+                .collect();
             println!("  blob_hex_prefix: {}", hex_preview);
             fail += 1;
             continue;
@@ -97,9 +111,14 @@ async fn debug_block_parse_at_heights() {
             Err(e) => {
                 println!(
                     "JSON FAIL  height={}  blob_len={}  err={}",
-                    height, entry.block.len(), e
+                    height,
+                    entry.block.len(),
+                    e
                 );
-                println!("  raw json (first 500 chars): {}", &block_json_str[..block_json_str.len().min(500)]);
+                println!(
+                    "  raw json (first 500 chars): {}",
+                    &block_json_str[..block_json_str.len().min(500)]
+                );
                 fail += 1;
                 continue;
             }
@@ -144,7 +163,9 @@ async fn debug_block_parse_at_heights() {
                 if tx_parse_fails <= 3 {
                     println!(
                         "  TX PARSE FAIL  height={}  tx_idx={}  blob_len={}  err={}",
-                        height, i, tx_blob.len(),
+                        height,
+                        i,
+                        tx_blob.len(),
                         &tx_json_str[..tx_json_str.len().min(200)]
                     );
                 }
@@ -178,7 +199,10 @@ async fn debug_block_parse_at_heights() {
     println!("Pass: {}  Fail: {}  Total: {}", pass, fail, pass + fail);
 
     if fail > 0 {
-        println!("WARNING: {} heights had parse failures — investigate above output", fail);
+        println!(
+            "WARNING: {} heights had parse failures — investigate above output",
+            fail
+        );
     } else {
         println!("All tested heights parsed successfully.");
     }
@@ -192,7 +216,10 @@ async fn debug_block_parse_at_heights() {
 #[ignore]
 async fn debug_block_parse_range() {
     let daemon = DaemonRpc::new("http://node12.whiskymine.io:19081");
-    let info = daemon.get_info().await.expect("cannot reach mainnet daemon");
+    let info = daemon
+        .get_info()
+        .await
+        .expect("cannot reach mainnet daemon");
 
     // Scan the CARROT era range where outputs are missing (334750 to 417810).
     // Adjust these as needed based on initial diagnostic results.
@@ -200,7 +227,10 @@ async fn debug_block_parse_range() {
     let range_end: u64 = 335_000.min(info.height - 1); // small batch first
     let batch_size: usize = 100;
 
-    println!("Scanning blocks {}..{} for parse failures", range_start, range_end);
+    println!(
+        "Scanning blocks {}..{} for parse failures",
+        range_start, range_end
+    );
     println!("Daemon height: {}", info.height);
     println!();
 
@@ -243,7 +273,9 @@ async fn debug_block_parse_range() {
                 let snippet = &block_json_str[..block_json_str.len().min(200)];
                 eprintln!(
                     "PARSE FAIL height={} blob_len={} err={}",
-                    height, entry.block.len(), snippet
+                    height,
+                    entry.block.len(),
+                    snippet
                 );
                 if first_error_height.is_none() {
                     first_error_height = Some(height);

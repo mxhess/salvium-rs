@@ -4,9 +4,8 @@
 
 use crate::base58;
 use crate::constants::{
-    address_data_size, prefix_info, get_prefix,
-    AddressFormat, AddressType, Network,
-    KEY_SIZE, PAYMENT_ID_SIZE,
+    address_data_size, get_prefix, prefix_info, AddressFormat, AddressType, Network, KEY_SIZE,
+    PAYMENT_ID_SIZE,
 };
 use thiserror::Error;
 
@@ -163,8 +162,7 @@ pub fn create_address_raw(
         });
     }
 
-    let prefix = get_prefix(network, format, addr_type)
-        .ok_or(AddressError::InvalidCombination)?;
+    let prefix = get_prefix(network, format, addr_type).ok_or(AddressError::InvalidCombination)?;
 
     let data = match addr_type {
         AddressType::Integrated => {
@@ -251,7 +249,10 @@ pub fn describe_address(address: &str) -> String {
             if let Some(pid) = &parsed.payment_id {
                 format!(
                     "{} {} {} (Payment ID: {})",
-                    network, format, addr_type, hex::encode(pid)
+                    network,
+                    format,
+                    addr_type,
+                    hex::encode(pid)
                 )
             } else {
                 format!("{} {} {}", network, format, addr_type)

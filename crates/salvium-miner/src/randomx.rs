@@ -6,7 +6,7 @@
 //! Heavy integration tests (requiring full RandomX cache/dataset
 //! initialization) are gated behind `#[ignore]`.
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 // =============================================================================
 // Blake2Generator
@@ -195,7 +195,10 @@ mod tests {
 
         let bytes1 = gen1.get_bytes(16);
         let bytes2 = gen2.get_bytes(16);
-        assert_ne!(bytes1, bytes2, "different seeds should produce different bytes");
+        assert_ne!(
+            bytes1, bytes2,
+            "different seeds should produce different bytes"
+        );
     }
 
     #[test]
@@ -250,8 +253,14 @@ mod tests {
     #[test]
     fn test_check_difficulty_zero_hash() {
         let zero_hash = [0u8; 32];
-        assert!(check_difficulty(&zero_hash, 1), "zero hash should pass any difficulty");
-        assert!(check_difficulty(&zero_hash, 1_000_000), "zero hash should pass high difficulty");
+        assert!(
+            check_difficulty(&zero_hash, 1),
+            "zero hash should pass any difficulty"
+        );
+        assert!(
+            check_difficulty(&zero_hash, 1_000_000),
+            "zero hash should pass high difficulty"
+        );
     }
 
     #[test]
@@ -266,13 +275,19 @@ mod tests {
     #[test]
     fn test_check_difficulty_zero_difficulty() {
         let hash = [0xFFu8; 32];
-        assert!(check_difficulty(&hash, 0), "zero difficulty should always pass");
+        assert!(
+            check_difficulty(&hash, 0),
+            "zero difficulty should always pass"
+        );
     }
 
     #[test]
     fn test_check_difficulty_one() {
         let hash = [0xFFu8; 32];
-        assert!(check_difficulty(&hash, 1), "difficulty 1 should pass any hash");
+        assert!(
+            check_difficulty(&hash, 1),
+            "difficulty 1 should pass any hash"
+        );
     }
 
     // ── calculateCommitment ────────────────────────────────────────────
@@ -307,7 +322,10 @@ mod tests {
 
         let c1 = calculate_commitment(&bh1, &prev);
         let c2 = calculate_commitment(&bh2, &prev);
-        assert_ne!(c1, c2, "different inputs should produce different commitments");
+        assert_ne!(
+            c1, c2,
+            "different inputs should produce different commitments"
+        );
     }
 
     // ── reciprocal ─────────────────────────────────────────────────────

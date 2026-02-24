@@ -17,16 +17,16 @@
 //! }
 //! ```
 
-pub mod error;
 pub mod client;
 pub mod daemon;
-pub mod wallet_rpc;
+pub mod error;
 pub mod portable_storage;
+pub mod wallet_rpc;
 
 pub use client::RpcClient;
 pub use daemon::DaemonRpc;
-pub use wallet_rpc::WalletRpc;
 pub use error::RpcError;
+pub use wallet_rpc::WalletRpc;
 
 /// Seed nodes per network.
 pub mod seed_nodes {

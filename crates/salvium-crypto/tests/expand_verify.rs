@@ -5,8 +5,8 @@
 //! CLSAG and TCLSAG JSON signature structures. They mirror the
 //! JS test suite in test/expand-transaction.test.js.
 
-use serde_json::json;
 use salvium_crypto::rct_verify::expand_transaction;
+use serde_json::json;
 
 // =============================================================================
 // Helpers
@@ -15,11 +15,13 @@ use salvium_crypto::rct_verify::expand_transaction;
 /// Build a minimal RCT JSON with CLSAGs in the prunable section.
 fn make_clsag_rct_json(count: usize) -> serde_json::Value {
     let sigs: Vec<serde_json::Value> = (0..count)
-        .map(|_| json!({
-            "s": ["00".repeat(32)],
-            "c1": "00".repeat(32),
-            "D": "00".repeat(32),
-        }))
+        .map(|_| {
+            json!({
+                "s": ["00".repeat(32)],
+                "c1": "00".repeat(32),
+                "D": "00".repeat(32),
+            })
+        })
         .collect();
     json!({
         "p": {
@@ -31,12 +33,14 @@ fn make_clsag_rct_json(count: usize) -> serde_json::Value {
 /// Build a minimal RCT JSON with TCLSAGs in the prunable section.
 fn make_tclsag_rct_json(count: usize) -> serde_json::Value {
     let sigs: Vec<serde_json::Value> = (0..count)
-        .map(|_| json!({
-            "sx": ["00".repeat(32)],
-            "sy": ["00".repeat(32)],
-            "c1": "00".repeat(32),
-            "D": "00".repeat(32),
-        }))
+        .map(|_| {
+            json!({
+                "sx": ["00".repeat(32)],
+                "sy": ["00".repeat(32)],
+                "c1": "00".repeat(32),
+                "D": "00".repeat(32),
+            })
+        })
         .collect();
     json!({
         "p": {
@@ -242,7 +246,10 @@ fn expand_empty_key_images_empty_sigs() {
     let mut rct = make_clsag_rct_json(0);
 
     let result = expand_transaction(key_images, &mut rct);
-    assert!(result.is_ok(), "empty key images with empty sigs should succeed");
+    assert!(
+        result.is_ok(),
+        "empty key images with empty sigs should succeed"
+    );
 }
 
 // =============================================================================
@@ -330,7 +337,11 @@ fn expand_produces_correct_hex_encoding() {
     assert!(result.is_ok());
 
     let i_hex = rct["p"]["CLSAGs"][0]["I"].as_str().unwrap();
-    assert_eq!(i_hex.len(), 64, "hex-encoded 32-byte key image should be 64 chars");
+    assert_eq!(
+        i_hex.len(),
+        64,
+        "hex-encoded 32-byte key image should be 64 chars"
+    );
 
     // Decode back and compare
     let decoded = hex::decode(i_hex).unwrap();

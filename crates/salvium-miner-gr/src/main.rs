@@ -8,7 +8,7 @@ mod ffi;
 
 use engine::GhostRiderEngine;
 use salvium_miner::daemon::DaemonClient;
-use salvium_miner::miner::{MiningJob, parse_difficulty};
+use salvium_miner::miner::{parse_difficulty, MiningJob};
 use salvium_miner::mining::MiningLoop;
 use salvium_miner::stratum::{difficulty_to_target, StratumClient, StratumEvent};
 
@@ -186,10 +186,7 @@ fn run_stratum(args: &Args) {
                             target: Some(target),
                         });
 
-                        eprintln!(
-                            "[stratum] New job {} (diff={:.4})",
-                            job.job_id, difficulty
-                        );
+                        eprintln!("[stratum] New job {} (diff={:.4})", job.job_id, difficulty);
                     }
                     StratumEvent::Accepted => {
                         shares_accepted += 1;
@@ -216,13 +213,8 @@ fn run_stratum(args: &Args) {
             // Check for found shares
             while let Some(block) = mining_loop.try_recv_block() {
                 if let Some((ref stratum_job_id, ref en2, ntime)) = job_map.get(&block.job_id) {
-                    eprintln!(
-                        "[stratum] Submitting share (nonce={})",
-                        block.nonce
-                    );
-                    if let Err(e) =
-                        stratum.submit_share(stratum_job_id, en2, *ntime, block.nonce)
-                    {
+                    eprintln!("[stratum] Submitting share (nonce={})", block.nonce);
+                    if let Err(e) = stratum.submit_share(stratum_job_id, en2, *ntime, block.nonce) {
                         eprintln!("[stratum] Submit error: {}", e);
                         break;
                     }
@@ -263,7 +255,10 @@ fn run_stratum(args: &Args) {
     eprintln!("Total hashes:    {}", total);
     eprintln!("Shares accepted: {}", shares_accepted);
     eprintln!("Shares rejected: {}", shares_rejected);
-    eprintln!("Avg hashrate:    {}", format_hashrate(total as f64 / elapsed));
+    eprintln!(
+        "Avg hashrate:    {}",
+        format_hashrate(total as f64 / elapsed)
+    );
 
     mining_loop.stop();
 }
@@ -309,10 +304,7 @@ fn run_daemon(args: &Args) {
         match result {
             Some(i) => i,
             None => {
-                eprintln!(
-                    "Cannot connect to daemon after 5 attempts: {}",
-                    last_err
-                );
+                eprintln!("Cannot connect to daemon after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -365,8 +357,7 @@ fn run_daemon(args: &Args) {
     );
 
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
-    let template_blob =
-        hex::decode(&template.blocktemplate_blob).expect("Invalid template blob");
+    let template_blob = hex::decode(&template.blocktemplate_blob).expect("Invalid template blob");
 
     // Create mining loop
     let mining_loop = MiningLoop::new(args.threads, |_worker_id| {
@@ -448,13 +439,10 @@ fn run_daemon(args: &Args) {
             while mining_loop.try_recv_block().is_some() {}
 
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff =
-                    parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
+                let new_diff = parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
 
                 if tmpl.seed_hash != current_seed {
-                    eprintln!(
-                        "Seed hash changed (GhostRider doesn't use seeds, continuing)"
-                    );
+                    eprintln!("Seed hash changed (GhostRider doesn't use seeds, continuing)");
                 }
 
                 while mining_loop.try_recv_block().is_some() {}
@@ -483,8 +471,7 @@ fn run_daemon(args: &Args) {
         // Refresh template every 5 seconds
         if !block_found && last_template_fetch.elapsed() > Duration::from_secs(5) {
             if let Ok(tmpl) = client.get_block_template(&args.wallet, 8) {
-                let new_diff =
-                    parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
+                let new_diff = parse_difficulty(tmpl.difficulty, tmpl.wide_difficulty.as_deref());
 
                 if tmpl.prev_hash != current_prev_hash
                     || tmpl.height != current_height
@@ -557,10 +544,7 @@ fn run_daemon(args: &Args) {
     eprintln!("Shutting down...");
     eprintln!("Total hashes: {}", total);
     eprintln!("Blocks found: {}", blocks_found);
-    eprintln!(
-        "Avg hashrate: {}",
-        format_hashrate(total as f64 / elapsed)
-    );
+    eprintln!("Avg hashrate: {}", format_hashrate(total as f64 / elapsed));
 
     mining_loop.stop();
 }
@@ -579,8 +563,7 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 }
 
 #[cfg(unix)]
-static RUNNING_FLAG: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static RUNNING_FLAG: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(unix)]
 extern "C" fn handle_sigint(_: libc::c_int) {

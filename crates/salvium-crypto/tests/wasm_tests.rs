@@ -81,7 +81,10 @@ fn test_integrated_address() {
 fn test_integrated_address_wrong_payment_id_size() {
     let standard = wasm_create_address(0, 0, 0, &[0x07u8; 32], &[0x08u8; 32]);
     let result = wasm_to_integrated_address(&standard, &[0xBB; 4]);
-    assert!(result.contains("error"), "expected error for 4-byte payment_id");
+    assert!(
+        result.contains("error"),
+        "expected error for 4-byte payment_id"
+    );
 }
 
 #[test]
@@ -110,7 +113,11 @@ fn test_tx_type_names() {
 
     // Unknown code
     let unknown = wasm_tx_type_name(255);
-    assert!(unknown.starts_with("UNKNOWN"), "255 should be UNKNOWN, got: {}", unknown);
+    assert!(
+        unknown.starts_with("UNKNOWN"),
+        "255 should be UNKNOWN, got: {}",
+        unknown
+    );
 }
 
 #[test]
@@ -159,10 +166,9 @@ fn test_keccak256_known_vector() {
 #[test]
 fn test_mnemonic_roundtrip() {
     let seed = [
-        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
-        0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        0x88, 0x99,
     ];
 
     let mnemonic = wasm_mnemonic_from_seed(&seed);

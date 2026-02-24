@@ -33,7 +33,11 @@ pub struct TxSummary {
 impl Transaction {
     /// Generate a summary of this transaction.
     pub fn summary(&self) -> TxSummary {
-        let is_coinbase = self.prefix.inputs.iter().any(|i| matches!(i, TxInput::Gen { .. }));
+        let is_coinbase = self
+            .prefix
+            .inputs
+            .iter()
+            .any(|i| matches!(i, TxInput::Gen { .. }));
         let fee = self.rct.as_ref().map(|r| r.txn_fee).unwrap_or(0);
 
         TxSummary {
@@ -78,7 +82,10 @@ impl Transaction {
 
     /// Check if this transaction is a coinbase (miner) transaction.
     pub fn is_coinbase(&self) -> bool {
-        self.prefix.inputs.iter().any(|i| matches!(i, TxInput::Gen { .. }))
+        self.prefix
+            .inputs
+            .iter()
+            .any(|i| matches!(i, TxInput::Gen { .. }))
     }
 
     /// Get the total number of ring members across all inputs.
@@ -103,7 +110,10 @@ impl Transaction {
 
     /// Get the output commitment public keys (for verification).
     pub fn output_commitments(&self) -> Vec<[u8; 32]> {
-        self.rct.as_ref().map(|r| r.out_pk.clone()).unwrap_or_default()
+        self.rct
+            .as_ref()
+            .map(|r| r.out_pk.clone())
+            .unwrap_or_default()
     }
 
     /// Get the encrypted amount data for each output.
@@ -348,10 +358,11 @@ mod tests {
                         view_tag: 43,
                     },
                 ],
-                extra: vec![0x01, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
-                            0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
-                            0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
-                            0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD],
+                extra: vec![
+                    0x01, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+                    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+                    0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD, 0xDD,
+                ],
                 tx_type: tx_type::TRANSFER,
                 amount_burnt: 0,
                 return_address: None,
@@ -366,10 +377,7 @@ mod tests {
             rct: Some(RctSignatures {
                 rct_type: rct_type::SALVIUM_ONE,
                 txn_fee: 30000000,
-                ecdh_info: vec![
-                    EcdhInfo { amount: [1; 8] },
-                    EcdhInfo { amount: [2; 8] },
-                ],
+                ecdh_info: vec![EcdhInfo { amount: [1; 8] }, EcdhInfo { amount: [2; 8] }],
                 out_pk: vec![[0xEE; 32], [0xFF; 32]],
                 p_r: None,
                 salvium_data: None,

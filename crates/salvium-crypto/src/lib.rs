@@ -1,27 +1,27 @@
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::VartimeMultiscalarMul;
+use sha2::{Digest, Sha256};
+use tiny_keccak::{Hasher, Keccak};
 #[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
-use tiny_keccak::{Hasher, Keccak};
-use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
-use curve25519_dalek::traits::VartimeMultiscalarMul;
-use sha2::{Sha256, Digest};
 
-mod x25519;
+pub mod carrot_keys;
 pub mod carrot_scan;
 pub mod cn_scan;
 pub mod subaddress;
-pub mod carrot_keys;
-pub mod tx_format;
 pub mod tx_constants;
+pub mod tx_format;
 pub mod tx_parse;
 pub mod tx_serialize;
+mod x25519;
 
-pub(crate) mod elligator2;
-pub mod clsag;
-pub mod tclsag;
 pub mod bulletproofs_plus;
+pub mod clsag;
+pub(crate) mod elligator2;
 pub mod rct_verify;
+pub mod tclsag;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod storage;
@@ -126,12 +126,17 @@ pub fn sc_reduce32(s: &[u8]) -> Vec<u8> {
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_reduce64(s: &[u8]) -> Vec<u8> {
-    Scalar::from_bytes_mod_order_wide(&to64(s)).to_bytes().to_vec()
+    Scalar::from_bytes_mod_order_wide(&to64(s))
+        .to_bytes()
+        .to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_invert(a: &[u8]) -> Vec<u8> {
-    Scalar::from_bytes_mod_order(to32(a)).invert().to_bytes().to_vec()
+    Scalar::from_bytes_mod_order(to32(a))
+        .invert()
+        .to_bytes()
+        .to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -149,7 +154,10 @@ pub fn sc_is_zero(s: &[u8]) -> bool {
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn scalar_mult_base(s: &[u8]) -> Vec<u8> {
     let scalar = Scalar::from_bytes_mod_order(to32(s));
-    (ED25519_BASEPOINT_TABLE * &scalar).compress().to_bytes().to_vec()
+    (ED25519_BASEPOINT_TABLE * &scalar)
+        .compress()
+        .to_bytes()
+        .to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -161,7 +169,9 @@ pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
     };
     // Use variable-time Straus/wNAF — much faster than constant-time mul
     EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[point])
-        .compress().to_bytes().to_vec()
+        .compress()
+        .to_bytes()
+        .to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -211,7 +221,10 @@ pub fn double_scalar_mult_base(a: &[u8], p: &[u8], b: &[u8]) -> Vec<u8> {
     EdwardsPoint::vartime_multiscalar_mul(
         &[sa, sb],
         &[pp, curve25519_dalek::constants::ED25519_BASEPOINT_POINT],
-    ).compress().to_bytes().to_vec()
+    )
+    .compress()
+    .to_bytes()
+    .to_vec()
 }
 
 // ─── Phase 3: Hash-to-Point & Key Derivation ────────────────────────────────
@@ -270,7 +283,9 @@ pub fn generate_key_image(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
     };
     let scalar = Scalar::from_bytes_mod_order(to32(sec_key));
     EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[hp8])
-        .compress().to_bytes().to_vec()
+        .compress()
+        .to_bytes()
+        .to_vec()
 }
 
 /// Generate key derivation: D = 8 * (sec * pub)
@@ -314,7 +329,9 @@ pub fn derive_secret_key(derivation: &[u8], output_index: u32, base_sec: &[u8]) 
 /// Derivation to scalar (bytes): H_s(derivation || varint(index))
 /// Returns the 32-byte little-endian scalar used in CryptoNote key derivation.
 pub fn derivation_to_scalar_bytes(derivation: &[u8], output_index: u32) -> Vec<u8> {
-    derivation_to_scalar(derivation, output_index).to_bytes().to_vec()
+    derivation_to_scalar(derivation, output_index)
+        .to_bytes()
+        .to_vec()
 }
 
 // ─── Phase 4: Pedersen Commitments ──────────────────────────────────────────
@@ -322,10 +339,8 @@ pub fn derivation_to_scalar_bytes(derivation: &[u8], output_index: u32) -> Vec<u
 /// H generator for Pedersen commitments: H = H_p(G)
 /// Precomputed from Salvium/CryptoNote rctTypes.h
 pub(crate) const H_POINT_BYTES: [u8; 32] = [
-    0x8b, 0x65, 0x59, 0x70, 0x15, 0x37, 0x99, 0xaf,
-    0x2a, 0xea, 0xdc, 0x9f, 0xf1, 0xad, 0xd0, 0xea,
-    0x6c, 0x72, 0x51, 0xd5, 0x41, 0x54, 0xcf, 0xa9,
-    0x2c, 0x17, 0x3a, 0x0d, 0xd3, 0x9c, 0x1f, 0x94,
+    0x8b, 0x65, 0x59, 0x70, 0x15, 0x37, 0x99, 0xaf, 0x2a, 0xea, 0xdc, 0x9f, 0xf1, 0xad, 0xd0, 0xea,
+    0x6c, 0x72, 0x51, 0xd5, 0x41, 0x54, 0xcf, 0xa9, 0x2c, 0x17, 0x3a, 0x0d, 0xd3, 0x9c, 0x1f, 0x94,
 ];
 
 /// Pedersen commitment: C = mask*G + amount*H
@@ -333,12 +348,17 @@ pub(crate) const H_POINT_BYTES: [u8; 32] = [
 pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::from_bytes_mod_order(to32(mask));
-    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES)
+        .decompress()
+        .expect("invalid H");
     // mask*G + amount*H
     EdwardsPoint::vartime_multiscalar_mul(
         &[mask_scalar, amount_scalar],
         &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, h],
-    ).compress().to_bytes().to_vec()
+    )
+    .compress()
+    .to_bytes()
+    .to_vec()
 }
 
 /// Zero commitment: C = 1*G + amount*H (blinding factor = 1)
@@ -347,12 +367,17 @@ pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
 pub fn zero_commit(amount: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::ONE;
-    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES)
+        .decompress()
+        .expect("invalid H");
     // 1*G + amount*H
     EdwardsPoint::vartime_multiscalar_mul(
         &[mask_scalar, amount_scalar],
         &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, h],
-    ).compress().to_bytes().to_vec()
+    )
+    .compress()
+    .to_bytes()
+    .to_vec()
 }
 
 /// Generate commitment mask from shared secret
@@ -393,7 +418,7 @@ pub fn argon2id_hash(
     parallelism: u32,
     dk_len: u32,
 ) -> Vec<u8> {
-    use argon2::{Argon2, Algorithm, Version, Params};
+    use argon2::{Algorithm, Argon2, Params, Version};
 
     let params = match Params::new(m_cost, t_cost, parallelism, Some(dk_len as usize)) {
         Ok(p) => p,
@@ -424,14 +449,13 @@ pub fn argon2id_hash(
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn verify_signature(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> i32 {
-    verify_signature_internal(message, signature, pubkey_der)
-        .unwrap_or(0)
+    verify_signature_internal(message, signature, pubkey_der).unwrap_or(0)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn verify_signature_internal(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
-    use spki::SubjectPublicKeyInfoRef;
     use der::Decode;
+    use spki::SubjectPublicKeyInfoRef;
 
     // Parse the SPKI structure to determine algorithm
     let spki = SubjectPublicKeyInfoRef::from_der(pubkey_der).ok()?;
@@ -456,7 +480,7 @@ fn verify_signature_internal(message: &[u8], signature: &[u8], pubkey_der: &[u8]
 /// Verify ECDSA P-256 signature (SHA-256 digest)
 #[cfg(not(target_arch = "wasm32"))]
 fn verify_ecdsa_p256(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
-    use p256::ecdsa::{VerifyingKey, Signature};
+    use p256::ecdsa::{Signature, VerifyingKey};
     use spki::DecodePublicKey;
 
     let verifying_key = VerifyingKey::from_public_key_der(pubkey_der).ok()?;
@@ -482,9 +506,9 @@ fn verify_ecdsa_p256(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Opt
 /// Verify DSA signature (SHA-256 digest)
 #[cfg(not(target_arch = "wasm32"))]
 fn verify_dsa(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32> {
-    use dsa::{VerifyingKey, Signature, signature::hazmat::PrehashVerifier};
-    use spki::DecodePublicKey;
     use der::Decode as _;
+    use dsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
+    use spki::DecodePublicKey;
 
     let verifying_key = VerifyingKey::from_public_key_der(pubkey_der).ok()?;
 
@@ -508,7 +532,7 @@ fn verify_dsa(message: &[u8], signature: &[u8], pubkey_der: &[u8]) -> Option<i32
 
 /// X25519 scalar multiplication with Salvium's non-standard clamping.
 ///
-/// Salvium clamping only clears bit 255 (scalar[31] &= 0x7F).
+/// Salvium clamping only clears bit 255 (`scalar[31] &= 0x7F`).
 /// Unlike RFC 7748, bits 0-2 are NOT cleared and bit 254 is NOT set.
 ///
 /// Uses a Montgomery ladder on Curve25519 (a24 = 121666, p = 2^255 - 19).
@@ -586,7 +610,8 @@ pub fn derive_carrot_view_only_keys_batch(
     carrot_keys::derive_carrot_view_only_keys(
         &to32(view_balance_secret),
         &to32(account_spend_pubkey),
-    ).to_vec()
+    )
+    .to_vec()
 }
 
 // ─── CARROT Helpers ─────────────────────────────────────────────────────────
@@ -615,8 +640,13 @@ pub fn derive_carrot_commitment_mask(
     enote_type: u8,
 ) -> Vec<u8> {
     carrot_scan::derive_commitment_mask(
-        &to32(s_sr_ctx), amount, &to32(address_spend_pubkey), enote_type,
-    ).to_bytes().to_vec()
+        &to32(s_sr_ctx),
+        amount,
+        &to32(address_spend_pubkey),
+        enote_type,
+    )
+    .to_bytes()
+    .to_vec()
 }
 
 /// Recover CARROT address spend pubkey. Returns 32 bytes or empty on invalid.
@@ -1021,9 +1051,15 @@ mod tests {
     fn test_key_image_from_y_invalid() {
         // Wrong length should fail
         let short = [0u8; 16];
-        assert!(key_image_from_y(&short, false).is_empty(), "short input should fail");
+        assert!(
+            key_image_from_y(&short, false).is_empty(),
+            "short input should fail"
+        );
         // Empty input should fail
-        assert!(key_image_from_y(&[], false).is_empty(), "empty input should fail");
+        assert!(
+            key_image_from_y(&[], false).is_empty(),
+            "empty input should fail"
+        );
     }
 
     #[test]
@@ -1102,11 +1138,7 @@ mod tests {
         let y = key_image_to_y(&ki);
 
         // The Y coordinate must have its high bit cleared
-        assert_eq!(
-            y[31] & 0x80,
-            0,
-            "key_image_to_y must clear the sign bit"
-        );
+        assert_eq!(y[31] & 0x80, 0, "key_image_to_y must clear the sign bit");
 
         // Reconstruct with the correct sign bit
         let reconstructed = key_image_from_y(&y, sign);
@@ -1128,7 +1160,10 @@ mod tests {
         let sec = test_secret_key();
         let pub_key = test_public_key(&sec);
         let ki = generate_key_image(&pub_key, &sec);
-        assert!(!ki.is_empty(), "key image must never be empty for valid inputs");
+        assert!(
+            !ki.is_empty(),
+            "key image must never be empty for valid inputs"
+        );
         assert_eq!(ki.len(), 32);
     }
 

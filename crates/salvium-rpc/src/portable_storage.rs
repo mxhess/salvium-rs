@@ -506,10 +506,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert("height".to_string(), PsValue::Uint64(12345));
         map.insert("active".to_string(), PsValue::Bool(true));
-        map.insert(
-            "name".to_string(),
-            PsValue::String(b"salvium".to_vec()),
-        );
+        map.insert("name".to_string(), PsValue::String(b"salvium".to_vec()));
 
         let bytes = serialize(&map);
         let result = deserialize(&bytes).unwrap();
@@ -582,7 +579,10 @@ mod tests {
         let bytes = serialize(&req);
 
         // Header: 9 bytes
-        assert_eq!(&bytes[0..9], &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01]);
+        assert_eq!(
+            &bytes[0..9],
+            &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01]
+        );
         // Section: varint count=1 → 0x04 (1 << 2)
         assert_eq!(bytes[9], 0x04);
         // Key: length=7, "heights"

@@ -68,11 +68,7 @@ impl DecoySelector {
     ///
     /// Returns `ring_size - 1` global output indices (excluding `real_index`),
     /// suitable for building a ring. The caller must insert `real_index` and sort.
-    pub fn pick_decoys(
-        &self,
-        real_index: u64,
-        ring_size: usize,
-    ) -> Result<Vec<u64>, TxError> {
+    pub fn pick_decoys(&self, real_index: u64, ring_size: usize) -> Result<Vec<u64>, TxError> {
         let num_decoys = ring_size - 1;
         let mut rng = rand::thread_rng();
         let mut decoys = Vec::with_capacity(num_decoys);

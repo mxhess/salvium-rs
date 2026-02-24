@@ -21,9 +21,8 @@ pub async fn prepare_multisig(ctx: &AppContext) -> Result {
         .ok_or("wallet has no spend secret key")?;
 
     // Use the multisig library's blinding function.
-    let blinded = salvium_multisig::wallet::get_multisig_blinded_secret_key(
-        &hex::encode(spend_secret),
-    );
+    let blinded =
+        salvium_multisig::wallet::get_multisig_blinded_secret_key(&hex::encode(spend_secret));
 
     // Derive the public key from the blinded secret.
     let blinded_bytes = hex::decode(&blinded)?;
@@ -63,7 +62,10 @@ pub async fn make_multisig(ctx: &AppContext, threshold: usize, messages: &[Strin
         .into());
     }
 
-    println!("Creating {}-of-{} multisig wallet...", threshold, signer_count);
+    println!(
+        "Creating {}-of-{} multisig wallet...",
+        threshold, signer_count
+    );
 
     // Initialize multisig via the wallet library.
     let first_msg = wallet
@@ -105,7 +107,10 @@ pub async fn make_multisig(ctx: &AppContext, threshold: usize, messages: &[Strin
 pub async fn exchange_multisig_keys(ctx: &AppContext, messages: &[String]) -> Result {
     let mut wallet = open_wallet(ctx)?;
 
-    println!("Processing {} KEX messages for next round...", messages.len());
+    println!(
+        "Processing {} KEX messages for next round...",
+        messages.len()
+    );
 
     let next = wallet
         .process_multisig_kex(messages)
@@ -152,9 +157,7 @@ pub async fn import_multisig_info(ctx: &AppContext, infos: &[String]) -> Result 
         .iter()
         .enumerate()
         .map(|(i, info)| {
-            hex::decode(info).map_err(|e| {
-                format!("invalid hex in info #{}: {}", i + 1, e)
-            })
+            hex::decode(info).map_err(|e| format!("invalid hex in info #{}: {}", i + 1, e))
         })
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
@@ -188,8 +191,8 @@ pub async fn sign_multisig(ctx: &AppContext, input_file: &str) -> Result {
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
     let output_file = format!("{}.signed", input_file);
-    let signed_data = serde_json::to_string(&tx_set)
-        .map_err(|e| format!("serialization error: {}", e))?;
+    let signed_data =
+        serde_json::to_string(&tx_set).map_err(|e| format!("serialization error: {}", e))?;
     std::fs::write(&output_file, &signed_data)?;
 
     println!("Signed multisig TX written to {}", output_file);

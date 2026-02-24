@@ -703,9 +703,10 @@ async fn main() {
     let result = match cli.command {
         // Wallet management
         Commands::Create { name } => commands::create_wallet(&ctx, name).await,
-        Commands::Restore { name, restore_height } => {
-            commands::restore_wallet(&ctx, name, restore_height).await
-        }
+        Commands::Restore {
+            name,
+            restore_height,
+        } => commands::restore_wallet(&ctx, name, restore_height).await,
         Commands::Info => commands::wallet_info(&ctx).await,
         Commands::Seed => commands::show_seed(&ctx).await,
         Commands::Password => commands::change_password(&ctx).await,
@@ -715,12 +716,11 @@ async fn main() {
 
         // Balance & query
         Commands::Balance { account } => commands::show_balance(&ctx, account).await,
-        Commands::IncomingTransfers { transfer_type, account } => {
-            commands::incoming_transfers(&ctx, &transfer_type, account).await
-        }
-        Commands::UnspentOutputs { account } => {
-            commands::unspent_outputs(&ctx, account).await
-        }
+        Commands::IncomingTransfers {
+            transfer_type,
+            account,
+        } => commands::incoming_transfers(&ctx, &transfer_type, account).await,
+        Commands::UnspentOutputs { account } => commands::unspent_outputs(&ctx, account).await,
         Commands::Payments { payment_id } => commands::payments(&ctx, &payment_id).await,
 
         // Sync
@@ -733,9 +733,11 @@ async fn main() {
             commands::address_new(&ctx, account, &label).await
         }
         Commands::AddressAll { account } => commands::address_all(&ctx, account).await,
-        Commands::AddressLabel { major, minor, label } => {
-            commands::address_label(&ctx, major, minor, &label).await
-        }
+        Commands::AddressLabel {
+            major,
+            minor,
+            label,
+        } => commands::address_label(&ctx, major, minor, &label).await,
         Commands::IntegratedAddress { payment_id } => {
             commands::integrated_address(&ctx, payment_id.as_deref()).await
         }
@@ -750,74 +752,96 @@ async fn main() {
         Commands::AccountTag { tag, accounts } => {
             commands::account_tag(&ctx, &tag, &accounts).await
         }
-        Commands::AccountUntag { accounts } => {
-            commands::account_untag(&ctx, &accounts).await
-        }
+        Commands::AccountUntag { accounts } => commands::account_untag(&ctx, &accounts).await,
 
         // Address book
         Commands::AddressBook => commands::address_book_list(&ctx).await,
-        Commands::AddressBookAdd { address, label, description } => {
-            commands::address_book_add(&ctx, &address, &label, &description).await
-        }
-        Commands::AddressBookDelete { index } => {
-            commands::address_book_delete(&ctx, index).await
-        }
+        Commands::AddressBookAdd {
+            address,
+            label,
+            description,
+        } => commands::address_book_add(&ctx, &address, &label, &description).await,
+        Commands::AddressBookDelete { index } => commands::address_book_delete(&ctx, index).await,
 
         // Transfers
-        Commands::Transfer { address, amount, priority } => {
-            commands::transfer(&ctx, &address, &amount, &priority).await
-        }
-        Commands::LockedTransfer { address, amount, unlock_time, priority } => {
-            commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority).await
-        }
+        Commands::Transfer {
+            address,
+            amount,
+            priority,
+        } => commands::transfer(&ctx, &address, &amount, &priority).await,
+        Commands::LockedTransfer {
+            address,
+            amount,
+            unlock_time,
+            priority,
+        } => commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority).await,
         Commands::Stake { amount } => commands::stake(&ctx, &amount).await,
-        Commands::Burn { amount, priority } => {
-            commands::burn(&ctx, &amount, &priority).await
-        }
-        Commands::Convert { amount, source, dest, priority } => {
-            commands::convert(&ctx, &amount, &source, &dest, &priority).await
-        }
+        Commands::Burn { amount, priority } => commands::burn(&ctx, &amount, &priority).await,
+        Commands::Convert {
+            amount,
+            source,
+            dest,
+            priority,
+        } => commands::convert(&ctx, &amount, &source, &dest, &priority).await,
         Commands::Audit { priority } => commands::audit(&ctx, &priority).await,
         Commands::SweepAll { address, priority } => {
             commands::sweep_all(&ctx, &address, &priority).await
         }
-        Commands::SweepBelow { address, threshold, priority } => {
-            commands::sweep_below(&ctx, &address, &threshold, &priority).await
-        }
-        Commands::SweepSingle { key_image, address, priority } => {
-            commands::sweep_single(&ctx, &key_image, &address, &priority).await
-        }
+        Commands::SweepBelow {
+            address,
+            threshold,
+            priority,
+        } => commands::sweep_below(&ctx, &address, &threshold, &priority).await,
+        Commands::SweepSingle {
+            key_image,
+            address,
+            priority,
+        } => commands::sweep_single(&ctx, &key_image, &address, &priority).await,
         Commands::SweepUnmixable => commands::sweep_unmixable(&ctx).await,
-        Commands::LockedSweepAll { address, unlock_time, priority } => {
-            commands::locked_sweep_all(&ctx, &address, unlock_time, &priority).await
-        }
+        Commands::LockedSweepAll {
+            address,
+            unlock_time,
+            priority,
+        } => commands::locked_sweep_all(&ctx, &address, unlock_time, &priority).await,
         Commands::ReturnPayment { tx_hash, priority } => {
             commands::return_payment(&ctx, &tx_hash, &priority).await
         }
-        Commands::Donate { amount, priority } => {
-            commands::donate(&ctx, &amount, &priority).await
-        }
+        Commands::Donate { amount, priority } => commands::donate(&ctx, &amount, &priority).await,
 
         // History
-        Commands::History { account, limit } => {
-            commands::show_history(&ctx, account, limit).await
-        }
+        Commands::History { account, limit } => commands::show_history(&ctx, account, limit).await,
         Commands::ShowTransfers {
-            r#in, out, pending, failed, pool, coinbase, burnt, staked,
-            min_height, max_height, account, limit,
+            r#in,
+            out,
+            pending,
+            failed,
+            pool,
+            coinbase,
+            burnt,
+            staked,
+            min_height,
+            max_height,
+            account,
+            limit,
         } => {
             let f = commands::TransferFilters {
-                in_: r#in, out, pending, failed, pool, coinbase, burnt, staked,
-                min_height, max_height, account, limit,
+                in_: r#in,
+                out,
+                pending,
+                failed,
+                pool,
+                coinbase,
+                burnt,
+                staked,
+                min_height,
+                max_height,
+                account,
+                limit,
             };
             commands::show_transfers(&ctx, &f).await
         }
-        Commands::ShowTransfer { tx_hash } => {
-            commands::show_transfer(&ctx, &tx_hash).await
-        }
-        Commands::ExportTransfers { output } => {
-            commands::export_transfers(&ctx, &output).await
-        }
+        Commands::ShowTransfer { tx_hash } => commands::show_transfer(&ctx, &tx_hash).await,
+        Commands::ExportTransfers { output } => commands::export_transfers(&ctx, &output).await,
         Commands::Stakes => commands::show_stakes(&ctx).await,
 
         // Keys
@@ -828,59 +852,62 @@ async fn main() {
 
         // Sign / Verify
         Commands::Sign { file } => commands::sign_data(&ctx, &file).await,
-        Commands::Verify { file, address, signature } => {
-            commands::verify_data(&ctx, &file, &address, &signature).await
-        }
+        Commands::Verify {
+            file,
+            address,
+            signature,
+        } => commands::verify_data(&ctx, &file, &address, &signature).await,
 
         // TX proofs
         Commands::GetTxKey { tx_hash } => commands::get_tx_key(&ctx, &tx_hash).await,
         Commands::SetTxKey { tx_hash, tx_key } => {
             commands::set_tx_key(&ctx, &tx_hash, &tx_key).await
         }
-        Commands::CheckTxKey { tx_hash, tx_key, address } => {
-            commands::check_tx_key(&ctx, &tx_hash, &tx_key, &address).await
-        }
-        Commands::GetTxProof { tx_hash, address, message } => {
-            commands::get_tx_proof(&ctx, &tx_hash, &address, &message).await
-        }
-        Commands::CheckTxProof { tx_hash, address, message, signature } => {
-            commands::check_tx_proof(&ctx, &tx_hash, &address, &message, &signature).await
-        }
+        Commands::CheckTxKey {
+            tx_hash,
+            tx_key,
+            address,
+        } => commands::check_tx_key(&ctx, &tx_hash, &tx_key, &address).await,
+        Commands::GetTxProof {
+            tx_hash,
+            address,
+            message,
+        } => commands::get_tx_proof(&ctx, &tx_hash, &address, &message).await,
+        Commands::CheckTxProof {
+            tx_hash,
+            address,
+            message,
+            signature,
+        } => commands::check_tx_proof(&ctx, &tx_hash, &address, &message, &signature).await,
         Commands::GetSpendProof { tx_hash, message } => {
             commands::get_spend_proof(&ctx, &tx_hash, &message).await
         }
-        Commands::CheckSpendProof { tx_hash, message, signature } => {
-            commands::check_spend_proof(&ctx, &tx_hash, &message, &signature).await
-        }
+        Commands::CheckSpendProof {
+            tx_hash,
+            message,
+            signature,
+        } => commands::check_spend_proof(&ctx, &tx_hash, &message, &signature).await,
         Commands::GetReserveProof { amount, message } => {
             commands::get_reserve_proof(&ctx, &amount, &message).await
         }
-        Commands::CheckReserveProof { address, message, signature } => {
-            commands::check_reserve_proof(&ctx, &address, &message, &signature).await
-        }
+        Commands::CheckReserveProof {
+            address,
+            message,
+            signature,
+        } => commands::check_reserve_proof(&ctx, &address, &message, &signature).await,
 
         // Output management
         Commands::ExportKeyImages { output, all } => {
             commands::export_key_images(&ctx, &output, all).await
         }
-        Commands::ImportKeyImages { input } => {
-            commands::import_key_images(&ctx, &input).await
-        }
+        Commands::ImportKeyImages { input } => commands::import_key_images(&ctx, &input).await,
         Commands::ExportOutputs { output, all } => {
             commands::export_outputs(&ctx, &output, all).await
         }
-        Commands::ImportOutputs { input } => {
-            commands::import_outputs(&ctx, &input).await
-        }
-        Commands::SignTransfer { input } => {
-            commands::sign_transfer(&ctx, &input).await
-        }
-        Commands::SubmitTransfer { input } => {
-            commands::submit_transfer(&ctx, &input).await
-        }
-        Commands::Freeze { key_image } => {
-            commands::freeze_output(&ctx, &key_image).await
-        }
+        Commands::ImportOutputs { input } => commands::import_outputs(&ctx, &input).await,
+        Commands::SignTransfer { input } => commands::sign_transfer(&ctx, &input).await,
+        Commands::SubmitTransfer { input } => commands::submit_transfer(&ctx, &input).await,
+        Commands::Freeze { key_image } => commands::freeze_output(&ctx, &key_image).await,
         Commands::Thaw { key_image } => commands::thaw_output(&ctx, &key_image).await,
         Commands::Frozen => commands::frozen_outputs(&ctx).await,
         Commands::MarkOutputSpent { key_image } => {
@@ -889,17 +916,11 @@ async fn main() {
         Commands::MarkOutputUnspent { key_image } => {
             commands::mark_output_unspent(&ctx, &key_image).await
         }
-        Commands::IsOutputSpent { key_image } => {
-            commands::is_output_spent(&ctx, &key_image).await
-        }
+        Commands::IsOutputSpent { key_image } => commands::is_output_spent(&ctx, &key_image).await,
 
         // Notes
-        Commands::SetTxNote { tx_hash, note } => {
-            commands::set_tx_note(&ctx, &tx_hash, &note).await
-        }
-        Commands::GetTxNote { tx_hash } => {
-            commands::get_tx_note(&ctx, &tx_hash).await
-        }
+        Commands::SetTxNote { tx_hash, note } => commands::set_tx_note(&ctx, &tx_hash, &note).await,
+        Commands::GetTxNote { tx_hash } => commands::get_tx_note(&ctx, &tx_hash).await,
         Commands::SetDescription { description } => {
             commands::set_description(&ctx, &description).await
         }
@@ -934,9 +955,10 @@ async fn main() {
 
         // Multisig
         Commands::PrepareMultisig => commands::prepare_multisig(&ctx).await,
-        Commands::MakeMultisig { threshold, messages } => {
-            commands::make_multisig(&ctx, threshold, &messages).await
-        }
+        Commands::MakeMultisig {
+            threshold,
+            messages,
+        } => commands::make_multisig(&ctx, threshold, &messages).await,
         Commands::ExchangeMultisigKeys { messages } => {
             commands::exchange_multisig_keys(&ctx, &messages).await
         }
@@ -944,12 +966,8 @@ async fn main() {
         Commands::ImportMultisigInfo { infos } => {
             commands::import_multisig_info(&ctx, &infos).await
         }
-        Commands::SignMultisig { input } => {
-            commands::sign_multisig(&ctx, &input).await
-        }
-        Commands::SubmitMultisig { input } => {
-            commands::submit_multisig(&ctx, &input).await
-        }
+        Commands::SignMultisig { input } => commands::sign_multisig(&ctx, &input).await,
+        Commands::SubmitMultisig { input } => commands::submit_multisig(&ctx, &input).await,
         Commands::ExportRawMultisigTx { input } => {
             commands::export_raw_multisig_tx(&ctx, &input).await
         }

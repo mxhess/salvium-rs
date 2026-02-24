@@ -168,8 +168,7 @@ impl StratumClient {
             "params": params,
         });
 
-        let mut line = serde_json::to_string(&req)
-            .map_err(io::Error::other)?;
+        let mut line = serde_json::to_string(&req).map_err(io::Error::other)?;
         line.push('\n');
         self.stream.write_all(line.as_bytes())?;
         self.stream.flush()?;
@@ -193,7 +192,9 @@ impl StratumClient {
                     Ok(Some(trimmed))
                 }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            Err(ref e)
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
                 Ok(None)
             }
             Err(e) => Err(e),
@@ -203,7 +204,8 @@ impl StratumClient {
     /// Read a line, blocking until one arrives (with a longer timeout).
     fn read_line_blocking(&mut self) -> io::Result<String> {
         // Temporarily set a longer timeout for blocking reads
-        self.stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(30)))?;
         let result = loop {
             match self.read_line()? {
                 Some(line) => break Ok(line),
@@ -211,17 +213,15 @@ impl StratumClient {
             }
         };
         // Restore short timeout for non-blocking polling
-        self.stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+        self.stream
+            .set_read_timeout(Some(Duration::from_millis(100)))?;
         result
     }
 
     /// Send `mining.subscribe` and parse the response to get extranonce1 and
     /// extranonce2_size.
     pub fn subscribe(&mut self, agent: &str) -> io::Result<()> {
-        self.send_request(
-            "mining.subscribe",
-            serde_json::json!([agent]),
-        )?;
+        self.send_request("mining.subscribe", serde_json::json!([agent]))?;
 
         // Read response — may need to skip notifications that arrive first
         loop {
@@ -233,9 +233,7 @@ impl StratumClient {
             if msg.get("result").is_some() && msg.get("id").is_some() {
                 if let Some(err) = msg.get("error") {
                     if !err.is_null() {
-                        return Err(io::Error::other(
-                            format!("subscribe error: {}", err),
-                        ));
+                        return Err(io::Error::other(format!("subscribe error: {}", err)));
                     }
                 }
 
@@ -266,10 +264,7 @@ impl StratumClient {
     /// Send `mining.authorize` to authenticate the worker.
     pub fn authorize(&mut self, worker: &str, password: &str) -> io::Result<()> {
         self.worker = worker.to_string();
-        self.send_request(
-            "mining.authorize",
-            serde_json::json!([worker, password]),
-        )?;
+        self.send_request("mining.authorize", serde_json::json!([worker, password]))?;
 
         // Read response
         loop {
@@ -399,13 +394,7 @@ impl StratumClient {
 
         self.send_request(
             "mining.submit",
-            serde_json::json!([
-                self.worker,
-                job_id,
-                en2_hex,
-                ntime_hex,
-                nonce_hex,
-            ]),
+            serde_json::json!([self.worker, job_id, en2_hex, ntime_hex, nonce_hex,]),
         )?;
 
         Ok(())
@@ -510,10 +499,9 @@ mod tests {
     fn test_sha256d() {
         // SHA256d("") = SHA256(SHA256(""))
         let result = sha256d(b"");
-        let expected = hex::decode(
-            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456",
-        )
-        .unwrap();
+        let expected =
+            hex::decode("5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456")
+                .unwrap();
         assert_eq!(&result[..], &expected[..]);
     }
 
@@ -541,7 +529,9 @@ mod tests {
         // Check prevhash
         assert_eq!(&header[4..36], &[0xAA; 32]);
         // Merkle root should be SHA256d of coinbase (since no branches)
-        let coinbase = vec![0x01, 0x02, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x01, 0x03, 0x04];
+        let coinbase = vec![
+            0x01, 0x02, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x01, 0x03, 0x04,
+        ];
         let expected_root = sha256d(&coinbase);
         assert_eq!(&header[36..68], &expected_root);
         // Check ntime (LE)
@@ -577,7 +567,8 @@ mod tests {
 
     #[test]
     fn test_parse_notify() {
-        let params: Vec<serde_json::Value> = serde_json::from_str(r#"[
+        let params: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
             "job_123",
             "0000000000000000000000000000000000000000000000000000000000000000",
             "01020304",
@@ -587,7 +578,9 @@ mod tests {
             "1a00e1fd",
             "60000000",
             true
-        ]"#).unwrap();
+        ]"#,
+        )
+        .unwrap();
 
         let job = StratumClient::parse_notify(&params).unwrap();
         assert_eq!(job.job_id, "job_123");

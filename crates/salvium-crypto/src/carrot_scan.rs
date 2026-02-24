@@ -15,10 +15,8 @@ use crate::to32;
 
 // T generator — same bytes as tclsag.rs and JS side
 pub const T_BYTES: [u8; 32] = [
-    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf,
-    0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
-    0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00,
-    0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
+    0x96, 0x6f, 0xc6, 0x6b, 0x82, 0xcd, 0x56, 0xcf, 0x85, 0xea, 0xec, 0x80, 0x1c, 0x42, 0x84, 0x5f,
+    0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7, 0xde, 0xd2, 0x79, 0x4d, 0x09, 0x4f,
 ];
 
 /// H generator for Pedersen commitments (same as lib.rs)
@@ -130,7 +128,11 @@ fn make_sender_receiver_secret(
     d_e: &[u8; 32],
     input_context: &[u8],
 ) -> [u8; 32] {
-    derive_bytes_32(s_sr_unctx, DOMAIN_SENDER_RECEIVER_SECRET, &[d_e, input_context])
+    derive_bytes_32(
+        s_sr_unctx,
+        DOMAIN_SENDER_RECEIVER_SECRET,
+        &[d_e, input_context],
+    )
 }
 
 /// Step 4a: k^o_g = H_n[s_sr_ctx]("Carrot key extension G", C_a)
@@ -159,7 +161,10 @@ pub fn recover_address_spend_pubkey(
     // K^o_ext = k_g * G + k_t * T
     let ext = EdwardsPoint::vartime_multiscalar_mul(
         &[k_g, k_t],
-        &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, t_point],
+        &[
+            curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
+            t_point,
+        ],
     );
 
     // K^j_s = Ko - ext
@@ -168,11 +173,7 @@ pub fn recover_address_spend_pubkey(
 }
 
 /// Step 6: Decrypt amount.
-pub fn decrypt_amount(
-    enc_amount: &[u8; 8],
-    s_sr_ctx: &[u8; 32],
-    ko: &[u8; 32],
-) -> u64 {
+pub fn decrypt_amount(enc_amount: &[u8; 8], s_sr_ctx: &[u8; 32], ko: &[u8; 32]) -> u64 {
     let mask = derive_bytes_8(s_sr_ctx, DOMAIN_ENCRYPTION_MASK_AMOUNT, &[ko]);
     let mut decrypted = [0u8; 8];
     for i in 0..8 {
@@ -199,7 +200,9 @@ pub fn derive_commitment_mask(
 
 /// Step 7b: Compute Pedersen commitment and compare.
 fn pedersen_commit(amount: u64, mask: &Scalar) -> [u8; 32] {
-    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES)
+        .decompress()
+        .expect("invalid H");
     let mut amount_bytes = [0u8; 32];
     let le = amount.to_le_bytes();
     amount_bytes[..8].copy_from_slice(&le);
@@ -342,8 +345,14 @@ pub fn scan_carrot_output(
 
     scan_core(
         &s_sr_unctx,
-        ko, view_tag, d_e, enc_amount, commitment,
-        account_spend_pubkey, input_context, subaddress_map,
+        ko,
+        view_tag,
+        d_e,
+        enc_amount,
+        commitment,
+        account_spend_pubkey,
+        input_context,
+        subaddress_map,
         clear_text_amount,
     )
 }
@@ -364,8 +373,14 @@ pub fn scan_carrot_internal_output(
 ) -> Option<CarrotScanResult> {
     scan_core(
         view_balance_secret,
-        ko, view_tag, d_e, enc_amount, commitment,
-        account_spend_pubkey, input_context, subaddress_map,
+        ko,
+        view_tag,
+        d_e,
+        enc_amount,
+        commitment,
+        account_spend_pubkey,
+        input_context,
+        subaddress_map,
         clear_text_amount,
     )
 }
@@ -483,7 +498,12 @@ fn verify_normal_janus(
     // d_e' = derive_secret("Carrot sending key normal", anchor || input_context || K_s || pid)
     let d_e_scalar = derive_secret_unkeyed(
         DOMAIN_SENDING_KEY_NORMAL,
-        &[decrypted_anchor, input_context, address_spend_pubkey, payment_id],
+        &[
+            decrypted_anchor,
+            input_context,
+            address_spend_pubkey,
+            payment_id,
+        ],
     );
 
     // Apply Salvium clamping (only clear bit 255)
@@ -616,8 +636,16 @@ mod tests {
         let input_ctx = [0x52u8; 33];
 
         let result = scan_carrot_output(
-            &ko, &view_tag, &d_e, &enc_amount, None,
-            &s_sr, &ks, &input_ctx, &[], None,
+            &ko,
+            &view_tag,
+            &d_e,
+            &enc_amount,
+            None,
+            &s_sr,
+            &ks,
+            &input_ctx,
+            &[],
+            None,
         );
         assert!(result.is_none());
     }

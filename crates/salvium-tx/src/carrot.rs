@@ -112,11 +112,10 @@ pub fn create_carrot_output(
     // 4. Compute uncontextualized shared secret.
     //    External (payment): s_sr = d_e * ConvertPointE(K_v) — X25519 ECDH
     //    Internal (change/self-spend): s_sr = view_balance_secret — no ECDH
-    let s_sr_unctx = if (params.enote_type == enote_type::CHANGE
-        || params.enote_type == enote_type::SELF_SPEND)
-        && params.view_balance_secret.is_some()
-    {
-        *params.view_balance_secret.unwrap()
+    let s_sr_unctx = if let Some(vbs) = params.view_balance_secret.filter(|_| {
+        params.enote_type == enote_type::CHANGE || params.enote_type == enote_type::SELF_SPEND
+    }) {
+        *vbs
     } else {
         let k_v_mont = salvium_crypto::edwards_to_montgomery_u(params.recipient_view_pubkey);
         to_32(&salvium_crypto::x25519_scalar_mult(&d_e, &k_v_mont))
@@ -128,7 +127,11 @@ pub fn create_carrot_output(
     ctx_data.extend_from_slice(&d_e_pub);
     ctx_data.extend_from_slice(params.input_context);
     let ctx_transcript = build_transcript(domain::SENDER_RECEIVER_SECRET, &ctx_data);
-    let s_ctx = to_32(&salvium_crypto::blake2b_keyed(&ctx_transcript, 32, &s_sr_unctx));
+    let s_ctx = to_32(&salvium_crypto::blake2b_keyed(
+        &ctx_transcript,
+        32,
+        &s_sr_unctx,
+    ));
 
     // 6. Derive commitment mask (blinding factor).
     //    k_a = H_n(domain, key=s_ctx, amount_le || K_s || enote_type)
@@ -336,15 +339,22 @@ mod tests {
         let g_mont = salvium_crypto::edwards_to_montgomery_u(&g_compressed);
         let mut nine = [0u8; 32];
         nine[0] = 9;
-        assert_eq!(to_32(&g_mont), nine, "edwards_to_montgomery_u(G) should be 9");
+        assert_eq!(
+            to_32(&g_mont),
+            nine,
+            "edwards_to_montgomery_u(G) should be 9"
+        );
 
         // Test with simple scalar k = [7; 32]
         let k = [7u8; 32];
         let k_times_g_ed = salvium_crypto::scalar_mult_base(&k);
         let mont_of_kg = salvium_crypto::edwards_to_montgomery_u(&to_32(&k_times_g_ed));
         let k_times_9 = salvium_crypto::x25519_scalar_mult(&k, &nine);
-        assert_eq!(to_32(&k_times_9), to_32(&mont_of_kg),
-            "X25519(k, 9) should equal edwards_to_montgomery_u(k*G) for k=[7;32]");
+        assert_eq!(
+            to_32(&k_times_9),
+            to_32(&mont_of_kg),
+            "X25519(k, 9) should equal edwards_to_montgomery_u(k*G) for k=[7;32]"
+        );
 
         // Test with CARROT-derived k_vi (the actual failing case)
         let raw = salvium_crypto::carrot_keys::derive_carrot_keys(&[42u8; 32]);
@@ -355,17 +365,26 @@ mod tests {
         let k_vi_times_g = salvium_crypto::scalar_mult_base(&k_vi);
         println!("k_vi: {}", hex::encode(&k_vi));
         println!("K^0_v (from derivation): {}", hex::encode(&k_v_pub));
-        println!("k_vi * G (scalar_mult_base): {}", hex::encode(&k_vi_times_g));
-        assert_eq!(to_32(&k_vi_times_g), k_v_pub,
-            "scalar_mult_base(k_vi) should equal K^0_v from derivation");
+        println!(
+            "k_vi * G (scalar_mult_base): {}",
+            hex::encode(&k_vi_times_g)
+        );
+        assert_eq!(
+            to_32(&k_vi_times_g),
+            k_v_pub,
+            "scalar_mult_base(k_vi) should equal K^0_v from derivation"
+        );
 
         // Now test the Montgomery conversion
         let mont_of_kv = salvium_crypto::edwards_to_montgomery_u(&k_v_pub);
         let kvi_times_9 = salvium_crypto::x25519_scalar_mult(&k_vi, &nine);
         println!("mont(K^0_v):   {}", hex::encode(&mont_of_kv));
         println!("k_vi * 9:      {}", hex::encode(&kvi_times_9));
-        assert_eq!(to_32(&kvi_times_9), to_32(&mont_of_kv),
-            "X25519(k_vi, 9) should equal edwards_to_montgomery_u(K^0_v)");
+        assert_eq!(
+            to_32(&kvi_times_9),
+            to_32(&mont_of_kv),
+            "X25519(k_vi, 9) should equal edwards_to_montgomery_u(K^0_v)"
+        );
     }
 
     #[test]
@@ -382,7 +401,11 @@ mod tests {
         let scalar = hash_to_scalar_64(data, &key);
         assert_ne!(scalar, [0u8; 32], "scalar should not be zero");
         // Scalar should be reduced (< L), last byte should have high bit clear.
-        assert!(scalar[31] < 0x10, "scalar should be reduced: high byte = {:02x}", scalar[31]);
+        assert!(
+            scalar[31] < 0x10,
+            "scalar should be reduced: high byte = {:02x}",
+            scalar[31]
+        );
     }
 
     #[test]
@@ -510,19 +533,37 @@ mod tests {
             1, // minor_count (0..=1)
         );
         // Parse the map: [count:u32LE] [spend_pub(32) | major(u32LE) | minor(u32LE)] ...
-        let count = u32::from_le_bytes([sub_map_raw[0], sub_map_raw[1], sub_map_raw[2], sub_map_raw[3]]);
+        let count = u32::from_le_bytes([
+            sub_map_raw[0],
+            sub_map_raw[1],
+            sub_map_raw[2],
+            sub_map_raw[3],
+        ]);
         assert_eq!(count, 2, "should have 2 entries: (0,0) and (0,1)");
 
         // Entry 1 is at offset 4 + 40 = 44 (each entry is 32 + 4 + 4 = 40 bytes)
         let sub_k_s = to_32(&sub_map_raw[44..76]);
-        let sub_major = u32::from_le_bytes([sub_map_raw[76], sub_map_raw[77], sub_map_raw[78], sub_map_raw[79]]);
-        let sub_minor = u32::from_le_bytes([sub_map_raw[80], sub_map_raw[81], sub_map_raw[82], sub_map_raw[83]]);
+        let sub_major = u32::from_le_bytes([
+            sub_map_raw[76],
+            sub_map_raw[77],
+            sub_map_raw[78],
+            sub_map_raw[79],
+        ]);
+        let sub_minor = u32::from_le_bytes([
+            sub_map_raw[80],
+            sub_map_raw[81],
+            sub_map_raw[82],
+            sub_map_raw[83],
+        ]);
         assert_eq!(sub_major, 0);
         assert_eq!(sub_minor, 1);
 
         println!("K_s (main): {}", hex::encode(&keys.account_spend_pubkey));
         println!("K_s_sub (0,1): {}", hex::encode(&sub_k_s));
-        assert_ne!(sub_k_s, keys.account_spend_pubkey, "subaddress key should differ from main");
+        assert_ne!(
+            sub_k_s, keys.account_spend_pubkey,
+            "subaddress key should differ from main"
+        );
 
         // Compute subaddress view key: K_v_sub = k_vi * K_s_sub
         let kv_sub = to_32(&salvium_crypto::scalar_mult_point(
@@ -574,19 +615,35 @@ mod tests {
         println!("Scanner ECDH (k_vi * D_e): {}", hex::encode(&scanner_ecdh));
 
         // Creator ECDH for comparison
-        let creator_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(&d_e_priv, &to_32(&salvium_crypto::edwards_to_montgomery_u(&kv_sub))));
-        println!("Creator ECDH (d_e * mont(K_v_sub)): {}", hex::encode(&creator_ecdh));
+        let creator_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(
+            &d_e_priv,
+            &to_32(&salvium_crypto::edwards_to_montgomery_u(&kv_sub)),
+        ));
+        println!(
+            "Creator ECDH (d_e * mont(K_v_sub)): {}",
+            hex::encode(&creator_ecdh)
+        );
         println!("ECDH match: {}", scanner_ecdh == creator_ecdh);
 
         if let Some(ref r) = result {
-            println!("SCAN SUCCESS: amount={} enote_type={} major={} minor={}",
-                r.amount, r.enote_type, r.subaddress_major, r.subaddress_minor);
+            println!(
+                "SCAN SUCCESS: amount={} enote_type={} major={} minor={}",
+                r.amount, r.enote_type, r.subaddress_major, r.subaddress_minor
+            );
         } else {
             println!("SCAN FAILED");
             // Check view tag manually
-            let expected_vt = carrot_scan::compute_view_tag(&scanner_ecdh, &input_context, &output.onetime_address);
-            println!("Expected VT: {} Actual VT: {} Match: {}",
-                hex::encode(expected_vt), hex::encode(output.view_tag), expected_vt == output.view_tag);
+            let expected_vt = carrot_scan::compute_view_tag(
+                &scanner_ecdh,
+                &input_context,
+                &output.onetime_address,
+            );
+            println!(
+                "Expected VT: {} Actual VT: {} Match: {}",
+                hex::encode(expected_vt),
+                hex::encode(output.view_tag),
+                expected_vt == output.view_tag
+            );
         }
 
         assert!(result.is_some(), "SUBADDRESS scan failed");

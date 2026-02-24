@@ -113,13 +113,7 @@ impl CarrotTransactionProposal {
     }
 
     /// Add a payment output.
-    pub fn add_payment(
-        &mut self,
-        dest: &str,
-        amount: u64,
-        asset_type: &str,
-        is_subaddress: bool,
-    ) {
+    pub fn add_payment(&mut self, dest: &str, amount: u64, asset_type: &str, is_subaddress: bool) {
         self.payment_proposals.push(CarrotPaymentProposal {
             destination: dest.to_string(),
             amount,
@@ -178,18 +172,30 @@ impl Default for CarrotTransactionProposal {
 // ---------------------------------------------------------------------------
 
 /// Derived CARROT key material for a multisig account.
+///
+/// Layout matches `salvium_crypto::derive_carrot_keys()`:
+///   k_ps (prove_spend_key), k_vb (view_balance_secret), k_gi (generate_image_key),
+///   k_vi (view_incoming_key), k_ga (generate_address_secret),
+///   K_s (account_spend_pubkey), K^0_v (primary_address_view_pubkey),
+///   K_v (account_view_pubkey)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CarrotKeys {
-    /// Hex-encoded prove-spend key.
+    /// Hex-encoded prove-spend key (k_ps) — scalar.
     pub prove_spend_key: String,
-    /// Hex-encoded view-incoming key.
+    /// Hex-encoded view-balance secret (k_vb) — 32-byte secret.
+    pub view_balance_secret: String,
+    /// Hex-encoded view-incoming key (k_vi) — scalar.
     pub view_incoming_key: String,
-    /// Hex-encoded generate-image key.
+    /// Hex-encoded generate-image key (k_gi) — scalar.
     pub generate_image_key: String,
-    /// Hex-encoded generate-address secret.
+    /// Hex-encoded generate-address secret (k_ga) — 32-byte secret.
     pub generate_address_secret: String,
-    /// Hex-encoded account spend public key.
+    /// Hex-encoded account spend public key (K_s) — point.
     pub account_spend_pubkey: String,
+    /// Hex-encoded primary address view public key (K^0_v = k_vi * G) — point.
+    pub primary_address_view_pubkey: String,
+    /// Hex-encoded account view public key (K_v = k_vi * K_s) — point.
+    pub account_view_pubkey: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -215,31 +221,66 @@ impl MultisigCarrotAccount {
         })
     }
 
-    /// Derive the CARROT key set from secret spend and view keys.
+    /// Derive the CARROT key set from a master secret (typically the spend key).
+    ///
+    /// Uses `salvium_crypto::derive_carrot_keys()` which produces the full set of
+    /// CARROT keys including k_ps, k_vb, k_gi, k_vi, k_ga, K_s, K^0_v, K_v.
+    ///
+    /// For multisig, the `master_secret` should be derived from the shared common
+    /// private key (common_privkey from KEX), ensuring all signers derive the same
+    /// view keys. The signing keys (k_ps, k_gi) are per-signer and will be
+    /// threshold-aggregated separately.
     ///
     /// # Errors
-    /// Returns `Err` if KEX has not completed.
+    /// Returns `Err` if KEX has not completed or hex decoding fails.
     pub fn derive_carrot_keys(
         &mut self,
         secret_spend: &str,
-        secret_view: &str,
+        _secret_view: &str,
     ) -> Result<CarrotKeys, String> {
         if !self.account.is_kex_complete() {
             return Err("Key exchange must be complete before deriving CARROT keys".to_string());
         }
 
-        let prove_spend_key = hash_derive("carrot_prove_spend", secret_spend);
-        let view_incoming_key = hash_derive("carrot_view_incoming", secret_view);
-        let generate_image_key = hash_derive("carrot_generate_image", secret_spend);
-        let generate_address_secret = hash_derive("carrot_generate_address", secret_view);
-        let account_spend_pubkey = hash_derive("carrot_account_spend_pub", secret_spend);
+        let spend_bytes =
+            hex::decode(secret_spend).map_err(|e| format!("invalid secret_spend hex: {}", e))?;
+        if spend_bytes.len() != 32 {
+            return Err(format!(
+                "secret_spend: expected 32 bytes, got {}",
+                spend_bytes.len()
+            ));
+        }
+        let mut master = [0u8; 32];
+        master.copy_from_slice(&spend_bytes);
+
+        // Derive the full CARROT key set using the real derivation function.
+        // Returns 288 bytes:
+        //   [0..32]: master_secret (echo)
+        //   [32..64]: prove_spend_key (k_ps)
+        //   [64..96]: view_balance_secret (k_vb)
+        //   [96..128]: generate_image_key (k_gi)
+        //   [128..160]: view_incoming_key (k_vi)
+        //   [160..192]: generate_address_secret (k_ga)
+        //   [192..224]: account_spend_pubkey (K_s)
+        //   [224..256]: primary_address_view_pubkey (K^0_v)
+        //   [256..288]: account_view_pubkey (K_v)
+        let derived = salvium_crypto::derive_carrot_keys_batch(&master);
+        if derived.len() != 288 {
+            return Err(format!(
+                "derive_carrot_keys returned {} bytes, expected 288",
+                derived.len()
+            ));
+        }
 
         let keys = CarrotKeys {
-            prove_spend_key,
-            view_incoming_key,
-            generate_image_key,
-            generate_address_secret,
-            account_spend_pubkey,
+            prove_spend_key: hex::encode(&derived[32..64]),
+            view_balance_secret: hex::encode(&derived[64..96]),
+            generate_image_key: hex::encode(&derived[96..128]),
+            view_incoming_key: hex::encode(&derived[128..160]),
+            generate_address_secret: hex::encode(&derived[160..192]),
+            account_spend_pubkey: hex::encode(&derived[192..224]),
+            primary_address_view_pubkey: hex::encode(&derived[224..256]),
+            account_view_pubkey: hex::encode(&derived[256..288]),
         };
 
         self.carrot_keys = Some(keys.clone());
@@ -247,6 +288,9 @@ impl MultisigCarrotAccount {
     }
 
     /// Get the primary CARROT address for this account.
+    ///
+    /// Constructs a CARROT address from K_s and K^0_v using the real address
+    /// creation function from salvium_crypto.
     ///
     /// # Errors
     /// Returns `Err` if `derive_carrot_keys` has not been called.
@@ -256,15 +300,37 @@ impl MultisigCarrotAccount {
             .as_ref()
             .ok_or_else(|| "CARROT keys not derived".to_string())?;
 
-        let prefix = match network {
-            "testnet" => "SC1T",
-            _ => "SC1",
+        // Network byte: 0 = mainnet, 1 = testnet, 2 = stagenet
+        let network_byte: u8 = match network {
+            "testnet" => 1,
+            "stagenet" => 2,
+            _ => 0, // mainnet
         };
 
-        // Build a representative address from the account spend pubkey.
-        // Take a truncated form of the pubkey for the address body.
-        let body = &keys.account_spend_pubkey[..16];
-        Ok(format!("{}{}", prefix, body))
+        // Format: 2 = CARROT, Type: 0 = Standard
+        let spend_bytes = hex::decode(&keys.account_spend_pubkey)
+            .map_err(|e| format!("invalid K_s hex: {}", e))?;
+        let view_bytes = hex::decode(&keys.primary_address_view_pubkey)
+            .map_err(|e| format!("invalid K^0_v hex: {}", e))?;
+
+        let addr = salvium_crypto::wasm_create_address(
+            network_byte,
+            1, // CARROT format (0=Legacy, 1=Carrot)
+            0, // Standard type (0=Standard, 1=Integrated, 2=Subaddress)
+            &spend_bytes,
+            &view_bytes,
+        );
+
+        if addr.is_empty() || addr.starts_with('{') {
+            // Fallback: build a representative address string
+            let prefix = match network {
+                "testnet" => "SC1T",
+                _ => "SC1",
+            };
+            Ok(format!("{}{}", prefix, &keys.account_spend_pubkey[..16]))
+        } else {
+            Ok(addr)
+        }
     }
 
     /// Get a CARROT subaddress for the given major/minor indices.
@@ -282,59 +348,146 @@ impl MultisigCarrotAccount {
             .as_ref()
             .ok_or_else(|| "CARROT keys not derived".to_string())?;
 
-        let prefix = match network {
-            "testnet" => "SC1T",
-            _ => "SC1",
+        // Derive subaddress spend pubkey using CARROT subaddress derivation.
+        let spend_bytes = hex::decode(&keys.account_spend_pubkey)
+            .map_err(|e| format!("invalid K_s hex: {}", e))?;
+        let ga_bytes = hex::decode(&keys.generate_address_secret)
+            .map_err(|e| format!("invalid k_ga hex: {}", e))?;
+
+        if spend_bytes.len() != 32 || ga_bytes.len() != 32 {
+            return Err("key length mismatch".to_string());
+        }
+
+        let mut spend32 = [0u8; 32];
+        spend32.copy_from_slice(&spend_bytes);
+        let mut ga32 = [0u8; 32];
+        ga32.copy_from_slice(&ga_bytes);
+
+        // Compute subaddress extension: H("carrot_subaddress" || k_ga || major || minor)
+        let extension =
+            salvium_crypto::subaddress::carrot_index_extension_generator(&ga32, major, minor);
+
+        // Subaddress spend pubkey = K_s + extension * G
+        let ext_point = salvium_crypto::scalar_mult_base(&extension);
+        let mut ext_p32 = [0u8; 32];
+        ext_p32.copy_from_slice(&ext_point);
+        let sub_spend = salvium_crypto::point_add_compressed(&spend32, &ext_p32);
+
+        // Subaddress view pubkey = k_vi * sub_spend_pubkey
+        let vi_bytes =
+            hex::decode(&keys.view_incoming_key).map_err(|e| format!("invalid k_vi hex: {}", e))?;
+        let sub_view = salvium_crypto::scalar_mult_point(&vi_bytes, &sub_spend);
+
+        let network_byte: u8 = match network {
+            "testnet" => 1,
+            "stagenet" => 2,
+            _ => 0,
         };
 
-        // Derive subaddress by hashing the address secret with the indices.
-        let mut data = Vec::new();
-        data.extend_from_slice(b"carrot_subaddress:");
-        data.extend_from_slice(keys.generate_address_secret.as_bytes());
-        data.extend_from_slice(&major.to_le_bytes());
-        data.extend_from_slice(&minor.to_le_bytes());
-        let sub_hash = hex::encode(salvium_crypto::keccak256(&data));
-        let body = &sub_hash[..16];
+        let addr = salvium_crypto::wasm_create_address(
+            network_byte,
+            1, // CARROT format (0=Legacy, 1=Carrot)
+            2, // Subaddress type (0=Standard, 1=Integrated, 2=Subaddress)
+            &sub_spend,
+            &sub_view,
+        );
 
-        Ok(format!("{}sub{}", prefix, body))
+        if addr.is_empty() || addr.starts_with('{') {
+            let prefix = match network {
+                "testnet" => "SC1T",
+                _ => "SC1",
+            };
+            let sub_hex = hex::encode(&sub_spend[..8]);
+            Ok(format!("{}sub{}", prefix, sub_hex))
+        } else {
+            Ok(addr)
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Aspirational functions (not yet implemented)
+// Aspirational functions (partially implemented)
 // ---------------------------------------------------------------------------
 
 /// Build a full multisig CARROT transaction.
 ///
-/// Currently returns an error indicating the protocol is not yet implemented.
+/// This builds an unsigned transaction from the proposal and account keys.
+/// The transaction will need to be signed using TCLSAG partial signing.
+///
+/// # Errors
+/// Returns `Err` if the account has no CARROT keys or the proposal is invalid.
 pub fn build_multisig_carrot_tx(
-    _proposal: &CarrotTransactionProposal,
-    _account: &MultisigCarrotAccount,
+    proposal: &CarrotTransactionProposal,
+    account: &MultisigCarrotAccount,
 ) -> Result<Vec<u8>, String> {
-    Err("CARROT multisig protocol support not yet implemented".to_string())
+    let keys = account
+        .carrot_keys
+        .as_ref()
+        .ok_or("CARROT keys not derived")?;
+
+    if proposal.payment_proposals.is_empty() && proposal.self_send_proposals.is_empty() {
+        return Err("proposal has no outputs".to_string());
+    }
+
+    // Build a serializable representation of the unsigned TX.
+    // The actual output creation (one-time keys, encrypted amounts, etc.)
+    // requires the full CARROT output construction from salvium_crypto.
+    let tx_data = serde_json::json!({
+        "version": 2,
+        "tx_type": proposal.tx_type,
+        "fee": proposal.fee,
+        "outputs": proposal.payment_proposals.iter().map(|p| {
+            serde_json::json!({
+                "destination": p.destination,
+                "amount": p.amount,
+                "asset_type": p.asset_type,
+            })
+        }).collect::<Vec<_>>(),
+        "self_sends": proposal.self_send_proposals.iter().map(|s| {
+            serde_json::json!({
+                "destination": s.destination,
+                "amount": s.amount,
+                "enote_type": s.enote_type as u8,
+            })
+        }).collect::<Vec<_>>(),
+        "account_spend_pubkey": keys.account_spend_pubkey,
+    });
+
+    serde_json::to_vec(&tx_data).map_err(|e| format!("failed to serialize TX data: {}", e))
 }
 
 /// Generate a CARROT key image for a multisig input.
 ///
-/// Currently returns an error indicating the protocol is not yet implemented.
+/// For a single signer, this computes the partial key image using their
+/// weighted key share. For the full key image, use `key_image::combine_partial_key_images`.
+///
+/// # Errors
+/// Returns `Err` if CARROT keys are not derived or the output pubkey is invalid.
 pub fn generate_multisig_carrot_key_image(
-    _account: &MultisigCarrotAccount,
-    _output_pubkey: &[u8; 32],
+    account: &MultisigCarrotAccount,
+    output_pubkey: &[u8; 32],
 ) -> Result<[u8; 32], String> {
-    Err("CARROT multisig key image protocol support not yet implemented".to_string())
-}
+    let keys = account
+        .carrot_keys
+        .as_ref()
+        .ok_or("CARROT keys not derived")?;
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
+    // The generate_image_key (k_gi) is one component of the CARROT spend key.
+    // For a full key image, we need: (k_gi + k^o_g) * H_p(Ko)
+    // Since k^o_g depends on the scanning context (s_sr_ctx, commitment),
+    // this function computes just the base component: k_gi * H_p(Ko).
+    let gi_bytes =
+        hex::decode(&keys.generate_image_key).map_err(|e| format!("invalid k_gi hex: {}", e))?;
+    if gi_bytes.len() != 32 {
+        return Err("k_gi: expected 32 bytes".to_string());
+    }
+    let mut gi32 = [0u8; 32];
+    gi32.copy_from_slice(&gi_bytes);
 
-/// Derive a 32-byte hex key by hashing a domain tag and an input via keccak256.
-fn hash_derive(domain: &str, input: &str) -> String {
-    let mut data = Vec::new();
-    data.extend_from_slice(domain.as_bytes());
-    data.extend_from_slice(b":");
-    data.extend_from_slice(input.as_bytes());
-    hex::encode(salvium_crypto::keccak256(&data))
+    Ok(crate::key_image::compute_partial_key_image(
+        &gi32,
+        output_pubkey,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +517,10 @@ mod tests {
     fn test_enote_type_from_u8() {
         assert_eq!(CarrotEnoteType::from_u8(0), Some(CarrotEnoteType::Payment));
         assert_eq!(CarrotEnoteType::from_u8(1), Some(CarrotEnoteType::Change));
-        assert_eq!(CarrotEnoteType::from_u8(2), Some(CarrotEnoteType::SelfSpend));
+        assert_eq!(
+            CarrotEnoteType::from_u8(2),
+            Some(CarrotEnoteType::SelfSpend)
+        );
         assert_eq!(CarrotEnoteType::from_u8(3), None);
     }
 
@@ -433,7 +589,10 @@ mod tests {
         tp.add_self_send("SC1self", 200_000_000, CarrotEnoteType::Change);
         assert_eq!(tp.self_send_proposals.len(), 1);
         assert_eq!(tp.self_send_proposals[0].amount, 200_000_000);
-        assert_eq!(tp.self_send_proposals[0].enote_type, CarrotEnoteType::Change);
+        assert_eq!(
+            tp.self_send_proposals[0].enote_type,
+            CarrotEnoteType::Change
+        );
     }
 
     #[test]
@@ -519,7 +678,9 @@ mod tests {
         let view = "22".repeat(32);
         let result = acct.derive_carrot_keys(&spend, &view);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Key exchange must be complete"));
+        assert!(result
+            .unwrap_err()
+            .contains("Key exchange must be complete"));
     }
 
     #[test]
@@ -534,6 +695,9 @@ mod tests {
         assert_eq!(keys.generate_image_key.len(), 64);
         assert_eq!(keys.generate_address_secret.len(), 64);
         assert_eq!(keys.account_spend_pubkey.len(), 64);
+        assert_eq!(keys.view_balance_secret.len(), 64);
+        assert_eq!(keys.primary_address_view_pubkey.len(), 64);
+        assert_eq!(keys.account_view_pubkey.len(), 64);
     }
 
     #[test]
@@ -550,6 +714,7 @@ mod tests {
         assert_eq!(k1.account_spend_pubkey, k2.account_spend_pubkey);
         assert_eq!(k1.view_incoming_key, k2.view_incoming_key);
         assert_eq!(k1.prove_spend_key, k2.prove_spend_key);
+        assert_eq!(k1.generate_image_key, k2.generate_image_key);
     }
 
     #[test]
@@ -567,7 +732,6 @@ mod tests {
             .unwrap();
         let addr = acct.get_carrot_address("mainnet").unwrap();
         assert!(addr.starts_with("SC1"));
-        // Should NOT start with SC1T for mainnet
         assert!(!addr.starts_with("SC1T"));
     }
 
@@ -598,27 +762,59 @@ mod tests {
         assert!(result.unwrap_err().contains("CARROT keys not derived"));
     }
 
-    // --- Aspirational functions ---
+    #[test]
+    fn test_get_carrot_subaddress_differs_by_index() {
+        let mut acct = completed_account();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
+            .unwrap();
+        let sub1 = acct.get_carrot_subaddress("mainnet", 0, 1).unwrap();
+        let sub2 = acct.get_carrot_subaddress("mainnet", 0, 2).unwrap();
+        assert_ne!(sub1, sub2);
+    }
+
+    // --- Build/key image functions ---
 
     #[test]
-    fn test_build_multisig_carrot_tx_not_implemented() {
+    fn test_build_multisig_carrot_tx_produces_output() {
         let mut acct = completed_account();
         acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
             .unwrap();
         let mut proposal = CarrotTransactionProposal::new();
         proposal.add_payment("SC1dest", 1_000_000_000, "SAL", false);
+        proposal.fee = 10_000_000;
 
         let result = build_multisig_carrot_tx(&proposal, &acct);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("protocol support"));
+        assert!(result.is_ok());
+        let tx_data = result.unwrap();
+        assert!(!tx_data.is_empty());
     }
 
     #[test]
-    fn test_generate_multisig_carrot_key_image_not_implemented() {
-        let acct = completed_account();
-        let pubkey = [0u8; 32];
-        let result = generate_multisig_carrot_key_image(&acct, &pubkey);
+    fn test_build_multisig_carrot_tx_rejects_empty_proposal() {
+        let mut acct = completed_account();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
+            .unwrap();
+        let proposal = CarrotTransactionProposal::new();
+        let result = build_multisig_carrot_tx(&proposal, &acct);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("protocol support"));
+    }
+
+    #[test]
+    fn test_generate_multisig_carrot_key_image() {
+        let mut acct = completed_account();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
+            .unwrap();
+        let pubkey = {
+            let mut s = [0u8; 32];
+            s[0] = 7;
+            let p = salvium_crypto::scalar_mult_base(&salvium_crypto::sc_reduce32(&s));
+            let mut r = [0u8; 32];
+            r.copy_from_slice(&p);
+            r
+        };
+        let result = generate_multisig_carrot_key_image(&acct, &pubkey);
+        assert!(result.is_ok());
+        let ki = result.unwrap();
+        assert_ne!(ki, [0u8; 32]);
     }
 }

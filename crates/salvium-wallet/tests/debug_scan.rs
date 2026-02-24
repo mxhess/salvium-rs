@@ -2,8 +2,8 @@
 //! Run: cargo test -p salvium-wallet --test debug_scan -- --ignored --nocapture
 
 use salvium_rpc::daemon::DaemonRpc;
-use salvium_wallet::{decrypt_js_wallet, Wallet};
 use salvium_types::constants::Network;
+use salvium_wallet::{decrypt_js_wallet, Wallet};
 
 const DAEMON_URL: &str = "http://node12.whiskymine.io:29081";
 
@@ -24,9 +24,16 @@ async fn debug_block_1230() {
                         for out in vout {
                             let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
                             let amount = out.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
-                            let vt = out.get("viewTag").and_then(|v| v.as_str()).unwrap_or("none");
-                            let asset = out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("Block {}: type={}, amount={}, viewTag={}, asset={}", height, out_type, amount, vt, asset);
+                            let vt = out
+                                .get("viewTag")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("none");
+                            let asset =
+                                out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!(
+                                "Block {}: type={}, amount={}, viewTag={}, asset={}",
+                                height, out_type, amount, vt, asset
+                            );
                         }
                     }
                 }
@@ -48,13 +55,19 @@ async fn debug_block_1230() {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block_json_str) {
         println!("{}", serde_json::to_string_pretty(&val).unwrap());
     } else {
-        println!("Failed to parse as JSON: {}", &block_json_str[..200.min(block_json_str.len())]);
+        println!(
+            "Failed to parse as JSON: {}",
+            &block_json_str[..200.min(block_json_str.len())]
+        );
     }
 
     // Decrypt wallet-a to get keys.
     let dir = dirs::home_dir().unwrap().join("testnet-wallet");
     let wallet_json = std::fs::read_to_string(dir.join("wallet-a.json")).unwrap();
-    let pin = std::fs::read_to_string(dir.join("wallet-a.pin")).unwrap().trim().to_string();
+    let pin = std::fs::read_to_string(dir.join("wallet-a.pin"))
+        .unwrap()
+        .trim()
+        .to_string();
     let secrets = decrypt_js_wallet(&wallet_json, &pin).unwrap();
 
     println!("\n=== Wallet A keys ===");
@@ -69,28 +82,41 @@ async fn debug_block_1230() {
     // Create wallet and check scan context.
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("debug.db");
-    let wallet = Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32]).unwrap();
+    let wallet = Wallet::create(
+        secrets.seed,
+        Network::Testnet,
+        db_path.to_str().unwrap(),
+        &[0u8; 32],
+    )
+    .unwrap();
 
     let keys = wallet.keys();
     println!("\n=== Wallet keys from seed ===");
     println!("CN view secret: {}", hex::encode(keys.cn.view_secret_key));
     println!("CN spend pub: {}", hex::encode(keys.cn.spend_public_key));
     println!("CN view pub: {}", hex::encode(keys.cn.view_public_key));
-    println!("Keys match JS?: view={}, spend_pub={}",
+    println!(
+        "Keys match JS?: view={}, spend_pub={}",
         keys.cn.view_secret_key == secrets.view_secret_key,
-        hex::encode(keys.cn.spend_public_key) == hex::encode(&spend_pub[..32]));
+        hex::encode(keys.cn.spend_public_key) == hex::encode(&spend_pub[..32])
+    );
 
     let ctx = wallet.scan_context();
     println!("\n=== Scan context ===");
     println!("CN subaddress map entries: {}", ctx.cn_subaddress_map.len());
-    println!("CARROT subaddress map entries: {}", ctx.carrot_subaddress_map.len());
+    println!(
+        "CARROT subaddress map entries: {}",
+        ctx.carrot_subaddress_map.len()
+    );
     println!("CARROT enabled: {}", ctx.carrot_enabled);
 
     if !ctx.cn_subaddress_map.is_empty() {
-        println!("First CN subaddr entry: key={}, major={}, minor={}",
+        println!(
+            "First CN subaddr entry: key={}, major={}, minor={}",
             hex::encode(ctx.cn_subaddress_map[0].0),
             ctx.cn_subaddress_map[0].1,
-            ctx.cn_subaddress_map[0].2);
+            ctx.cn_subaddress_map[0].2
+        );
     }
 
     // Try to manually scan the miner TX of block 1230.
@@ -111,8 +137,15 @@ async fn debug_block_1230() {
 
             // Try extracting tx_pub_key from extra.
             if let Some(extra) = miner_tx.get("extra").and_then(|v| v.as_array()) {
-                let bytes: Vec<u8> = extra.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect();
-                println!("\nExtra bytes ({} total): {:?}", bytes.len(), &bytes[..bytes.len().min(40)]);
+                let bytes: Vec<u8> = extra
+                    .iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect();
+                println!(
+                    "\nExtra bytes ({} total): {:?}",
+                    bytes.len(),
+                    &bytes[..bytes.len().min(40)]
+                );
                 for i in 0..bytes.len() {
                     if bytes[i] == 0x01 && i + 33 <= bytes.len() {
                         let mut key = [0u8; 32];
@@ -120,21 +153,31 @@ async fn debug_block_1230() {
                         println!("Found tx_pub_key at offset {}: {}", i, hex::encode(key));
 
                         // Try key derivation.
-                        let derivation = salvium_crypto::generate_key_derivation(&key, &secrets.view_secret_key);
-                        println!("Derivation: {} ({} bytes)", hex::encode(&derivation), derivation.len());
+                        let derivation =
+                            salvium_crypto::generate_key_derivation(&key, &secrets.view_secret_key);
+                        println!(
+                            "Derivation: {} ({} bytes)",
+                            hex::encode(&derivation),
+                            derivation.len()
+                        );
 
                         if derivation.len() == 32 {
                             let mut d = [0u8; 32];
                             d.copy_from_slice(&derivation);
                             // Derive expected output key for index 0.
-                            let derived_pub = salvium_crypto::derive_public_key(&d, 0, &keys.cn.spend_public_key);
-                            println!("Derived output pub key (idx 0): {}", hex::encode(&derived_pub));
+                            let derived_pub =
+                                salvium_crypto::derive_public_key(&d, 0, &keys.cn.spend_public_key);
+                            println!(
+                                "Derived output pub key (idx 0): {}",
+                                hex::encode(&derived_pub)
+                            );
 
                             // Check against actual output key.
                             if let Some(vout) = miner_tx.get("vout").and_then(|v| v.as_array()) {
                                 if let Some(first_out) = vout.first() {
                                     if let Some(target) = first_out.get("target") {
-                                        let actual_key = if let Some(tk) = target.get("tagged_key") {
+                                        let actual_key = if let Some(tk) = target.get("tagged_key")
+                                        {
                                             tk.get("key").and_then(|k| k.as_str()).map(String::from)
                                         } else if let Some(k) = target.get("key") {
                                             k.as_str().map(String::from)

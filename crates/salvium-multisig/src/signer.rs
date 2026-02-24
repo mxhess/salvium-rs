@@ -63,7 +63,8 @@ mod tests {
     fn test_signer_with_config() {
         let spend = "aa".repeat(32);
         let view = "bb".repeat(32);
-        let signer = MultisigSigner::with_config(1, spend.clone(), view.clone(), "Signer 1".to_string());
+        let signer =
+            MultisigSigner::with_config(1, spend.clone(), view.clone(), "Signer 1".to_string());
         assert_eq!(signer.index, 1);
         assert_eq!(signer.public_spend_key, spend);
         assert_eq!(signer.public_view_key, view);

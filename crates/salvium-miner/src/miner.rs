@@ -33,29 +33,18 @@ extern "C" {
         output: *mut u8,
     );
     fn randomx_alloc_cache(flags: u32) -> *mut std::ffi::c_void;
-    fn randomx_init_cache(
-        cache: *mut std::ffi::c_void,
-        key: *const u8,
-        key_size: u64,
-    );
+    fn randomx_init_cache(cache: *mut std::ffi::c_void, key: *const u8, key_size: u64);
     fn randomx_release_cache(cache: *mut std::ffi::c_void);
     fn randomx_release_dataset(dataset: *mut std::ffi::c_void);
     fn randomx_get_flags() -> u32;
-    fn randomx_calculate_hash_first(
-        vm: *mut std::ffi::c_void,
-        input: *const u8,
-        input_size: u64,
-    );
+    fn randomx_calculate_hash_first(vm: *mut std::ffi::c_void, input: *const u8, input_size: u64);
     fn randomx_calculate_hash_next(
         vm: *mut std::ffi::c_void,
         input: *const u8,
         input_size: u64,
         output: *mut u8,
     );
-    fn randomx_calculate_hash_last(
-        vm: *mut std::ffi::c_void,
-        output: *mut u8,
-    );
+    fn randomx_calculate_hash_last(vm: *mut std::ffi::c_void, output: *mut u8);
 }
 
 /// A found block ready for submission
@@ -110,7 +99,9 @@ impl MiningEngine {
             let with_lp = base_flags | 0x1; // FLAG_LARGE_PAGES
             let test_cache = unsafe { randomx_alloc_cache(with_lp) };
             if !test_cache.is_null() {
-                unsafe { randomx_release_cache(test_cache); }
+                unsafe {
+                    randomx_release_cache(test_cache);
+                }
                 (with_lp, true)
             } else {
                 (base_flags, false)
@@ -118,7 +109,14 @@ impl MiningEngine {
         } else {
             (base_flags, false)
         };
-        eprintln!("Large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
+        eprintln!(
+            "Large pages: {}",
+            if using_large_pages {
+                "YES"
+            } else {
+                "NO (falling back)"
+            }
+        );
         eprintln!("RandomX flags: 0x{:x}", flags);
 
         // Allocate and init cache via C FFI
@@ -134,7 +132,9 @@ impl MiningEngine {
         // Allocate and init dataset
         let dataset_ptr = unsafe { randomx_alloc_dataset(flags) };
         if dataset_ptr.is_null() {
-            unsafe { randomx_release_cache(cache_ptr); }
+            unsafe {
+                randomx_release_cache(cache_ptr);
+            }
             return Err("Failed to allocate RandomX dataset (need ~2GB free RAM)".to_string());
         }
 
@@ -184,9 +184,7 @@ impl MiningEngine {
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
 
             let handle = thread::spawn(move || {
-                let vm_ptr = unsafe {
-                    randomx_create_vm(flags, std::ptr::null_mut(), ds.0)
-                };
+                let vm_ptr = unsafe { randomx_create_vm(flags, std::ptr::null_mut(), ds.0) };
                 if vm_ptr.is_null() {
                     eprintln!("Worker {} failed to create VM", worker_id);
                     return;
@@ -195,17 +193,26 @@ impl MiningEngine {
                 eprintln!("Worker {} ready", worker_id);
 
                 worker_loop(
-                    vm_ptr, &job_rx, &running, &hash_count, &result_tx, nonce_start,
+                    vm_ptr,
+                    &job_rx,
+                    &running,
+                    &hash_count,
+                    &result_tx,
+                    nonce_start,
                 );
 
-                unsafe { randomx_destroy_vm(vm_ptr); }
+                unsafe {
+                    randomx_destroy_vm(vm_ptr);
+                }
             });
 
             handles.push(handle);
         }
 
         // Release cache (dataset is self-contained after init)
-        unsafe { randomx_release_cache(cache_ptr); }
+        unsafe {
+            randomx_release_cache(cache_ptr);
+        }
 
         // NOTE: dataset_ptr is intentionally leaked — it must outlive all worker VMs.
         // In a long-running miner this is fine; the OS reclaims on exit.
@@ -230,7 +237,9 @@ impl MiningEngine {
             let raw_flags = flags.bits() | 0x1; // FLAG_LARGE_PAGES
             let test_cache = unsafe { randomx_alloc_cache(raw_flags) };
             if !test_cache.is_null() {
-                unsafe { randomx_release_cache(test_cache); }
+                unsafe {
+                    randomx_release_cache(test_cache);
+                }
                 flags |= RandomXFlag::FLAG_LARGE_PAGES;
                 eprintln!("Large pages: YES");
             } else {
@@ -283,11 +292,19 @@ impl MiningEngine {
                         Err(_) => break,
                     };
 
-                    let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+                    let nonce_offset = job
+                        .nonce_offset
+                        .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                     let mut current_job = job;
                     while let Some(new_job) = mine_job_rust(
-                        &mut vm, &current_job, &running, &hash_count,
-                        &result_tx, nonce_start, nonce_offset, &job_rx,
+                        &mut vm,
+                        &current_job,
+                        &running,
+                        &hash_count,
+                        &result_tx,
+                        nonce_start,
+                        nonce_offset,
+                        &job_rx,
                     ) {
                         current_job = new_job;
                     }
@@ -344,7 +361,9 @@ fn worker_loop(
             Err(_) => break,
         };
 
-        let mut nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+        let mut nonce_offset = job
+            .nonce_offset
+            .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
 
         // Double-buffered blobs for pipelined hashing
@@ -394,7 +413,9 @@ fn worker_loop(
 
                 // Switch to new job and re-prime pipeline
                 job = new_job;
-                nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+                nonce_offset = job
+                    .nonce_offset
+                    .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                 nonce = nonce_start;
                 blob_a = job.hashing_blob.clone();
                 blob_b = job.hashing_blob.clone();
@@ -481,7 +502,9 @@ fn mine_job_rust(
         };
         if meets {
             let mut template = job.template_blob.clone();
-            let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
+            let tmpl_offset = job
+                .nonce_offset
+                .unwrap_or_else(|| find_nonce_offset(&template));
             set_nonce(&mut template, tmpl_offset, nonce);
 
             let _ = result_tx.send(FoundBlock {
@@ -506,7 +529,9 @@ fn submit_block(
     result_tx: &mpsc::Sender<FoundBlock>,
 ) {
     let mut template = job.template_blob.clone();
-    let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
+    let tmpl_offset = job
+        .nonce_offset
+        .unwrap_or_else(|| find_nonce_offset(&template));
     set_nonce(&mut template, tmpl_offset, nonce);
     let _ = result_tx.send(FoundBlock {
         nonce,

@@ -144,7 +144,10 @@ enum StdinEvent {
 
 pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
     let mode_str = if light { "light" } else { "full" };
-    eprintln!("[IPC] Waiting for commands on stdin (threads={}, mode={})", threads, mode_str);
+    eprintln!(
+        "[IPC] Waiting for commands on stdin (threads={}, mode={})",
+        threads, mode_str
+    );
 
     // Read stdin on a dedicated thread so the main loop stays non-blocking
     let (stdin_tx, stdin_rx) = mpsc::channel::<StdinEvent>();
@@ -185,7 +188,11 @@ pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
             if last_stats.elapsed() > Duration::from_secs(5) {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 let total = eng.hash_count.load(Ordering::Relaxed);
-                let hr = if elapsed > 0.0 { total as f64 / elapsed } else { 0.0 };
+                let hr = if elapsed > 0.0 {
+                    total as f64 / elapsed
+                } else {
+                    0.0
+                };
 
                 let mut out = OutMessage::new("hashrate");
                 out.hashrate = Some(hr);
@@ -241,7 +248,10 @@ pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
                     }
                 };
 
-                eprintln!("[IPC] Initializing RandomX (seed={}...)", &msg.seed_hash[..16.min(msg.seed_hash.len())]);
+                eprintln!(
+                    "[IPC] Initializing RandomX (seed={}...)",
+                    &msg.seed_hash[..16.min(msg.seed_hash.len())]
+                );
 
                 let result = if light {
                     MiningEngine::new_light(threads, &seed_bytes, use_large_pages)
@@ -290,10 +300,8 @@ pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
                     }
                 };
 
-                let difficulty = crate::miner::parse_difficulty(
-                    msg.difficulty,
-                    msg.wide_difficulty.as_deref(),
-                );
+                let difficulty =
+                    crate::miner::parse_difficulty(msg.difficulty, msg.wide_difficulty.as_deref());
 
                 current_job_id = msg.job_id.clone();
 
@@ -311,7 +319,10 @@ pub fn run_ipc(threads: usize, light: bool, use_large_pages: bool) {
                     target: None,
                 });
 
-                eprintln!("[IPC] Job {} started (height={}, diff={})", current_job_id, msg.height, difficulty);
+                eprintln!(
+                    "[IPC] Job {} started (height={}, diff={})",
+                    current_job_id, msg.height, difficulty
+                );
             }
 
             "stop" => {

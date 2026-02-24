@@ -6,7 +6,7 @@
 //! Reference: salvium/src/oracle/pricing_record.h, pricing_record.cpp
 //!            salvium/src/cryptonote_core/cryptonote_tx_utils.cpp
 
-use salvium_types::constants::{COIN, HfVersion};
+use salvium_types::constants::{HfVersion, COIN};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -24,9 +24,7 @@ pub const PRICING_RECORD_VALID_TIME_DIFF: u64 = 120;
 pub const CONVERSION_RATE_ROUNDING: u64 = 10_000;
 
 /// Oracle server URLs (mainnet).
-pub const ORACLE_URLS: &[&str] = &[
-    "https://oracle.salvium.io:8443",
-];
+pub const ORACLE_URLS: &[&str] = &["https://oracle.salvium.io:8443"];
 
 /// Oracle public key for mainnet (DSA format, PEM).
 pub const ORACLE_PUBLIC_KEY_MAINNET: &str = "-----BEGIN PUBLIC KEY-----
@@ -197,13 +195,17 @@ impl PricingRecord {
     /// Reference: pricing_record.cpp verifySignature()
     pub fn signature_message(&self) -> String {
         // Build with explicit field ordering matching C++
-        let assets_json: Vec<serde_json::Value> = self.assets.iter().map(|a| {
-            serde_json::json!({
-                "asset_type": a.asset_type,
-                "spot_price": a.spot_price,
-                "ma_price": a.ma_price,
+        let assets_json: Vec<serde_json::Value> = self
+            .assets
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "asset_type": a.asset_type,
+                    "spot_price": a.spot_price,
+                    "ma_price": a.ma_price,
+                })
             })
-        }).collect();
+            .collect();
 
         let message = serde_json::json!({
             "pr_version": self.pr_version,
@@ -292,9 +294,7 @@ pub fn conversion_rate(
     }
 
     // Only SAL<->VSD conversions allowed
-    if !((from_asset == "SAL" && to_asset == "VSD")
-        || (from_asset == "VSD" && to_asset == "SAL"))
-    {
+    if !((from_asset == "SAL" && to_asset == "VSD") || (from_asset == "VSD" && to_asset == "SAL")) {
         return Err(OracleError::InvalidConversionPair {
             from: from_asset.to_string(),
             to: to_asset.to_string(),
@@ -400,7 +400,10 @@ mod tests {
         PricingRecord {
             pr_version: 1,
             height: 100,
-            supply: SupplyData { sal: 1_000_000, vsd: 500_000 },
+            supply: SupplyData {
+                sal: 1_000_000,
+                vsd: 500_000,
+            },
             assets: vec![
                 AssetData {
                     asset_type: "SAL".to_string(),
@@ -471,10 +474,13 @@ mod tests {
     fn test_full_conversion() {
         let pr = test_pricing_record();
         let result = calculate_conversion(
-            &pr, "SAL", "VSD",
+            &pr,
+            "SAL",
+            "VSD",
             100_000_000, // 1 SAL
             10_000_000,  // slippage limit
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!result.refund);
         assert_eq!(result.actual_slippage, 3_125_000); // 3.125% of 100M
@@ -485,10 +491,13 @@ mod tests {
     fn test_conversion_slippage_refund() {
         let pr = test_pricing_record();
         let result = calculate_conversion(
-            &pr, "SAL", "VSD",
+            &pr,
+            "SAL",
+            "VSD",
             100_000_000, // 1 SAL
             1_000_000,   // very low slippage limit
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(result.refund);
         assert_eq!(result.amount_minted, 0);

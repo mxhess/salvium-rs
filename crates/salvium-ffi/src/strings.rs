@@ -75,13 +75,17 @@ mod tests {
 
     #[test]
     fn test_string_free_null_noop() {
-        unsafe { salvium_string_free(std::ptr::null_mut()); }
+        unsafe {
+            salvium_string_free(std::ptr::null_mut());
+        }
     }
 
     #[test]
     fn test_string_free_valid() {
         let cs = CString::new("test").unwrap();
         let ptr = cs.into_raw();
-        unsafe { salvium_string_free(ptr); }
+        unsafe {
+            salvium_string_free(ptr);
+        }
     }
 }

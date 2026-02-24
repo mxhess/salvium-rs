@@ -13,7 +13,8 @@ thread_local! {
 
 /// Store an error message for the current thread.
 pub fn set_last_error(msg: &str) {
-    let c = CString::new(msg).unwrap_or_else(|_| CString::new("(error contained null byte)").unwrap());
+    let c =
+        CString::new(msg).unwrap_or_else(|_| CString::new("(error contained null byte)").unwrap());
     LAST_ERROR.with(|cell| {
         *cell.borrow_mut() = Some(c);
     });
@@ -143,7 +144,9 @@ mod tests {
         let msg = unsafe { std::ffi::CStr::from_ptr(ptr) };
         assert_eq!(msg.to_str().unwrap(), "hello");
         // Clean up
-        unsafe { drop(CString::from_raw(ptr)); }
+        unsafe {
+            drop(CString::from_raw(ptr));
+        }
     }
 
     #[test]

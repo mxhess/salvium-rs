@@ -132,9 +132,7 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async {
-            do_transfer(wallet_ref, daemon_ref, &params, priority).await
-        })
+        rt.block_on(async { do_transfer(wallet_ref, daemon_ref, &params, priority).await })
     })
 }
 
@@ -174,9 +172,7 @@ pub unsafe extern "C" fn salvium_wallet_stake(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async {
-            do_stake(wallet_ref, daemon_ref, &params, priority).await
-        })
+        rt.block_on(async { do_stake(wallet_ref, daemon_ref, &params, priority).await })
     })
 }
 
@@ -218,9 +214,7 @@ pub unsafe extern "C" fn salvium_wallet_sweep(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async {
-            do_sweep(wallet_ref, daemon_ref, &params, priority).await
-        })
+        rt.block_on(async { do_sweep(wallet_ref, daemon_ref, &params, priority).await })
     })
 }
 
@@ -257,9 +251,7 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async {
-            do_transfer(wallet_ref, daemon_ref, &params, priority).await
-        })
+        rt.block_on(async { do_transfer(wallet_ref, daemon_ref, &params, priority).await })
     })
 }
 
@@ -322,18 +314,39 @@ async fn do_transfer(
     }
 
     // 2. Estimate fee.
-    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let out_type = if is_carrot {
+        output_type::CARROT_V1
+    } else {
+        output_type::TAGGED_KEY
+    };
     let num_outputs = destinations.len() + 1; // +1 for change
-    let est_fee = fee::estimate_tx_fee(2, num_outputs, params.ring_size, is_carrot, out_type, priority);
+    let est_fee = fee::estimate_tx_fee(
+        2,
+        num_outputs,
+        params.ring_size,
+        is_carrot,
+        out_type,
+        priority,
+    );
 
     // 3. Select UTXOs (CARROT-only for SALVIUM_ONE).
     let selection = if is_carrot {
         wallet
-            .select_carrot_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .select_carrot_outputs(
+                total_amount,
+                est_fee,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::Default,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     } else {
         wallet
-            .select_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .select_outputs(
+                total_amount,
+                est_fee,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::Default,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     };
 
@@ -347,7 +360,7 @@ async fn do_transfer(
         tx_type::TRANSFER,
         params.ring_size,
         priority,
-        0,  // amount_burnt
+        0, // amount_burnt
         fork_rct,
         is_carrot,
         params.dry_run,
@@ -385,7 +398,10 @@ async fn do_stake(
     // Stake destination is the wallet's own address.
     let keys = wallet.keys();
     let (spend_pub, view_pub) = if is_carrot {
-        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        (
+            keys.carrot.account_spend_pubkey,
+            keys.carrot.account_view_pubkey,
+        )
     } else {
         (keys.cn.spend_public_key, keys.cn.view_public_key)
     };
@@ -399,16 +415,30 @@ async fn do_stake(
         is_subaddress: false,
     }];
 
-    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let out_type = if is_carrot {
+        output_type::CARROT_V1
+    } else {
+        output_type::TAGGED_KEY
+    };
     let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, priority);
 
     let selection = if is_carrot {
         wallet
-            .select_carrot_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .select_carrot_outputs(
+                amount,
+                est_fee,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::Default,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     } else {
         wallet
-            .select_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+            .select_outputs(
+                amount,
+                est_fee,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::Default,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     };
 
@@ -450,11 +480,21 @@ async fn do_sweep(
     // 1. Select ALL unlocked outputs.
     let all_selection = if is_carrot {
         wallet
-            .select_carrot_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+            .select_carrot_outputs(
+                0,
+                0,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::All,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     } else {
         wallet
-            .select_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+            .select_outputs(
+                0,
+                0,
+                &params.asset_type,
+                salvium_wallet::SelectionStrategy::All,
+            )
             .map_err(|e| format!("UTXO selection failed: {e}"))?
     };
 
@@ -464,8 +504,13 @@ async fn do_sweep(
 
     // 2. Estimate fee with actual input count.
     let n_inputs = all_selection.selected.len();
-    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let actual_fee = fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, priority);
+    let out_type = if is_carrot {
+        output_type::CARROT_V1
+    } else {
+        output_type::TAGGED_KEY
+    };
+    let actual_fee =
+        fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, priority);
 
     let sweep_amount = all_selection
         .total
@@ -631,15 +676,14 @@ async fn build_sign_maybe_broadcast(
             )?;
 
             // Adjust keys for subaddress outputs.
-            let (adj_gik, adj_psk) =
-                salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
-                    &generate_image_key,
-                    &prove_spend,
-                    &keys.carrot.generate_address_secret,
-                    &keys.carrot.account_spend_pubkey,
-                    output_row.subaddress_index.major as u32,
-                    output_row.subaddress_index.minor as u32,
-                );
+            let (adj_gik, adj_psk) = salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(
+                &generate_image_key,
+                &prove_spend,
+                &keys.carrot.generate_address_secret,
+                &keys.carrot.account_spend_pubkey,
+                output_row.subaddress_index.major as u32,
+                output_row.subaddress_index.minor as u32,
+            );
 
             let (sx, sy) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
                 &adj_psk,
@@ -673,9 +717,10 @@ async fn build_sign_maybe_broadcast(
         };
 
         let mask = hex_to_32(
-            output_row.mask.as_deref().unwrap_or(
-                "0100000000000000000000000000000000000000000000000000000000000000",
-            ),
+            output_row
+                .mask
+                .as_deref()
+                .unwrap_or("0100000000000000000000000000000000000000000000000000000000000000"),
         )?;
 
         prepared_inputs.push(PreparedInput {
@@ -694,7 +739,11 @@ async fn build_sign_maybe_broadcast(
     }
 
     // 3. Build the unsigned transaction.
-    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let out_type = if is_carrot {
+        output_type::CARROT_V1
+    } else {
+        output_type::TAGGED_KEY
+    };
     let actual_fee = fee::estimate_tx_fee(
         prepared_inputs.len(),
         destinations.len() + 1,
@@ -706,7 +755,10 @@ async fn build_sign_maybe_broadcast(
 
     // Change address: use CARROT keys when in CARROT mode, CN keys otherwise.
     let (chg_spend, chg_view) = if is_carrot {
-        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        (
+            keys.carrot.account_spend_pubkey,
+            keys.carrot.account_view_pubkey,
+        )
     } else {
         (keys.cn.spend_public_key, keys.cn.view_public_key)
     };
@@ -743,8 +795,14 @@ async fn build_sign_maybe_broadcast(
         .map_err(|e| format!("transaction signing failed: {e}"))?;
 
     // 5. Serialize.
-    let tx_hash = hex::encode(signed.tx_hash().map_err(|e| format!("tx hash failed: {e}"))?);
-    let tx_bytes = signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
+    let tx_hash = hex::encode(
+        signed
+            .tx_hash()
+            .map_err(|e| format!("tx hash failed: {e}"))?,
+    );
+    let tx_bytes = signed
+        .to_bytes()
+        .map_err(|e| format!("tx serialize failed: {e}"))?;
     let tx_hex = hex::encode(&tx_bytes);
     let weight = tx_bytes.len() as u64;
 

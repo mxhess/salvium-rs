@@ -3,21 +3,21 @@
 //! Implements prove and verify matching the JS in bulletproofs_plus.js
 //! and Salvium C++ bulletproofs_plus.cc.
 //!
-//! Reference: https://eprint.iacr.org/2020/735.pdf
+//! Reference: <https://eprint.iacr.org/2020/735.pdf>
 
+use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 #[cfg(feature = "wasm-exports")]
 use wasm_bindgen::prelude::*;
 
-use crate::{keccak256_internal, to32, H_POINT_BYTES};
 use crate::clsag::{hash_to_point as clsag_hash_to_point, random_scalar};
+use crate::{keccak256_internal, to32, H_POINT_BYTES};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const N: usize = 64;    // Bit-length of range proof
+const N: usize = 64; // Bit-length of range proof
 const LOG_N: usize = 6;
 const MAX_M: usize = 16; // Max aggregation
 
@@ -27,7 +27,9 @@ fn inv_eight() -> Scalar {
 }
 
 fn h_point() -> EdwardsPoint {
-    CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H")
+    CompressedEdwardsY(H_POINT_BYTES)
+        .decompress()
+        .expect("invalid H")
 }
 
 // ─── Generator computation ──────────────────────────────────────────────────
@@ -100,7 +102,11 @@ fn compute_transcript_init() -> [u8; 32] {
     let hash1 = keccak256_internal(domain);
     // hash_to_point does keccak256(hash1) -> elligator2 -> *8
     let p = crate::elligator2::ge_fromfe_frombytes_vartime(&keccak256_internal(&hash1));
-    let p8 = { let t = p + p; let t = t + t; t + t };
+    let p8 = {
+        let t = p + p;
+        let t = t + t;
+        t + t
+    };
     p8.compress().to_bytes()
 }
 
@@ -142,23 +148,20 @@ fn hash_keys_to_scalar(keys: &[EdwardsPoint]) -> Scalar {
 // ─── Proof structure ────────────────────────────────────────────────────────
 
 pub struct BulletproofPlusProof {
-    pub v: Vec<EdwardsPoint>,        // Commitments (not serialized in wire format)
-    pub capital_a: EdwardsPoint,     // A
-    pub capital_a1: EdwardsPoint,    // A1
-    pub capital_b: EdwardsPoint,     // B
+    pub v: Vec<EdwardsPoint>,     // Commitments (not serialized in wire format)
+    pub capital_a: EdwardsPoint,  // A
+    pub capital_a1: EdwardsPoint, // A1
+    pub capital_b: EdwardsPoint,  // B
     pub r1: Scalar,
     pub s1: Scalar,
     pub d1: Scalar,
-    pub l_vec: Vec<EdwardsPoint>,    // L points
-    pub r_vec: Vec<EdwardsPoint>,    // R points
+    pub l_vec: Vec<EdwardsPoint>, // L points
+    pub r_vec: Vec<EdwardsPoint>, // R points
 }
 
 // ─── Prove ──────────────────────────────────────────────────────────────────
 
-pub fn bulletproof_plus_prove(
-    amounts: &[u64],
-    masks: &[Scalar],
-) -> BulletproofPlusProof {
+pub fn bulletproof_plus_prove(amounts: &[u64], masks: &[Scalar]) -> BulletproofPlusProof {
     assert!(!amounts.is_empty() && amounts.len() == masks.len());
     assert!(amounts.len() <= MAX_M);
 
@@ -187,10 +190,8 @@ pub fn bulletproof_plus_prove(
     for j in 0..amounts.len() {
         let mask_scaled = masks[j] * inv8;
         let amount_scalar = Scalar::from(amounts[j]) * inv8;
-        let commitment = EdwardsPoint::vartime_multiscalar_mul(
-            &[mask_scaled, amount_scalar],
-            &[g_pt, h_pt],
-        );
+        let commitment =
+            EdwardsPoint::vartime_multiscalar_mul(&[mask_scaled, amount_scalar], &[g_pt, h_pt]);
         v_points.push(commitment);
     }
 
@@ -412,10 +413,8 @@ pub fn bulletproof_plus_prove(
     );
 
     // B = eta*inv8 * G + r*y*s*inv8 * H
-    let capital_b = EdwardsPoint::vartime_multiscalar_mul(
-        &[eta * inv8, r * y * s * inv8],
-        &[g_pt, h_pt],
-    );
+    let capital_b =
+        EdwardsPoint::vartime_multiscalar_mul(&[eta * inv8, r * y * s * inv8], &[g_pt, h_pt]);
 
     // Final challenge e
     transcript = transcript_update2(
@@ -436,7 +435,9 @@ pub fn bulletproof_plus_prove(
         capital_a,
         capital_a1,
         capital_b,
-        r1, s1, d1,
+        r1,
+        s1,
+        d1,
         l_vec: l_points,
         r_vec: r_points,
     }
@@ -444,17 +445,14 @@ pub fn bulletproof_plus_prove(
 
 // ─── Verify ─────────────────────────────────────────────────────────────────
 
-pub fn bulletproof_plus_verify(
-    v: &[EdwardsPoint],
-    proof: &BulletproofPlusProof,
-) -> bool {
+pub fn bulletproof_plus_verify(v: &[EdwardsPoint], proof: &BulletproofPlusProof) -> bool {
     bulletproof_plus_verify_batch(&[(v, proof)])
 }
 
-pub fn bulletproof_plus_verify_batch(
-    proofs: &[(&[EdwardsPoint], &BulletproofPlusProof)],
-) -> bool {
-    if proofs.is_empty() { return true; }
+pub fn bulletproof_plus_verify_batch(proofs: &[(&[EdwardsPoint], &BulletproofPlusProof)]) -> bool {
+    if proofs.is_empty() {
+        return true;
+    }
 
     let transcript_init = compute_transcript_init();
     let g_pt = ED25519_BASEPOINT_POINT;
@@ -468,11 +466,18 @@ pub fn bulletproof_plus_verify_batch(
         capital_a: EdwardsPoint,
         capital_a1: EdwardsPoint,
         capital_b: EdwardsPoint,
-        r1: Scalar, s1: Scalar, d1: Scalar,
+        r1: Scalar,
+        s1: Scalar,
+        d1: Scalar,
         l_vec: Vec<EdwardsPoint>,
         r_vec: Vec<EdwardsPoint>,
-        m: usize, m_val: usize, mn: usize, rounds: usize,
-        y: Scalar, z: Scalar, e: Scalar,
+        m: usize,
+        m_val: usize,
+        mn: usize,
+        rounds: usize,
+        y: Scalar,
+        z: Scalar,
+        e: Scalar,
         challenges: Vec<Scalar>,
         challenge_inverses: Vec<Scalar>,
         y_inv: Scalar,
@@ -483,21 +488,31 @@ pub fn bulletproof_plus_verify_batch(
     // Phase 1: Reconstruct challenges
     for (v, proof) in proofs {
         let m = v.len();
-        if m == 0 || m > MAX_M { return false; }
+        if m == 0 || m > MAX_M {
+            return false;
+        }
 
         let mut m_val = 1usize;
         let mut log_m = 0usize;
-        while m_val < m { m_val *= 2; log_m += 1; }
+        while m_val < m {
+            m_val *= 2;
+            log_m += 1;
+        }
         let mn = m_val * N;
         let rounds = proof.l_vec.len();
-        if rounds != LOG_N + log_m { return false; }
-        if proof.r_vec.len() != rounds { return false; }
+        if rounds != LOG_N + log_m {
+            return false;
+        }
+        if proof.r_vec.len() != rounds {
+            return false;
+        }
 
         let mut proof_transcript = transcript_init;
         let hash_v = hash_keys_to_scalar(v);
         proof_transcript = transcript_update(&proof_transcript, &hash_v.to_bytes());
 
-        proof_transcript = transcript_update(&proof_transcript, &proof.capital_a.compress().to_bytes());
+        proof_transcript =
+            transcript_update(&proof_transcript, &proof.capital_a.compress().to_bytes());
         let y = bytes_to_scalar(&proof_transcript);
 
         let y_bytes = y.to_bytes();
@@ -529,10 +544,18 @@ pub fn bulletproof_plus_verify_batch(
             capital_a: proof.capital_a,
             capital_a1: proof.capital_a1,
             capital_b: proof.capital_b,
-            r1: proof.r1, s1: proof.s1, d1: proof.d1,
+            r1: proof.r1,
+            s1: proof.s1,
+            d1: proof.d1,
             l_vec: proof.l_vec.clone(),
             r_vec: proof.r_vec.clone(),
-            m, m_val, mn, rounds, y, z, e,
+            m,
+            m_val,
+            mn,
+            rounds,
+            y,
+            z,
+            e,
             challenges,
             challenge_inverses: Vec::new(),
             y_inv: Scalar::ZERO,
@@ -563,7 +586,11 @@ pub fn bulletproof_plus_verify_batch(
     let gens = compute_generators(max_mn);
 
     for data in &proof_data_vec {
-        let w = if proofs.len() == 1 { Scalar::ONE } else { random_scalar() };
+        let w = if proofs.len() == 1 {
+            Scalar::ONE
+        } else {
+            random_scalar()
+        };
 
         let e2 = data.e * data.e;
 
@@ -620,9 +647,8 @@ pub fn bulletproof_plus_verify_batch(
         h_scalar += w * (h_term1 + e2 * (h_term2 + h_term3));
 
         // Challenge cache
-        let challenge_cache = build_challenge_cache(
-            &data.challenges, &data.challenge_inverses, data.mn,
-        );
+        let challenge_cache =
+            build_challenge_cache(&data.challenges, &data.challenge_inverses, data.mn);
 
         // Gi and Hi scalars
         let mut e_r1_w = data.e * data.r1 * w;
@@ -639,7 +665,8 @@ pub fn bulletproof_plus_verify_batch(
             let g_scalar_i = e_r1_w * challenge_cache[i] + e2_z_w;
 
             let inv_index = (!i) & (data.mn - 1);
-            let h_scalar_i = e_s1_w * challenge_cache[inv_index] + minus_e2_z_w + minus_e2_w_y * d_val;
+            let h_scalar_i =
+                e_s1_w * challenge_cache[inv_index] + minus_e2_z_w + minus_e2_w_y * d_val;
 
             all_scalars.push(g_scalar_i);
             all_points.push(gens.gi[i]);
@@ -702,7 +729,9 @@ fn scalar_pow(base: &Scalar, exp: usize) -> Scalar {
 }
 
 fn batch_invert(scalars: &[Scalar]) -> Vec<Scalar> {
-    if scalars.is_empty() { return vec![]; }
+    if scalars.is_empty() {
+        return vec![];
+    }
 
     // Montgomery's trick
     let n = scalars.len();
@@ -791,14 +820,18 @@ fn decode_varint(bytes: &[u8], offset: usize) -> (usize, usize) {
         let byte = bytes[offset + bytes_read];
         bytes_read += 1;
         value |= ((byte & 0x7f) as usize) << shift;
-        if byte & 0x80 == 0 { break; }
+        if byte & 0x80 == 0 {
+            break;
+        }
         shift += 7;
     }
     (value, bytes_read)
 }
 
 pub fn parse_proof(bytes: &[u8]) -> Option<BulletproofPlusProof> {
-    if bytes.len() < 32 * 6 { return None; }
+    if bytes.len() < 32 * 6 {
+        return None;
+    }
 
     let mut offset = 0;
 
@@ -820,7 +853,9 @@ pub fn parse_proof(bytes: &[u8]) -> Option<BulletproofPlusProof> {
     offset += l_bytes;
     let mut l_vec = Vec::with_capacity(l_count);
     for _ in 0..l_count {
-        if offset + 32 > bytes.len() { return None; }
+        if offset + 32 > bytes.len() {
+            return None;
+        }
         l_vec.push(CompressedEdwardsY(to32(&bytes[offset..offset + 32])).decompress()?);
         offset += 32;
     }
@@ -829,36 +864,48 @@ pub fn parse_proof(bytes: &[u8]) -> Option<BulletproofPlusProof> {
     offset += r_bytes;
     let mut r_vec = Vec::with_capacity(r_count);
     for _ in 0..r_count {
-        if offset + 32 > bytes.len() { return None; }
+        if offset + 32 > bytes.len() {
+            return None;
+        }
         r_vec.push(CompressedEdwardsY(to32(&bytes[offset..offset + 32])).decompress()?);
         offset += 32;
     }
 
     Some(BulletproofPlusProof {
         v: Vec::new(),
-        capital_a, capital_a1, capital_b,
-        r1, s1, d1,
-        l_vec, r_vec,
+        capital_a,
+        capital_a1,
+        capital_b,
+        r1,
+        s1,
+        d1,
+        l_vec,
+        r_vec,
     })
 }
 
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
-pub fn bulletproof_plus_prove_wasm(
-    amounts_bytes: &[u8],
-    masks_flat: &[u8],
-) -> Vec<u8> {
+pub fn bulletproof_plus_prove_wasm(amounts_bytes: &[u8], masks_flat: &[u8]) -> Vec<u8> {
     let n = amounts_bytes.len() / 8;
-    let amounts: Vec<u64> = (0..n).map(|i| {
-        u64::from_le_bytes([
-            amounts_bytes[i*8], amounts_bytes[i*8+1], amounts_bytes[i*8+2], amounts_bytes[i*8+3],
-            amounts_bytes[i*8+4], amounts_bytes[i*8+5], amounts_bytes[i*8+6], amounts_bytes[i*8+7],
-        ])
-    }).collect();
-    let masks: Vec<Scalar> = (0..n).map(|i| {
-        Scalar::from_bytes_mod_order(to32(&masks_flat[i*32..(i+1)*32]))
-    }).collect();
+    let amounts: Vec<u64> = (0..n)
+        .map(|i| {
+            u64::from_le_bytes([
+                amounts_bytes[i * 8],
+                amounts_bytes[i * 8 + 1],
+                amounts_bytes[i * 8 + 2],
+                amounts_bytes[i * 8 + 3],
+                amounts_bytes[i * 8 + 4],
+                amounts_bytes[i * 8 + 5],
+                amounts_bytes[i * 8 + 6],
+                amounts_bytes[i * 8 + 7],
+            ])
+        })
+        .collect();
+    let masks: Vec<Scalar> = (0..n)
+        .map(|i| Scalar::from_bytes_mod_order(to32(&masks_flat[i * 32..(i + 1) * 32])))
+        .collect();
 
     let proof = bulletproof_plus_prove(&amounts, &masks);
 
@@ -876,14 +923,15 @@ pub fn bulletproof_plus_prove_wasm(
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
-pub fn bulletproof_plus_verify_wasm(
-    proof_data: &[u8],
-    commitments_flat: &[u8],
-) -> bool {
+pub fn bulletproof_plus_verify_wasm(proof_data: &[u8], commitments_flat: &[u8]) -> bool {
     let n = commitments_flat.len() / 32;
-    let v: Vec<EdwardsPoint> = (0..n).map(|i| {
-        CompressedEdwardsY(to32(&commitments_flat[i*32..(i+1)*32])).decompress().unwrap_or_default()
-    }).collect();
+    let v: Vec<EdwardsPoint> = (0..n)
+        .map(|i| {
+            CompressedEdwardsY(to32(&commitments_flat[i * 32..(i + 1) * 32]))
+                .decompress()
+                .unwrap_or_default()
+        })
+        .collect();
 
     let proof = match parse_proof(proof_data) {
         Some(p) => p,

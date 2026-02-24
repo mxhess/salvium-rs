@@ -24,10 +24,10 @@ use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
 use salvium_tx::sign::sign_transaction;
 use salvium_tx::types::{output_type, tx_type, Transaction, TxInput};
-use salvium_wallet::utxo::SelectionStrategy;
-use salvium_wallet::{decrypt_js_wallet, OutputQuery, SyncEvent, Wallet, WalletKeys};
 use salvium_types::address::parse_address;
 use salvium_types::constants::Network;
+use salvium_wallet::utxo::SelectionStrategy;
+use salvium_wallet::{decrypt_js_wallet, OutputQuery, SyncEvent, Wallet, WalletKeys};
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -71,16 +71,86 @@ struct ForkSpec {
 }
 
 static FORKS: &[ForkSpec] = &[
-    ForkSpec { hf: 1,  height: 1,    asset: "SAL",  addr_format: AddrFormat::Legacy, test_mode: TestMode::Genesis,     rct_type: 6 },
-    ForkSpec { hf: 2,  height: 250,  asset: "SAL",  addr_format: AddrFormat::Legacy, test_mode: TestMode::Full,        rct_type: 6 },
-    ForkSpec { hf: 3,  height: 500,  asset: "SAL",  addr_format: AddrFormat::Legacy, test_mode: TestMode::Lightweight, rct_type: 7 },
-    ForkSpec { hf: 4,  height: 600,  asset: "SAL",  addr_format: AddrFormat::Legacy, test_mode: TestMode::Lightweight, rct_type: 7 },
-    ForkSpec { hf: 5,  height: 800,  asset: "SAL",  addr_format: AddrFormat::Legacy, test_mode: TestMode::Paused,      rct_type: 7 },
-    ForkSpec { hf: 6,  height: 815,  asset: "SAL1", addr_format: AddrFormat::Legacy, test_mode: TestMode::Full,        rct_type: 8 },
-    ForkSpec { hf: 7,  height: 900,  asset: "SAL1", addr_format: AddrFormat::Legacy, test_mode: TestMode::Paused,      rct_type: 8 },
-    ForkSpec { hf: 8,  height: 950,  asset: "SAL1", addr_format: AddrFormat::Legacy, test_mode: TestMode::Paused,      rct_type: 8 },
-    ForkSpec { hf: 9,  height: 1000, asset: "SAL1", addr_format: AddrFormat::Legacy, test_mode: TestMode::Paused,      rct_type: 8 },
-    ForkSpec { hf: 10, height: 1100, asset: "SAL1", addr_format: AddrFormat::Carrot, test_mode: TestMode::Full,        rct_type: 9 },
+    ForkSpec {
+        hf: 1,
+        height: 1,
+        asset: "SAL",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Genesis,
+        rct_type: 6,
+    },
+    ForkSpec {
+        hf: 2,
+        height: 250,
+        asset: "SAL",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Full,
+        rct_type: 6,
+    },
+    ForkSpec {
+        hf: 3,
+        height: 500,
+        asset: "SAL",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Lightweight,
+        rct_type: 7,
+    },
+    ForkSpec {
+        hf: 4,
+        height: 600,
+        asset: "SAL",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Lightweight,
+        rct_type: 7,
+    },
+    ForkSpec {
+        hf: 5,
+        height: 800,
+        asset: "SAL",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Paused,
+        rct_type: 7,
+    },
+    ForkSpec {
+        hf: 6,
+        height: 815,
+        asset: "SAL1",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Full,
+        rct_type: 8,
+    },
+    ForkSpec {
+        hf: 7,
+        height: 900,
+        asset: "SAL1",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Paused,
+        rct_type: 8,
+    },
+    ForkSpec {
+        hf: 8,
+        height: 950,
+        asset: "SAL1",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Paused,
+        rct_type: 8,
+    },
+    ForkSpec {
+        hf: 9,
+        height: 1000,
+        asset: "SAL1",
+        addr_format: AddrFormat::Legacy,
+        test_mode: TestMode::Paused,
+        rct_type: 8,
+    },
+    ForkSpec {
+        hf: 10,
+        height: 1100,
+        asset: "SAL1",
+        addr_format: AddrFormat::Carrot,
+        test_mode: TestMode::Full,
+        rct_type: 9,
+    },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -99,11 +169,7 @@ fn fmt_duration(secs: f64) -> String {
     } else if secs < 3600.0 {
         format!("{}m {}s", secs as u64 / 60, secs as u64 % 60)
     } else {
-        format!(
-            "{}h {}m",
-            secs as u64 / 3600,
-            (secs as u64 % 3600) / 60
-        )
+        format!("{}h {}m", secs as u64 / 3600, (secs as u64 % 3600) / 60)
     }
 }
 
@@ -310,14 +376,18 @@ impl TestFixture {
             .expect("wallet-a.pin not found")
             .trim()
             .to_string();
-        let secrets_a = decrypt_js_wallet(&wallet_a_json, &pin_a)
-            .expect("failed to decrypt wallet-a");
+        let secrets_a =
+            decrypt_js_wallet(&wallet_a_json, &pin_a).expect("failed to decrypt wallet-a");
 
         let tmp_a = tempfile::tempdir().expect("failed to create temp dir");
         let db_path_a = tmp_a.path().join("wallet-a.db");
-        let wallet_a =
-            Wallet::create(secrets_a.seed, Network::Testnet, db_path_a.to_str().unwrap(), &[0u8; 32])
-                .expect("failed to create wallet A");
+        let wallet_a = Wallet::create(
+            secrets_a.seed,
+            Network::Testnet,
+            db_path_a.to_str().unwrap(),
+            &[0u8; 32],
+        )
+        .expect("failed to create wallet A");
 
         // Wallet B
         let wallet_b_json = std::fs::read_to_string(dir.join("wallet-b.json"))
@@ -326,14 +396,18 @@ impl TestFixture {
             .expect("wallet-b.pin not found")
             .trim()
             .to_string();
-        let secrets_b = decrypt_js_wallet(&wallet_b_json, &pin_b)
-            .expect("failed to decrypt wallet-b");
+        let secrets_b =
+            decrypt_js_wallet(&wallet_b_json, &pin_b).expect("failed to decrypt wallet-b");
 
         let tmp_b = tempfile::tempdir().expect("failed to create temp dir");
         let db_path_b = tmp_b.path().join("wallet-b.db");
-        let wallet_b =
-            Wallet::create(secrets_b.seed, Network::Testnet, db_path_b.to_str().unwrap(), &[0u8; 32])
-                .expect("failed to create wallet B");
+        let wallet_b = Wallet::create(
+            secrets_b.seed,
+            Network::Testnet,
+            db_path_b.to_str().unwrap(),
+            &[0u8; 32],
+        )
+        .expect("failed to create wallet B");
 
         TestFixture {
             wallet_a,
@@ -388,8 +462,14 @@ impl<'a> TestTransactor<'a> {
         // Use select_outputs for ALL eras — the wallet may contain a mix of
         // legacy and CARROT outputs. The is_carrot flag on each output tells
         // prepare_inputs how to derive spending keys.
-        let selection = self.wallet
-            .select_outputs(amount, estimated_fee, db_asset_type, SelectionStrategy::Default)
+        let selection = self
+            .wallet
+            .select_outputs(
+                amount,
+                estimated_fee,
+                db_asset_type,
+                SelectionStrategy::Default,
+            )
             .expect("output selection failed");
         println!(
             "    Selected {} output(s), total: {} SAL, change: {} SAL",
@@ -425,14 +505,11 @@ impl<'a> TestTransactor<'a> {
         let mut prepared_inputs = Vec::new();
 
         // Cache distributions per asset type (SAL and SAL1 may have separate distributions)
-        let mut dist_cache: std::collections::HashMap<String, (Vec<u64>, u64)> = std::collections::HashMap::new();
+        let mut dist_cache: std::collections::HashMap<String, (Vec<u64>, u64)> =
+            std::collections::HashMap::new();
 
         for utxo in &selection.selected {
-            let output_row = self
-                .wallet
-                .get_output(&utxo.key_image)
-                .unwrap()
-                .unwrap();
+            let output_row = self.wallet.get_output(&utxo.key_image).unwrap().unwrap();
             let output_pub_key = hex_to_32(output_row.public_key.as_ref().unwrap());
 
             // Find block height
@@ -479,7 +556,11 @@ impl<'a> TestTransactor<'a> {
                 if h_idx >= distribution.len() {
                     continue;
                 }
-                let at_start = if h_idx == 0 { 0 } else { distribution[h_idx - 1] };
+                let at_start = if h_idx == 0 {
+                    0
+                } else {
+                    distribution[h_idx - 1]
+                };
                 let at_end = distribution[h_idx];
                 let at_count = at_end - at_start;
 
@@ -533,8 +614,7 @@ impl<'a> TestTransactor<'a> {
             let (secret_key, secret_key_y, public_key) = if output_row.is_carrot {
                 let prove_spend_key = keys.carrot.prove_spend_key.expect("not a full wallet");
                 let generate_image_key = keys.carrot.generate_image_key;
-                let shared_secret =
-                    hex_to_32(output_row.carrot_shared_secret.as_ref().unwrap());
+                let shared_secret = hex_to_32(output_row.carrot_shared_secret.as_ref().unwrap());
                 let commitment = if let Some(ref c) = output_row.commitment {
                     hex_to_32(c)
                 } else {
@@ -565,8 +645,7 @@ impl<'a> TestTransactor<'a> {
             } else {
                 let spend_secret = keys.cn.spend_secret_key.expect("not a full wallet");
                 let view_secret = keys.cn.view_secret_key;
-                let tx_pub_key =
-                    hex_to_32(output_row.tx_pub_key.as_ref().unwrap());
+                let tx_pub_key = hex_to_32(output_row.tx_pub_key.as_ref().unwrap());
                 let sk = salvium_crypto::cn_scan::derive_output_spend_key(
                     &view_secret,
                     &spend_secret,
@@ -606,15 +685,25 @@ impl<'a> TestTransactor<'a> {
                 .expect("failed to fetch ring members");
 
             // Diagnostic: verify the derived public key matches ring at real position
-            let ring_pub_keys: Vec<[u8; 32]> = ring_members.iter().map(|m| hex_to_32(&m.key)).collect();
+            let ring_pub_keys: Vec<[u8; 32]> =
+                ring_members.iter().map(|m| hex_to_32(&m.key)).collect();
             if public_key != ring_pub_keys[real_pos] {
                 eprintln!("    WARNING: derived pk != ring[real_pos]!");
                 eprintln!("      derived pk:    {}", hex::encode(public_key));
-                eprintln!("      ring[{}]:   {}", real_pos, hex::encode(ring_pub_keys[real_pos]));
+                eprintln!(
+                    "      ring[{}]:   {}",
+                    real_pos,
+                    hex::encode(ring_pub_keys[real_pos])
+                );
                 eprintln!("      output_pub_key: {}", hex::encode(output_pub_key));
             }
-            eprintln!("    Input: asset_idx={}, ring_size={}, real_pos={}, ring_indices={:?}",
-                asset_type_index, ring_indices.len(), real_pos, &ring_indices[..ring_indices.len().min(5)]);
+            eprintln!(
+                "    Input: asset_idx={}, ring_size={}, real_pos={}, ring_indices={:?}",
+                asset_type_index,
+                ring_indices.len(),
+                real_pos,
+                &ring_indices[..ring_indices.len().min(5)]
+            );
 
             prepared_inputs.push(PreparedInput {
                 secret_key,
@@ -646,7 +735,8 @@ impl<'a> TestTransactor<'a> {
         } else {
             output_type::TAGGED_KEY
         };
-        let est_weight = fee::estimate_tx_weight(n_inputs, n_outputs, DEFAULT_RING_SIZE, true, out_type);
+        let est_weight =
+            fee::estimate_tx_weight(n_inputs, n_outputs, DEFAULT_RING_SIZE, true, out_type);
         (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier()
     }
 
@@ -699,9 +789,8 @@ impl<'a> TestTransactor<'a> {
         // For CARROT transactions, set the view-balance secret so the change
         // output uses the internal (self-send) path instead of ECDH.
         if fork.addr_format == AddrFormat::Carrot {
-            builder = builder.set_change_view_balance_secret(
-                self.wallet.keys().carrot.view_balance_secret,
-            );
+            builder = builder
+                .set_change_view_balance_secret(self.wallet.keys().carrot.view_balance_secret);
         }
 
         let unsigned = builder.build().expect("failed to build transfer TX");
@@ -716,7 +805,11 @@ impl<'a> TestTransactor<'a> {
         let re_serialized = salvium_crypto::tx_serialize::serialize_transaction(&parsed_json)
             .expect("failed to re-serialize TX");
         if tx_bytes != re_serialized {
-            eprintln!("    ROUNDTRIP MISMATCH: {} bytes vs {} bytes", tx_bytes.len(), re_serialized.len());
+            eprintln!(
+                "    ROUNDTRIP MISMATCH: {} bytes vs {} bytes",
+                tx_bytes.len(),
+                re_serialized.len()
+            );
             for (i, (a, b)) in tx_bytes.iter().zip(re_serialized.iter()).enumerate() {
                 if a != b {
                     eprintln!("    First diff at byte {}: {:02x} vs {:02x}", i, a, b);
@@ -729,7 +822,15 @@ impl<'a> TestTransactor<'a> {
 
         // Print parsed transaction summary
         let pj = &parsed_json;
-        eprintln!("    Parsed TX: {}", serde_json::to_string_pretty(pj).unwrap_or("?".to_string()).lines().take(30).collect::<Vec<_>>().join("\n    "));
+        eprintln!(
+            "    Parsed TX: {}",
+            serde_json::to_string_pretty(pj)
+                .unwrap_or("?".to_string())
+                .lines()
+                .take(30)
+                .collect::<Vec<_>>()
+                .join("\n    ")
+        );
 
         let tx_hex = hex::encode(&tx_bytes);
 
@@ -740,22 +841,38 @@ impl<'a> TestTransactor<'a> {
             .expect("RPC send failed");
         if result.status != "OK" {
             eprintln!("    DAEMON REJECT: {:?}", result);
-            eprintln!("    TX hex ({} bytes): {}...{}", tx_bytes.len(), &tx_hex[..80], &tx_hex[tx_hex.len()-40..]);
+            eprintln!(
+                "    TX hex ({} bytes): {}...{}",
+                tx_bytes.len(),
+                &tx_hex[..80],
+                &tx_hex[tx_hex.len() - 40..]
+            );
         }
         assert_eq!(
-            result.status, "OK",
+            result.status,
+            "OK",
             "transfer TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
              invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
              sanity_check_failed: {})",
-            result.status, result.reason, result.double_spend, result.fee_too_low,
-            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.status,
+            result.reason,
+            result.double_spend,
+            result.fee_too_low,
+            result.invalid_input,
+            result.invalid_output,
+            result.too_big,
+            result.overspend,
             result.sanity_check_failed,
         );
 
         // Mark spent inputs in the wallet DB so we don't re-spend them.
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee, tx_bytes }
+        TxResult {
+            tx_hash,
+            fee,
+            tx_bytes,
+        }
     }
 
     /// Build, sign, and submit a STAKE transaction.
@@ -786,9 +903,7 @@ impl<'a> TestTransactor<'a> {
             .set_view_secret_key(keys.cn.view_secret_key);
 
         if fork.addr_format == AddrFormat::Carrot {
-            builder = builder.set_change_view_balance_secret(
-                keys.carrot.view_balance_secret,
-            );
+            builder = builder.set_change_view_balance_secret(keys.carrot.view_balance_secret);
         }
 
         let unsigned = builder.build().expect("failed to build STAKE TX");
@@ -804,18 +919,29 @@ impl<'a> TestTransactor<'a> {
             .await
             .expect("RPC send failed");
         assert_eq!(
-            result.status, "OK",
+            result.status,
+            "OK",
             "STAKE TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
              invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
              sanity_check_failed: {})",
-            result.status, result.reason, result.double_spend, result.fee_too_low,
-            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.status,
+            result.reason,
+            result.double_spend,
+            result.fee_too_low,
+            result.invalid_input,
+            result.invalid_output,
+            result.too_big,
+            result.overspend,
             result.sanity_check_failed
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee, tx_bytes: vec![] }
+        TxResult {
+            tx_hash,
+            fee,
+            tx_bytes: vec![],
+        }
     }
 
     /// Build, sign, and submit a BURN transaction.
@@ -840,9 +966,8 @@ impl<'a> TestTransactor<'a> {
             .set_fee(estimated_fee);
 
         if fork.addr_format == AddrFormat::Carrot {
-            builder = builder.set_change_view_balance_secret(
-                self.wallet.keys().carrot.view_balance_secret,
-            );
+            builder = builder
+                .set_change_view_balance_secret(self.wallet.keys().carrot.view_balance_secret);
         }
 
         let unsigned = builder.build().expect("failed to build BURN TX");
@@ -858,27 +983,33 @@ impl<'a> TestTransactor<'a> {
             .await
             .expect("RPC send failed");
         assert_eq!(
-            result.status, "OK",
+            result.status,
+            "OK",
             "BURN TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
              invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
              sanity_check_failed: {})",
-            result.status, result.reason, result.double_spend, result.fee_too_low,
-            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.status,
+            result.reason,
+            result.double_spend,
+            result.fee_too_low,
+            result.invalid_input,
+            result.invalid_output,
+            result.too_big,
+            result.overspend,
             result.sanity_check_failed,
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult { tx_hash, fee, tx_bytes: vec![] }
+        TxResult {
+            tx_hash,
+            fee,
+            tx_bytes: vec![],
+        }
     }
 
     /// Build, sign, and submit a SWEEP transaction (transfer entire balance).
-    async fn sweep(
-        &self,
-        dest_spend: [u8; 32],
-        dest_view: [u8; 32],
-        fork: &ForkSpec,
-    ) -> TxResult {
+    async fn sweep(&self, dest_spend: [u8; 32], dest_view: [u8; 32], fork: &ForkSpec) -> TxResult {
         // Sweep: get full unlocked balance, send it all minus fee.
         // Must estimate fee using the actual number of inputs (all unlocked
         // outputs), not 1.
@@ -906,7 +1037,9 @@ impl<'a> TestTransactor<'a> {
         assert!(
             unlocked > estimated_fee,
             "insufficient balance for sweep with {} inputs: {} < fee {}",
-            n_inputs, unlocked, estimated_fee
+            n_inputs,
+            unlocked,
+            estimated_fee
         );
         let sweep_amount = unlocked - estimated_fee;
 
@@ -933,9 +1066,8 @@ impl<'a> TestTransactor<'a> {
             .set_fee(estimated_fee);
 
         if fork.addr_format == AddrFormat::Carrot {
-            builder = builder.set_change_view_balance_secret(
-                self.wallet.keys().carrot.view_balance_secret,
-            );
+            builder = builder
+                .set_change_view_balance_secret(self.wallet.keys().carrot.view_balance_secret);
         }
 
         let unsigned = builder.build().expect("failed to build sweep TX");
@@ -951,19 +1083,30 @@ impl<'a> TestTransactor<'a> {
             .await
             .expect("RPC send failed");
         assert_eq!(
-            result.status, "OK",
+            result.status,
+            "OK",
             "sweep TX rejected: {} (reason: {}, double_spend: {}, fee_too_low: {}, \
              invalid_input: {}, invalid_output: {}, too_big: {}, overspend: {}, \
              sanity_check_failed: {})",
-            result.status, result.reason, result.double_spend, result.fee_too_low,
-            result.invalid_input, result.invalid_output, result.too_big, result.overspend,
+            result.status,
+            result.reason,
+            result.double_spend,
+            result.fee_too_low,
+            result.invalid_input,
+            result.invalid_output,
+            result.too_big,
+            result.overspend,
             result.sanity_check_failed,
         );
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
         println!("    sweep amount: {} SAL", fmt_sal(sweep_amount));
-        TxResult { tx_hash, fee, tx_bytes: vec![] }
+        TxResult {
+            tx_hash,
+            fee,
+            tx_bytes: vec![],
+        }
     }
 }
 
@@ -1051,7 +1194,12 @@ fn print_balance(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
 
 fn assert_balance_positive(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
     let (total, unlocked) = print_balance(wallet, label, asset_type);
-    assert!(total > 0, "{} {} total balance should be positive", label, asset_type);
+    assert!(
+        total > 0,
+        "{} {} total balance should be positive",
+        label,
+        asset_type
+    );
     (total, unlocked)
 }
 
@@ -1072,7 +1220,10 @@ fn change_keys(wallet: &Wallet, fork: &ForkSpec) -> ([u8; 32], [u8; 32]) {
     let keys = wallet.keys();
     match fork.addr_format {
         AddrFormat::Legacy => (keys.cn.spend_public_key, keys.cn.view_public_key),
-        AddrFormat::Carrot => (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey),
+        AddrFormat::Carrot => (
+            keys.carrot.account_spend_pubkey,
+            keys.carrot.account_view_pubkey,
+        ),
     }
 }
 
@@ -1118,7 +1269,10 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
     // Parse the TX bytes back to JSON
     let tx_json_str = salvium_crypto::parse_transaction_bytes(tx_bytes);
     if tx_json_str.starts_with(r#"{"error":"#) {
-        println!("    PARSE ERROR: {}", &tx_json_str[..tx_json_str.len().min(200)]);
+        println!(
+            "    PARSE ERROR: {}",
+            &tx_json_str[..tx_json_str.len().min(200)]
+        );
         return;
     }
 
@@ -1142,16 +1296,21 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
             if entry_type == 1 || entry_type == 4 {
                 let keys = entry.get("keys").and_then(|v| v.as_array());
                 let key = entry.get("key").and_then(|v| v.as_str());
-                println!("    extra[{}]: type={} tag={} key={:?} keys_count={}",
-                    i, entry_type, tag,
+                println!(
+                    "    extra[{}]: type={} tag={} key={:?} keys_count={}",
+                    i,
+                    entry_type,
+                    tag,
                     key.map(|k| &k[..k.len().min(16)]),
-                    keys.map(|k| k.len()).unwrap_or(0));
+                    keys.map(|k| k.len()).unwrap_or(0)
+                );
             }
         }
     }
 
     // Check outputs
-    let vout = prefix.get("vout")
+    let vout = prefix
+        .get("vout")
         .or_else(|| tx_json.get("vout"))
         .and_then(|v| v.as_array());
     println!("    outputs: {}", vout.map(|v| v.len()).unwrap_or(0));
@@ -1161,23 +1320,39 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
             let key = out.get("key").and_then(|v| v.as_str()).unwrap_or("?");
             let view_tag = out.get("viewTag");
             let asset = out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
-            println!("    out[{}]: type={} asset={} key={}.. viewTag={:?}",
-                i, out_type, asset, &key[..key.len().min(16)], view_tag);
+            println!(
+                "    out[{}]: type={} asset={} key={}.. viewTag={:?}",
+                i,
+                out_type,
+                asset,
+                &key[..key.len().min(16)],
+                view_tag
+            );
         }
     }
 
     // Check vin for key images
     let vin = prefix.get("vin").and_then(|v| v.as_array());
-    let first_ki = vin.and_then(|v| v.first())
+    let first_ki = vin
+        .and_then(|v| v.first())
         .and_then(|inp| inp.get("keyImage"))
         .and_then(|v| v.as_str());
-    println!("    first_key_image: {:?}", first_ki.map(|k| &k[..k.len().min(16)]));
+    println!(
+        "    first_key_image: {:?}",
+        first_ki.map(|k| &k[..k.len().min(16)])
+    );
 
     // Build scan context from wallet B's keys
     let keys = wallet.keys();
     println!("    carrot_enabled: {}", !keys.carrot.is_empty());
-    println!("    k_vi (view_incoming): {}...", hex::encode(&keys.carrot.view_incoming_key[..8]));
-    println!("    K_s (account_spend): {}...", hex::encode(&keys.carrot.account_spend_pubkey[..8]));
+    println!(
+        "    k_vi (view_incoming): {}...",
+        hex::encode(&keys.carrot.view_incoming_key[..8])
+    );
+    println!(
+        "    K_s (account_spend): {}...",
+        hex::encode(&keys.carrot.account_spend_pubkey[..8])
+    );
 
     // Now attempt manual CARROT scan
     if let (Some(outs), Some(ki_hex)) = (vout, first_ki) {
@@ -1189,8 +1364,11 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
         let mut ki32 = [0u8; 32];
         ki32.copy_from_slice(&ki_bytes);
         let input_context = salvium_crypto::make_input_context_rct(&ki32);
-        println!("    input_context: {} bytes, first byte=0x{:02x}",
-            input_context.len(), input_context.first().unwrap_or(&0));
+        println!(
+            "    input_context: {} bytes, first byte=0x{:02x}",
+            input_context.len(),
+            input_context.first().unwrap_or(&0)
+        );
 
         // Extract ephemeral pubkeys from tag 0x04
         let mut additional_pubkeys: Vec<[u8; 32]> = Vec::new();
@@ -1267,66 +1445,116 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
             let expected_vt = salvium_crypto::compute_carrot_view_tag(&s32, &input_context, &ko);
             let expected_vt_3 = [expected_vt[0], expected_vt[1], expected_vt[2]];
             let vt_match = expected_vt_3 == view_tag;
-            println!("      expected_vt={} actual_vt={} match={}",
-                hex::encode(expected_vt_3), hex::encode(view_tag), vt_match);
+            println!(
+                "      expected_vt={} actual_vt={} match={}",
+                hex::encode(expected_vt_3),
+                hex::encode(view_tag),
+                vt_match
+            );
 
             if !vt_match {
                 println!("      VIEW TAG MISMATCH — ECDH shared secret differs");
                 // Try the full scan anyway to confirm
                 let enc_amount = [0u8; 8]; // placeholder
                 let result = salvium_crypto::carrot_scan::scan_carrot_output(
-                    &ko, &view_tag, &d_e, &enc_amount, None,
+                    &ko,
+                    &view_tag,
+                    &d_e,
+                    &enc_amount,
+                    None,
                     &keys.carrot.view_incoming_key,
                     &keys.carrot.account_spend_pubkey,
-                    &input_context, &[], None,
+                    &input_context,
+                    &[],
+                    None,
                 );
-                println!("      full scan result: {}", if result.is_some() { "MATCH" } else { "NO MATCH" });
+                println!(
+                    "      full scan result: {}",
+                    if result.is_some() {
+                        "MATCH"
+                    } else {
+                        "NO MATCH"
+                    }
+                );
                 continue;
             }
 
             // If view tag matches, try full scan with real encrypted amount
             let rct = tx_json.get("rct").or_else(|| tx_json.get("rct_signatures"));
-            let ecdh_info = rct.and_then(|r| r.get("ecdhInfo")).and_then(|e| e.as_array());
-            let enc_amt = ecdh_info.and_then(|info| info.get(i))
+            let ecdh_info = rct
+                .and_then(|r| r.get("ecdhInfo"))
+                .and_then(|e| e.as_array());
+            let enc_amt = ecdh_info
+                .and_then(|info| info.get(i))
                 .and_then(|e| e.get("amount"))
                 .and_then(|a| a.as_str())
                 .and_then(|s| hex::decode(s).ok())
                 .and_then(|b| {
-                    if b.len() >= 8 { let mut a = [0u8; 8]; a.copy_from_slice(&b[..8]); Some(a) }
-                    else { None }
+                    if b.len() >= 8 {
+                        let mut a = [0u8; 8];
+                        a.copy_from_slice(&b[..8]);
+                        Some(a)
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or([0u8; 8]);
-            let commitment = rct.and_then(|r| r.get("outPk"))
+            let commitment = rct
+                .and_then(|r| r.get("outPk"))
                 .and_then(|e| e.as_array())
                 .and_then(|pks| pks.get(i))
                 .and_then(|v| v.as_str())
                 .and_then(|s| hex::decode(s).ok())
                 .and_then(|b| {
-                    if b.len() == 32 { let mut a = [0u8; 32]; a.copy_from_slice(&b); Some(a) }
-                    else { None }
+                    if b.len() == 32 {
+                        let mut a = [0u8; 32];
+                        a.copy_from_slice(&b);
+                        Some(a)
+                    } else {
+                        None
+                    }
                 });
 
             let result = salvium_crypto::carrot_scan::scan_carrot_output(
-                &ko, &view_tag, &d_e, &enc_amt,
+                &ko,
+                &view_tag,
+                &d_e,
+                &enc_amt,
                 commitment.as_ref(),
                 &keys.carrot.view_incoming_key,
                 &keys.carrot.account_spend_pubkey,
-                &input_context, &[], None,
+                &input_context,
+                &[],
+                None,
             );
             if let Some(ref r) = result {
-                println!("      SCAN SUCCESS: amount={} enote_type={} is_main={}",
-                    r.amount, r.enote_type, r.is_main_address);
+                println!(
+                    "      SCAN SUCCESS: amount={} enote_type={} is_main={}",
+                    r.amount, r.enote_type, r.is_main_address
+                );
             } else {
                 println!("      SCAN FAILED (past view tag)");
                 // Try to diagnose which step failed
                 let s_ctx = salvium_crypto::carrot_scan::build_transcript(
-                    b"Carrot sender-receiver secret", &[&d_e[..], &input_context]);
+                    b"Carrot sender-receiver secret",
+                    &[&d_e[..], &input_context],
+                );
                 let s_ctx_hash = salvium_crypto::blake2b_keyed(&s_ctx, 32, &s32);
                 let mut s_ctx_32 = [0u8; 32];
                 s_ctx_32.copy_from_slice(&s_ctx_hash[..32]);
-                let recovered = salvium_crypto::recover_carrot_address_spend_pubkey(&ko, &s_ctx_32, &commitment.unwrap_or([0u8; 32]));
-                println!("      recovered K_s: {}...", hex::encode(&recovered[..recovered.len().min(16)]));
-                println!("      expected  K_s: {}...", hex::encode(&keys.carrot.account_spend_pubkey[..8]));
+                let recovered = salvium_crypto::recover_carrot_address_spend_pubkey(
+                    &ko,
+                    &s_ctx_32,
+                    &commitment.unwrap_or([0u8; 32]),
+                );
+                println!(
+                    "      recovered K_s: {}...",
+                    hex::encode(&recovered[..recovered.len().min(16)])
+                );
+                println!(
+                    "      expected  K_s: {}...",
+                    hex::encode(&keys.carrot.account_spend_pubkey[..8])
+                );
             }
         }
     }
@@ -1356,8 +1584,9 @@ async fn run_full_tests(
             amount_s,
             fork.asset
         );
-        let result =
-            transactor_a.transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false).await;
+        let result = transactor_a
+            .transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false)
+            .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
 
         // Diagnostic: scan TX1 with wallet B's keys at CARROT era
@@ -1406,10 +1635,15 @@ async fn run_full_tests(
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
     } else {
-        println!("\n  TX 4: SKIPPED — B unlocked={} {} (need ~0.6 for transfer + fee)",
-            fmt_sal(unlocked_b), db_asset_b);
-        println!("    B total={} locked={}",
-            bal_b.balance, bal_b.locked_balance);
+        println!(
+            "\n  TX 4: SKIPPED — B unlocked={} {} (need ~0.6 for transfer + fee)",
+            fmt_sal(unlocked_b),
+            db_asset_b
+        );
+        println!(
+            "    B total={} locked={}",
+            bal_b.balance, bal_b.locked_balance
+        );
         // Diagnostic: check what outputs B has
         let all_query = OutputQuery {
             is_spent: None,
@@ -1422,20 +1656,26 @@ async fn run_full_tests(
             max_amount: None,
         };
         let outputs = fixture.wallet_b.get_outputs(&all_query).unwrap();
-        println!("    B outputs: {} total, {} unspent, {} frozen",
+        println!(
+            "    B outputs: {} total, {} unspent, {} frozen",
             outputs.len(),
             outputs.iter().filter(|o| !o.is_spent).count(),
-            outputs.iter().filter(|o| o.is_frozen).count());
+            outputs.iter().filter(|o| o.is_frozen).count()
+        );
         for (i, o) in outputs.iter().take(5).enumerate() {
-            println!("      [{}] amount={} asset={} spent={} height={:?} carrot={}",
-                i, o.amount, o.asset_type, o.is_spent,
-                o.block_height, o.is_carrot);
+            println!(
+                "      [{}] amount={} asset={} spent={} height={:?} carrot={}",
+                i, o.amount, o.asset_type, o.is_spent, o.block_height, o.is_carrot
+            );
         }
     }
 
     // Stake (HF6+)
     if fork.hf >= 6 {
-        println!("\n  Mining {} maturity blocks for stake...", MATURITY_BLOCKS);
+        println!(
+            "\n  Mining {} maturity blocks for stake...",
+            MATURITY_BLOCKS
+        );
         let ms = mine_to(
             daemon,
             get_daemon_height(daemon).await + MATURITY_BLOCKS,
@@ -1453,7 +1693,13 @@ async fn run_full_tests(
 
         // Mine past stake lock period (20 blocks on testnet) + maturity
         println!("\n  Mining past stake lock period...");
-        let ms = mine_to(daemon, get_daemon_height(daemon).await + 30, &addr_a, daemon_url).await;
+        let ms = mine_to(
+            daemon,
+            get_daemon_height(daemon).await + 30,
+            &addr_a,
+            daemon_url,
+        )
+        .await;
         stats.record_mining(&ms);
 
         sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
@@ -1474,15 +1720,15 @@ async fn run_full_tests(
             txid_matched,
             height_fallback
         );
-        assert!(returned > 0, "stake should have been returned after lock period");
+        assert!(
+            returned > 0,
+            "stake should have been returned after lock period"
+        );
         // TX-ID matching requires CARROT v4+ (HF10). Pre-CARROT stakes
         // legitimately use height-based fallback since they don't embed
         // protocol_tx_data.return_address.
         if fork.hf >= 10 {
-            assert!(
-                txid_matched > 0,
-                "HF10+ stake should use TX-ID matching"
-            );
+            assert!(txid_matched > 0, "HF10+ stake should use TX-ID matching");
         }
     }
 
@@ -1504,7 +1750,10 @@ async fn run_full_tests(
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
-        println!("\n  Mining {} maturity blocks for sweep...", MATURITY_BLOCKS);
+        println!(
+            "\n  Mining {} maturity blocks for sweep...",
+            MATURITY_BLOCKS
+        );
         let ms = mine_to(
             daemon,
             get_daemon_height(daemon).await + MATURITY_BLOCKS,
@@ -1516,14 +1765,15 @@ async fn run_full_tests(
         sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
 
         println!("\n  TX 7: Sweep B->B");
-        let result = transactor_b
-            .sweep(dest_b_spend, dest_b_view, fork)
-            .await;
+        let result = transactor_b.sweep(dest_b_spend, dest_b_view, fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
         // TX 8: Send to Wallet B subaddress (0,1)
-        println!("\n  Mining {} maturity blocks for subaddress test...", MATURITY_BLOCKS);
+        println!(
+            "\n  Mining {} maturity blocks for subaddress test...",
+            MATURITY_BLOCKS
+        );
         let ms = mine_to(
             daemon,
             get_daemon_height(daemon).await + MATURITY_BLOCKS,
@@ -1561,7 +1811,11 @@ async fn run_full_tests(
         let sub_result = transactor_a
             .transfer(sub_spend, sub_view, sal(0.5), fork, true)
             .await;
-        println!("    hash={} fee={}", sub_result.tx_hash, fmt_sal(sub_result.fee));
+        println!(
+            "    hash={} fee={}",
+            sub_result.tx_hash,
+            fmt_sal(sub_result.fee)
+        );
         stats.record_tx(&sub_result);
 
         // Mine + sync, then verify B detected the output at subaddress (0,1)
@@ -1592,7 +1846,10 @@ async fn run_full_tests(
             !sub_outputs.is_empty(),
             "wallet B should have detected output at subaddress (0,1)"
         );
-        println!("  Subaddress (0,1) output detected: {} output(s)", sub_outputs.len());
+        println!(
+            "  Subaddress (0,1) output detected: {} output(s)",
+            sub_outputs.len()
+        );
     }
 }
 
@@ -1649,16 +1906,25 @@ async fn full_testnet_hardfork_progression() {
         auto_resume_hf(info.height)
     };
     if resume_hf > 0 {
-        println!("  Resuming from HF{} (chain already at height {})", resume_hf, info.height);
+        println!(
+            "  Resuming from HF{} (chain already at height {})",
+            resume_hf, info.height
+        );
     }
 
     let fixture = TestFixture::create();
-    println!("  Wallet A (CN):     {}...", &fixture.wallet_a.cn_address().unwrap()[..30]);
+    println!(
+        "  Wallet A (CN):     {}...",
+        &fixture.wallet_a.cn_address().unwrap()[..30]
+    );
     println!(
         "  Wallet A (CARROT): {}...",
         &fixture.wallet_a.carrot_address().unwrap()[..30]
     );
-    println!("  Wallet B (CN):     {}...", &fixture.wallet_b.cn_address().unwrap()[..30]);
+    println!(
+        "  Wallet B (CN):     {}...",
+        &fixture.wallet_b.cn_address().unwrap()[..30]
+    );
     println!(
         "  Wallet B (CARROT): {}...",
         &fixture.wallet_b.carrot_address().unwrap()[..30]
@@ -1716,9 +1982,7 @@ async fn full_testnet_hardfork_progression() {
         // Run fork-specific tests
         match fork.test_mode {
             TestMode::Genesis => {
-                println!(
-                    "  (HF1 genesis — no TX tests, coinbase not yet mature)"
-                );
+                println!("  (HF1 genesis — no TX tests, coinbase not yet mature)");
             }
             TestMode::Full => {
                 run_full_tests(&daemon, &url, &fixture, fork, &mut stats).await;
@@ -1783,7 +2047,10 @@ async fn full_testnet_hardfork_progression() {
             a_total += total;
         }
     }
-    assert!(a_total > 0, "Wallet A total balance (SAL+SAL1) should be positive");
+    assert!(
+        a_total > 0,
+        "Wallet A total balance (SAL+SAL1) should be positive"
+    );
 
     println!("\n  --- Wallet B ---");
     let (b_sal, _) = print_balance(&fixture.wallet_b, "B", "SAL");
@@ -1795,14 +2062,28 @@ async fn full_testnet_hardfork_progression() {
             b_total += total;
         }
     }
-    assert!(b_total > 0, "Wallet B total balance (SAL+SAL1) should be positive");
+    assert!(
+        b_total > 0,
+        "Wallet B total balance (SAL+SAL1) should be positive"
+    );
 
     // Verify no overflow/negative values
-    assert!(a_total < u64::MAX / 2, "Wallet A balance looks like overflow: {}", a_total);
-    assert!(b_total < u64::MAX / 2, "Wallet B balance looks like overflow: {}", b_total);
+    assert!(
+        a_total < u64::MAX / 2,
+        "Wallet A balance looks like overflow: {}",
+        a_total
+    );
+    assert!(
+        b_total < u64::MAX / 2,
+        "Wallet B balance looks like overflow: {}",
+        b_total
+    );
 
     // TX summary
-    println!("\n  Transactions: {} succeeded, {} failed", stats.tx_succeeded, stats.tx_failed);
+    println!(
+        "\n  Transactions: {} succeeded, {} failed",
+        stats.tx_succeeded, stats.tx_failed
+    );
     println!("  Total fees: {} SAL", fmt_sal(stats.total_fees));
     println!("  Total blocks mined: {}", stats.total_blocks_mined);
     println!(
@@ -1842,12 +2123,14 @@ async fn full_testnet_hardfork_progression() {
         assert!(
             vo_sal >= full_sal,
             "view-only SAL balance ({}) should be >= full wallet ({})",
-            vo_sal, full_sal,
+            vo_sal,
+            full_sal,
         );
         if vo_sal > full_sal {
             println!(
                 "  View-only SAL balance {} > full {} (expected: CN outputs lack real key images)",
-                fmt_sal(vo_sal), fmt_sal(full_sal),
+                fmt_sal(vo_sal),
+                fmt_sal(full_sal),
             );
         }
 
@@ -1866,7 +2149,8 @@ async fn full_testnet_hardfork_progression() {
             assert!(
                 vo_sal1 >= full_sal1,
                 "view-only SAL1 balance ({}) should be >= full wallet ({})",
-                vo_sal1, full_sal1,
+                vo_sal1,
+                full_sal1,
             );
             if vo_sal1 > full_sal1 {
                 println!(
@@ -1886,11 +2170,13 @@ async fn full_testnet_hardfork_progression() {
             let full_outputs = fixture.wallet_a.get_outputs(&query).unwrap();
             let vo_outputs = wallet_vo.get_outputs(&query).unwrap();
 
-            let full_carrot_bal: u64 = full_outputs.iter()
+            let full_carrot_bal: u64 = full_outputs
+                .iter()
                 .filter(|o| o.is_carrot)
                 .map(|o| o.amount.parse::<u64>().unwrap_or(0))
                 .sum();
-            let vo_carrot_bal: u64 = vo_outputs.iter()
+            let vo_carrot_bal: u64 = vo_outputs
+                .iter()
                 .filter(|o| o.is_carrot)
                 .map(|o| o.amount.parse::<u64>().unwrap_or(0))
                 .sum();
@@ -1902,7 +2188,9 @@ async fn full_testnet_hardfork_progression() {
             );
             println!(
                 "  CARROT-only SAL1 balance verified: {} (full={}, vo={}, cn_diff={})",
-                fmt_sal(full_carrot_bal), fmt_sal(full_sal1), fmt_sal(vo_sal1),
+                fmt_sal(full_carrot_bal),
+                fmt_sal(full_sal1),
+                fmt_sal(vo_sal1),
                 fmt_sal(vo_sal1 - full_sal1),
             );
         }
@@ -1936,10 +2224,7 @@ async fn full_testnet_hardfork_progression() {
     )
     .expect("create wallet C");
 
-    println!(
-        "  Wallet C: {}...",
-        &wallet_c.cn_address().unwrap()[..30]
-    );
+    println!("  Wallet C: {}...", &wallet_c.cn_address().unwrap()[..30]);
     println!("  Syncing from genesis...");
     sync_wallet_checked(&wallet_c, &daemon, "C").await;
 

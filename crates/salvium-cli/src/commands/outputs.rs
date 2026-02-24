@@ -23,12 +23,14 @@ pub async fn export_key_images(ctx: &AppContext, output_file: &str, _all: bool) 
     let images: Vec<salvium_tx::offline::ExportedKeyImage> = outputs
         .iter()
         .filter_map(|o| {
-            o.key_image.as_ref().map(|ki| salvium_tx::offline::ExportedKeyImage {
-                key_image: ki.clone(),
-                signature: String::new(), // Placeholder — full impl signs with key image secret.
-                output_index: o.output_index as u64,
-                amount: o.amount.parse().unwrap_or(0),
-            })
+            o.key_image
+                .as_ref()
+                .map(|ki| salvium_tx::offline::ExportedKeyImage {
+                    key_image: ki.clone(),
+                    signature: String::new(), // Placeholder — full impl signs with key image secret.
+                    output_index: o.output_index as u64,
+                    amount: o.amount.parse().unwrap_or(0),
+                })
         })
         .collect();
 
@@ -41,8 +43,8 @@ pub async fn export_key_images(ctx: &AppContext, output_file: &str, _all: bool) 
 pub async fn import_key_images(ctx: &AppContext, input_file: &str) -> Result {
     let wallet = open_wallet(ctx)?;
     let json = std::fs::read_to_string(input_file)?;
-    let images = salvium_tx::offline::import_key_images(&json)
-        .map_err(|e| format!("parse error: {}", e))?;
+    let images =
+        salvium_tx::offline::import_key_images(&json).map_err(|e| format!("parse error: {}", e))?;
 
     // Mark outputs as spent based on imported key images.
     let mut spent_count = 0u64;
@@ -55,7 +57,11 @@ pub async fn import_key_images(ctx: &AppContext, input_file: &str) -> Result {
         }
     }
 
-    println!("Imported {} key images, {} newly spent.", images.len(), spent_count);
+    println!(
+        "Imported {} key images, {} newly spent.",
+        images.len(),
+        spent_count
+    );
     Ok(())
 }
 
@@ -98,8 +104,8 @@ pub async fn export_outputs(ctx: &AppContext, output_file: &str, _all: bool) -> 
 pub async fn import_outputs(ctx: &AppContext, input_file: &str) -> Result {
     let _wallet = open_wallet(ctx)?;
     let json = std::fs::read_to_string(input_file)?;
-    let outputs = salvium_tx::offline::import_outputs(&json)
-        .map_err(|e| format!("parse error: {}", e))?;
+    let outputs =
+        salvium_tx::offline::import_outputs(&json).map_err(|e| format!("parse error: {}", e))?;
 
     // In a full implementation, we'd add these outputs to the wallet DB.
     println!("Parsed {} outputs from file.", outputs.len());
@@ -115,8 +121,8 @@ pub async fn sign_transfer(ctx: &AppContext, input_file: &str) -> Result {
     }
 
     let json = std::fs::read_to_string(input_file)?;
-    let unsigned_tx = salvium_tx::offline::parse_unsigned_tx(&json)
-        .map_err(|e| format!("parse error: {}", e))?;
+    let unsigned_tx =
+        salvium_tx::offline::parse_unsigned_tx(&json).map_err(|e| format!("parse error: {}", e))?;
 
     // Verify before signing.
     if let Err(errors) = salvium_tx::offline::verify_unsigned_tx(&unsigned_tx) {
@@ -172,8 +178,8 @@ pub async fn sign_transfer(ctx: &AppContext, input_file: &str) -> Result {
 
 pub async fn submit_transfer(ctx: &AppContext, input_file: &str) -> Result {
     let json = std::fs::read_to_string(input_file)?;
-    let signed_tx = salvium_tx::offline::parse_signed_tx(&json)
-        .map_err(|e| format!("parse error: {}", e))?;
+    let signed_tx =
+        salvium_tx::offline::parse_signed_tx(&json).map_err(|e| format!("parse error: {}", e))?;
 
     let daemon = DaemonRpc::new(&ctx.daemon_url);
 
@@ -187,11 +193,7 @@ pub async fn submit_transfer(ctx: &AppContext, input_file: &str) -> Result {
         println!("Transaction submitted successfully!");
         println!("  TX hash: {}", signed_tx.tx_hash);
     } else {
-        return Err(format!(
-            "daemon rejected transaction: status={}",
-            result.status
-        )
-        .into());
+        return Err(format!("daemon rejected transaction: status={}", result.status).into());
     }
 
     Ok(())
@@ -231,10 +233,7 @@ pub async fn frozen_outputs(ctx: &AppContext) -> Result {
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:>16} {:<8} Key Image",
-        "Height", "Amount", "Asset"
-    );
+    println!("{:<8} {:>16} {:<8} Key Image", "Height", "Amount", "Asset");
     println!("{}", "-".repeat(70));
 
     for o in &outputs {

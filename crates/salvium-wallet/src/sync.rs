@@ -173,10 +173,7 @@ impl SyncEngine {
             let headers = match headers_result {
                 Ok(h) => h,
                 Err(e) => {
-                    controller.adjust(
-                        batch_timer.elapsed().as_millis() as u64,
-                        true,
-                    );
+                    controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                     if let Some(tx) = event_tx {
                         let _ = tx.send(SyncEvent::Error(e.to_string())).await;
                     }
@@ -201,8 +198,7 @@ impl SyncEngine {
                 if let Some(expected) = expected_hash {
                     if let Some(first) = headers.first() {
                         if first.prev_hash != expected {
-                            let reorg_start =
-                                find_fork_point(daemon, db, current).await?;
+                            let reorg_start = find_fork_point(daemon, db, current).await?;
 
                             if let Some(tx) = event_tx {
                                 let _ = tx
@@ -214,18 +210,14 @@ impl SyncEngine {
                             }
 
                             {
-                                let db = db
-                                    .lock()
-                                    .map_err(|e| WalletError::Storage(e.to_string()))?;
+                                let db =
+                                    db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
                                 db.rollback(reorg_start as i64)
                                     .map_err(|e| WalletError::Storage(e.to_string()))?;
                             }
 
                             current = reorg_start;
-                            controller.adjust(
-                                batch_timer.elapsed().as_millis() as u64,
-                                true,
-                            );
+                            controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                             continue;
                         }
                     }
@@ -236,16 +228,10 @@ impl SyncEngine {
             let bin_blocks = match bin_result {
                 Ok(blocks) => blocks,
                 Err(e) => {
-                    controller.adjust(
-                        batch_timer.elapsed().as_millis() as u64,
-                        true,
-                    );
+                    controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                     if let Some(tx) = event_tx {
                         let _ = tx
-                            .send(SyncEvent::Error(format!(
-                                "get_blocks_by_height.bin: {}",
-                                e
-                            )))
+                            .send(SyncEvent::Error(format!("get_blocks_by_height.bin: {}", e)))
                             .await;
                     }
                     if controller.should_abort() {
@@ -304,8 +290,16 @@ impl SyncEngine {
                     }
                 }
 
-                let outputs_found =
-                    process_bin_block(db, scan_ctx, height, entry, header, stake_lock_period, event_tx).await?;
+                let outputs_found = process_bin_block(
+                    db,
+                    scan_ctx,
+                    height,
+                    entry,
+                    header,
+                    stake_lock_period,
+                    event_tx,
+                )
+                .await?;
                 if outputs_found.parse_error {
                     total_parse_errors += 1;
                 }
@@ -313,8 +307,7 @@ impl SyncEngine {
 
                 // Update sync height per block for crash safety.
                 {
-                    let db =
-                        db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+                    let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
                     db.set_sync_height(height as i64)
                         .map_err(|e| WalletError::Storage(e.to_string()))?;
                 }
@@ -351,11 +344,7 @@ impl SyncEngine {
         }
 
         if let Some(tx) = event_tx {
-            let _ = tx
-                .send(SyncEvent::Complete {
-                    height: top_block,
-                })
-                .await;
+            let _ = tx.send(SyncEvent::Complete { height: top_block }).await;
         }
 
         Ok(top_block)
@@ -450,15 +439,10 @@ async fn process_bin_block(
     if let Some(protocol_tx_json) = &parsed.protocol_tx {
         // Count protocol_tx outputs to check for non-empty protocol TXs.
         let ptx_prefix = protocol_tx_json.get("prefix").unwrap_or(protocol_tx_json);
-        let ptx_vout = ptx_prefix
-            .get("vout")
-            .and_then(|v| v.as_array());
+        let ptx_vout = ptx_prefix.get("vout").and_then(|v| v.as_array());
         let ptx_vout_count = ptx_vout.map(|a| a.len()).unwrap_or(0);
 
-        let protocol_tx_hash = header
-            .protocol_tx_hash
-            .as_deref()
-            .filter(|s| !s.is_empty());
+        let protocol_tx_hash = header.protocol_tx_hash.as_deref().filter(|s| !s.is_empty());
 
         let ptx_hash_str: Option<String> = protocol_tx_hash
             .map(|s| s.to_string())
@@ -467,8 +451,10 @@ async fn process_bin_block(
         if ptx_vout_count > 0 {
             log::debug!(
                 "protocol_tx at height={}: {} outputs, hash={}, has_header_hash={}",
-                height, ptx_vout_count,
-                ptx_hash_str.as_deref().unwrap_or("NONE")[..16.min(ptx_hash_str.as_ref().map(|s| s.len()).unwrap_or(0))].to_string(),
+                height,
+                ptx_vout_count,
+                &ptx_hash_str.as_deref().unwrap_or("NONE")
+                    [..16.min(ptx_hash_str.as_ref().map(|s| s.len()).unwrap_or(0))],
                 protocol_tx_hash.is_some()
             );
         }
@@ -484,7 +470,9 @@ async fn process_bin_block(
                     let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
                     for out in vout_arr {
                         if let Some(key_hex) = out.get("key").and_then(|v| v.as_str()) {
-                            if let Ok(Some(stake)) = db_lock.get_locked_stake_by_return_output_key(key_hex) {
+                            if let Ok(Some(stake)) =
+                                db_lock.get_locked_stake_by_return_output_key(key_hex)
+                            {
                                 if let Err(e) = db_lock.mark_stake_returned(
                                     &stake.stake_tx_hash,
                                     ptx_hash,
@@ -514,14 +502,15 @@ async fn process_bin_block(
         // Also attempt CARROT/CN scanning for protocol TX outputs (may find
         // return outputs that we can add to our wallet's output set).
         if let Some(ref ptx_hash) = ptx_hash_str {
-            if let Some(scan_data) =
-                parse_tx_for_scanning(protocol_tx_json, ptx_hash, height, true)
+            if let Some(scan_data) = parse_tx_for_scanning(protocol_tx_json, ptx_hash, height, true)
             {
                 let found = scanner::scan_transaction(scan_ctx, &scan_data);
                 if !found.is_empty() {
                     log::info!(
                         "protocol_tx match: height={} found={} outputs, tx_type={}",
-                        height, found.len(), scan_data.tx_type
+                        height,
+                        found.len(),
+                        scan_data.tx_type
                     );
                 }
                 outputs_found += found.len();
@@ -536,7 +525,8 @@ async fn process_bin_block(
         } else if ptx_vout_count > 0 {
             log::warn!(
                 "protocol_tx at height={}: no hash available ({} outputs skipped)",
-                height, ptx_vout_count
+                height,
+                ptx_vout_count
             );
         }
     }
@@ -558,7 +548,10 @@ async fn process_bin_block(
             let snippet = &tx_json_str[..tx_json_str.len().min(200)];
             log::error!(
                 "tx parse failed at height={} tx_idx={} blob_len={} err={}",
-                height, i, tx_blob.len(), snippet
+                height,
+                i,
+                tx_blob.len(),
+                snippet
             );
             if let Some(tx) = event_tx {
                 let _ = tx
@@ -579,15 +572,17 @@ async fn process_bin_block(
                 } else {
                     log::warn!(
                         "tx hash missing at height={} tx_idx={} (have {} hashes, {} blobs)",
-                        height, i, tx_hashes.len(), entry.txs.len()
+                        height,
+                        i,
+                        tx_hashes.len(),
+                        entry.txs.len()
                     );
                     continue;
                 };
 
                 detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
 
-                if let Some(scan_data) =
-                    parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
+                if let Some(scan_data) = parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
@@ -598,7 +593,9 @@ async fn process_bin_block(
                 parse_error = true;
                 log::error!(
                     "tx JSON deserialize failed at height={} tx_idx={}: {}",
-                    height, i, e
+                    height,
+                    i,
+                    e
                 );
             }
         }
@@ -723,8 +720,7 @@ fn process_block_data(
                 .or_else(|| compute_coinbase_tx_hash(protocol_tx_json));
 
             if let Some(ref hash) = ptx_hash_str {
-                if let Some(scan_data) =
-                    parse_tx_for_scanning(protocol_tx_json, hash, height, true)
+                if let Some(scan_data) = parse_tx_for_scanning(protocol_tx_json, hash, height, true)
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
@@ -746,7 +742,12 @@ fn process_block_data(
         let tx_bytes = match hex::decode(tx_hex) {
             Ok(b) => b,
             Err(e) => {
-                log::error!("tx hex decode failed at height={} tx_idx={}: {}", height, i, e);
+                log::error!(
+                    "tx hex decode failed at height={} tx_idx={}: {}",
+                    height,
+                    i,
+                    e
+                );
                 continue;
             }
         };
@@ -756,7 +757,9 @@ fn process_block_data(
         if tx_json_str.starts_with(r#"{"error":"#) {
             log::error!(
                 "tx parse failed at height={} tx_idx={} blob_len={} err={}",
-                height, i, tx_bytes.len(),
+                height,
+                i,
+                tx_bytes.len(),
                 &tx_json_str[..tx_json_str.len().min(200)]
             );
             continue;
@@ -766,8 +769,7 @@ fn process_block_data(
             Ok(tx_json) => {
                 detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
 
-                if let Some(scan_data) =
-                    parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
+                if let Some(scan_data) = parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
@@ -777,7 +779,9 @@ fn process_block_data(
             Err(e) => {
                 log::error!(
                     "tx JSON deserialize failed at height={} tx_idx={}: {}",
-                    height, i, e
+                    height,
+                    i,
+                    e
                 );
             }
         }
@@ -854,14 +858,13 @@ fn parse_tx_for_scanning(
     let prefix = tx_json.get("prefix").unwrap_or(tx_json);
 
     // Extract tx public key (tag 0x01) and additional per-output pubkeys (tag 0x04).
-    let tx_pub_key_01 = extract_tx_pub_key_from_parsed(prefix)
-        .or_else(|| extract_tx_pub_key_from_raw(tx_json));
+    let tx_pub_key_01 =
+        extract_tx_pub_key_from_parsed(prefix).or_else(|| extract_tx_pub_key_from_raw(tx_json));
     let additional_pubkeys = extract_additional_pubkeys(prefix);
 
     // tx_pub_key: prefer tag 0x01, fall back to additional_pubkeys[0].
     // Multi-output CARROT txs (including coinbase) may only have tag 0x04.
-    let tx_pub_key = tx_pub_key_01
-        .or_else(|| additional_pubkeys.first().copied())?;
+    let tx_pub_key = tx_pub_key_01.or_else(|| additional_pubkeys.first().copied())?;
 
     // Extract first key image (for non-coinbase).
     let first_key_image = if !is_coinbase {
@@ -899,9 +902,7 @@ fn parse_tx_for_scanning(
         .and_then(|v| v.as_array())?;
 
     // Legacy ECDH info and output commitments.
-    let rct_section = tx_json
-        .get("rct")
-        .or_else(|| tx_json.get("rct_signatures"));
+    let rct_section = tx_json.get("rct").or_else(|| tx_json.get("rct_signatures"));
     let ecdh_info = rct_section
         .and_then(|r| r.get("ecdhInfo"))
         .and_then(|e| e.as_array());
@@ -954,10 +955,7 @@ fn parse_tx_for_scanning(
         };
 
         // Output type field (type 4 = CARROT).
-        let out_type = out
-            .get("type")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u8;
+        let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
         // CARROT 3-byte view tag (from "viewTag" field, 3 hex bytes = 6 chars).
         let carrot_view_tag = if out_type == 4 {
@@ -1274,38 +1272,44 @@ fn extract_inputs_with_offsets(prefix: &serde_json::Value) -> Vec<ParsedTxInput>
     };
 
     for input in vin {
-        let (ki_hex, offsets, asset_type) = if let Some(ki) = input.get("keyImage").and_then(|v| v.as_str()) {
-            // New format: { "keyImage": "hex", "keyOffsets": [...], "assetType": "..." }
-            let offsets = input.get("keyOffsets")
-                .or_else(|| input.get("key_offsets"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let asset = input.get("assetType")
-                .or_else(|| input.get("asset_type"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (ki.to_string(), offsets, asset)
-        } else if let Some(key) = input.get("key") {
-            // Legacy format: { "key": { "k_image": "hex", "key_offsets": [...] } }
-            let ki = key.get("k_image")
-                .or_else(|| key.get("keyImage"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let offsets = key.get("key_offsets")
-                .or_else(|| key.get("keyOffsets"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let asset = key.get("asset_type")
-                .or_else(|| key.get("assetType"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (ki, offsets, asset)
-        } else {
-            continue;
-        };
+        let (ki_hex, offsets, asset_type) =
+            if let Some(ki) = input.get("keyImage").and_then(|v| v.as_str()) {
+                // New format: { "keyImage": "hex", "keyOffsets": [...], "assetType": "..." }
+                let offsets = input
+                    .get("keyOffsets")
+                    .or_else(|| input.get("key_offsets"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                let asset = input
+                    .get("assetType")
+                    .or_else(|| input.get("asset_type"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (ki.to_string(), offsets, asset)
+            } else if let Some(key) = input.get("key") {
+                // Legacy format: { "key": { "k_image": "hex", "key_offsets": [...] } }
+                let ki = key
+                    .get("k_image")
+                    .or_else(|| key.get("keyImage"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let offsets = key
+                    .get("key_offsets")
+                    .or_else(|| key.get("keyOffsets"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                let asset = key
+                    .get("asset_type")
+                    .or_else(|| key.get("assetType"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (ki, offsets, asset)
+            } else {
+                continue;
+            };
 
         if ki_hex.len() != 64 || offsets.is_empty() {
             continue;
@@ -1490,7 +1494,10 @@ fn detect_spent_outputs(
                 &tx_hash_hex[..16],
                 amount_burnt,
                 source_asset_type,
-                return_output_key.as_deref().map(|k| &k[..k.len().min(16)]).unwrap_or("none")
+                return_output_key
+                    .as_deref()
+                    .map(|k| &k[..k.len().min(16)])
+                    .unwrap_or("none")
             );
         }
     }
@@ -1520,7 +1527,11 @@ fn store_found_outputs(
 
         // Log non-coinbase CARROT matches for diagnostics.
         if output.is_carrot && !tx.is_coinbase {
-            let scan_path = if output.is_carrot_internal { "INTERNAL" } else { "EXTERNAL" };
+            let scan_path = if output.is_carrot_internal {
+                "INTERNAL"
+            } else {
+                "EXTERNAL"
+            };
             log::debug!(
                 "CARROT {} match: height={} tx_type={} out_idx={} amount={} addr=({},{}) asset={}",
                 scan_path,
@@ -1601,7 +1612,7 @@ fn store_found_outputs(
         if row.key_image.is_none() {
             let mut buf = Vec::with_capacity(36);
             buf.extend_from_slice(&tx.tx_hash);
-            buf.extend_from_slice(&(output.output_index as u32).to_le_bytes());
+            buf.extend_from_slice(&output.output_index.to_le_bytes());
             let synthetic = salvium_crypto::keccak256(&buf);
             row.key_image = Some(format!("vo:{}", hex::encode(synthetic)));
         }
@@ -1629,7 +1640,10 @@ fn store_found_outputs(
         if tx.tx_type == 2 {
             log::info!(
                 "protocol_tx output found: height={} amount={} asset={} out_idx={}",
-                tx.block_height, output.amount, output.asset_type, output.output_index
+                tx.block_height,
+                output.amount,
+                output.asset_type,
+                output.output_index
             );
             if let Ok(stakes) = db.get_stakes(Some("locked"), Some(&output.asset_type)) {
                 if let Some(stake) = stakes.first() {
@@ -1654,7 +1668,8 @@ fn store_found_outputs(
                 } else {
                     log::debug!(
                         "protocol_tx output at height={}: no locked stakes match asset={}",
-                        tx.block_height, output.asset_type
+                        tx.block_height,
+                        output.asset_type
                     );
                 }
             }

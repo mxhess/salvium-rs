@@ -289,8 +289,7 @@ impl TransactionBuilder {
             .inputs
             .iter()
             .map(|inp| {
-                let ki_bytes =
-                    salvium_crypto::generate_key_image(&inp.public_key, &inp.secret_key);
+                let ki_bytes = salvium_crypto::generate_key_image(&inp.public_key, &inp.secret_key);
                 let mut ki = [0u8; 32];
                 ki.copy_from_slice(&ki_bytes[..32]);
                 ki
@@ -400,7 +399,8 @@ impl TransactionBuilder {
                 let mut d_arr = [0u8; 32];
                 d_arr.copy_from_slice(&d[..32]);
 
-                let ko_vec = salvium_crypto::derive_public_key(&d_arr, output_index, &dest.spend_pubkey);
+                let ko_vec =
+                    salvium_crypto::derive_public_key(&d_arr, output_index, &dest.spend_pubkey);
                 let mut ko = [0u8; 32];
                 ko.copy_from_slice(&ko_vec[..32]);
 
@@ -409,7 +409,8 @@ impl TransactionBuilder {
                 shared_secret.copy_from_slice(&ss_vec[..32]);
 
                 let view_tag = salvium_crypto::cn_scan::derive_view_tag(&d_arr, output_index);
-                let encrypted_amount = salvium_crypto::cn_scan::ecdh_encode_amount(dest.amount, &shared_secret);
+                let encrypted_amount =
+                    salvium_crypto::cn_scan::ecdh_encode_amount(dest.amount, &shared_secret);
                 let mask = salvium_crypto::cn_scan::gen_commitment_mask(&shared_secret);
 
                 let amount_le = dest.amount.to_le_bytes();
@@ -443,7 +444,8 @@ impl TransactionBuilder {
                     let mut d_arr = [0u8; 32];
                     d_arr.copy_from_slice(&d[..32]);
 
-                    let ko_vec = salvium_crypto::derive_public_key(&d_arr, output_index, &change_spend);
+                    let ko_vec =
+                        salvium_crypto::derive_public_key(&d_arr, output_index, &change_spend);
                     let mut ko = [0u8; 32];
                     ko.copy_from_slice(&ko_vec[..32]);
 
@@ -452,7 +454,8 @@ impl TransactionBuilder {
                     shared_secret.copy_from_slice(&ss_vec[..32]);
 
                     let view_tag = salvium_crypto::cn_scan::derive_view_tag(&d_arr, output_index);
-                    let encrypted_amount = salvium_crypto::cn_scan::ecdh_encode_amount(change_amount, &shared_secret);
+                    let encrypted_amount =
+                        salvium_crypto::cn_scan::ecdh_encode_amount(change_amount, &shared_secret);
                     let mask = salvium_crypto::cn_scan::gen_commitment_mask(&shared_secret);
 
                     let amount_le = change_amount.to_le_bytes();
@@ -505,11 +508,18 @@ impl TransactionBuilder {
         if self.rct_type >= rct_type::SALVIUM_ONE {
             output_order.sort_by(|&a, &b| tx_outputs[a].key().cmp(tx_outputs[b].key()));
         }
-        let tx_outputs: Vec<_> = output_order.iter().map(|&i| tx_outputs[i].clone()).collect();
+        let tx_outputs: Vec<_> = output_order
+            .iter()
+            .map(|&i| tx_outputs[i].clone())
+            .collect();
         let output_masks: Vec<_> = output_order.iter().map(|&i| output_masks[i]).collect();
         let output_amounts: Vec<_> = output_order.iter().map(|&i| output_amounts[i]).collect();
-        let encrypted_amounts: Vec<_> = output_order.iter().map(|&i| encrypted_amounts[i]).collect();
-        let output_commitments: Vec<_> = output_order.iter().map(|&i| output_commitments[i]).collect();
+        let encrypted_amounts: Vec<_> =
+            output_order.iter().map(|&i| encrypted_amounts[i]).collect();
+        let output_commitments: Vec<_> = output_order
+            .iter()
+            .map(|&i| output_commitments[i])
+            .collect();
         // Sort ephemeral keys to match the output order.
         let ephemeral_keys: Vec<_> = output_order.iter().map(|&i| ephemeral_keys[i]).collect();
 
@@ -567,38 +577,41 @@ impl TransactionBuilder {
         }
 
         // Version 4 for CARROT transactions (rct_type >= SALVIUM_ONE), version 2 otherwise.
-        let version = if self.rct_type >= rct_type::SALVIUM_ONE { 4 } else { 2 };
+        let version = if self.rct_type >= rct_type::SALVIUM_ONE {
+            4
+        } else {
+            2
+        };
 
         // For version >= 3 TRANSFER, populate return_address_list and change_mask.
-        let (return_address_list, return_address_change_mask) =
-            if self.tx_type == tx_type::TRANSFER && version >= 3 {
-                // One 32-byte return address per output.
-                // Use the sender's change spend pubkey as the return address for all outputs.
-                let sender_key = self.change_spend_pubkey.unwrap_or([0u8; 32]);
-                let list: Vec<Vec<u8>> = (0..tx_outputs.len())
-                    .map(|_| sender_key.to_vec())
-                    .collect();
+        let (return_address_list, return_address_change_mask) = if self.tx_type == tx_type::TRANSFER
+            && version >= 3
+        {
+            // One 32-byte return address per output.
+            // Use the sender's change spend pubkey as the return address for all outputs.
+            let sender_key = self.change_spend_pubkey.unwrap_or([0u8; 32]);
+            let list: Vec<Vec<u8>> = (0..tx_outputs.len()).map(|_| sender_key.to_vec()).collect();
 
-                // Change mask: one byte per output (0=payment, 1=change).
-                // After sorting, we need to determine which output is the change output.
-                // The change output has the change address's spend pubkey-derived one-time key.
-                // Since we don't track this through sorting, use a heuristic: the last
-                // destination in the original build is change, so after sort we mark based on count.
-                let num_payment = self.destinations.len();
-                let mut mask = vec![0u8; tx_outputs.len()];
-                // The change output is at index num_payment in the pre-sort order.
-                // After sort, it moved to output_order[num_payment]'s new position.
-                // output_order maps new_pos -> old_pos. We need old_pos num_payment -> new_pos.
-                for (new_pos, &old_pos) in output_order.iter().enumerate() {
-                    if old_pos >= num_payment {
-                        mask[new_pos] = 1;
-                    }
+            // Change mask: one byte per output (0=payment, 1=change).
+            // After sorting, we need to determine which output is the change output.
+            // The change output has the change address's spend pubkey-derived one-time key.
+            // Since we don't track this through sorting, use a heuristic: the last
+            // destination in the original build is change, so after sort we mark based on count.
+            let num_payment = self.destinations.len();
+            let mut mask = vec![0u8; tx_outputs.len()];
+            // The change output is at index num_payment in the pre-sort order.
+            // After sort, it moved to output_order[num_payment]'s new position.
+            // output_order maps new_pos -> old_pos. We need old_pos num_payment -> new_pos.
+            for (new_pos, &old_pos) in output_order.iter().enumerate() {
+                if old_pos >= num_payment {
+                    mask[new_pos] = 1;
                 }
+            }
 
-                (Some(list), Some(mask))
-            } else {
-                (None, None)
-            };
+            (Some(list), Some(mask))
+        } else {
+            (None, None)
+        };
 
         // For STAKE/AUDIT transactions (pre-CARROT), derive return_address and return_pubkey
         // from the change output key and sender's view secret key.
@@ -607,9 +620,7 @@ impl TransactionBuilder {
         //   derivation = generate_key_derivation(return_pubkey, view_secret)
         //   return_address = derive_public_key(derivation, 0, P_change)
         let (return_address, return_pubkey) =
-            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT)
-                && version < 4
-            {
+            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT) && version < 4 {
                 // Find the change output key. The change output was the last one added
                 // before sorting (at index = num destinations in pre-sort order).
                 let change_pre_sort_idx = self.destinations.len();
@@ -647,8 +658,7 @@ impl TransactionBuilder {
                     derivation.copy_from_slice(&deriv_vec[..32]);
 
                     // return_address = derive_public_key(derivation, 0, P_change)
-                    let f_vec =
-                        salvium_crypto::derive_public_key(&derivation, 0, &p_change);
+                    let f_vec = salvium_crypto::derive_public_key(&derivation, 0, &p_change);
                     let mut return_addr = [0u8; 32];
                     return_addr.copy_from_slice(&f_vec[..32]);
 
@@ -662,9 +672,7 @@ impl TransactionBuilder {
 
         // For v4 STAKE (CARROT era), create protocol_tx_data with a CARROT return enote.
         let protocol_tx_data =
-            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT)
-                && version >= 4
-            {
+            if (self.tx_type == tx_type::STAKE || self.tx_type == tx_type::AUDIT) && version >= 4 {
                 let chg_spend = self.change_spend_pubkey.unwrap_or([0u8; 32]);
                 let chg_view = self.change_view_pubkey.unwrap_or([0u8; 32]);
                 let return_params = CarrotOutputParams {
@@ -677,8 +685,9 @@ impl TransactionBuilder {
                     is_subaddress: false,
                     view_balance_secret: self.change_view_balance_secret.as_ref(),
                 };
-                let (return_enote, _return_d_e, return_d_e_pub) = carrot::create_carrot_output(&return_params)
-                    .map_err(|e| TxError::CarrotOutput(format!("return enote: {}", e)))?;
+                let (return_enote, _return_d_e, return_d_e_pub) =
+                    carrot::create_carrot_output(&return_params)
+                        .map_err(|e| TxError::CarrotOutput(format!("return enote: {}", e)))?;
                 let return_pubkey_arr = return_d_e_pub;
                 Some(ProtocolTxData {
                     version: 1,
@@ -767,14 +776,20 @@ mod tests {
 
     #[test]
     fn test_absolute_to_relative() {
-        assert_eq!(absolute_to_relative(&[10, 50, 80, 100]), vec![10, 40, 30, 20]);
+        assert_eq!(
+            absolute_to_relative(&[10, 50, 80, 100]),
+            vec![10, 40, 30, 20]
+        );
         assert_eq!(absolute_to_relative(&[5]), vec![5]);
         assert_eq!(absolute_to_relative(&[]), Vec::<u64>::new());
     }
 
     #[test]
     fn test_relative_to_absolute() {
-        assert_eq!(relative_to_absolute(&[10, 40, 30, 20]), vec![10, 50, 80, 100]);
+        assert_eq!(
+            relative_to_absolute(&[10, 40, 30, 20]),
+            vec![10, 50, 80, 100]
+        );
         assert_eq!(relative_to_absolute(&[5]), vec![5]);
     }
 

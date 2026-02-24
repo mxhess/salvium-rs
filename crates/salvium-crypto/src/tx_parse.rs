@@ -50,10 +50,7 @@ impl<'a> Cursor<'a> {
                 self.offset += bytes_read;
                 Ok(value)
             }
-            None => Err(format!(
-                "Varint decode failed at offset {}",
-                self.offset
-            )),
+            None => Err(format!("Varint decode failed at offset {}", self.offset)),
         }
     }
 
@@ -65,8 +62,7 @@ impl<'a> Cursor<'a> {
     fn read_u64_le(&mut self) -> Result<u64, String> {
         let bytes = self.read_bytes(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -76,8 +72,13 @@ impl<'a> Cursor<'a> {
             return Ok(String::new());
         }
         let bytes = self.read_bytes(len)?;
-        String::from_utf8(bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 string at offset {}: {}", self.offset - len, e))
+        String::from_utf8(bytes.to_vec()).map_err(|e| {
+            format!(
+                "Invalid UTF-8 string at offset {}: {}",
+                self.offset - len,
+                e
+            )
+        })
     }
 }
 
@@ -200,8 +201,8 @@ fn parse_transaction_inner(c: &mut Cursor) -> Result<Value, String> {
     let extra_size = c.read_varint()? as usize;
     let extra_bytes = c.read_bytes(extra_size)?;
     let extra_json_str = crate::tx_format::parse_extra(extra_bytes);
-    let extra: Value = serde_json::from_str(&extra_json_str)
-        .map_err(|e| format!("Extra parse error: {e}"))?;
+    let extra: Value =
+        serde_json::from_str(&extra_json_str).map_err(|e| format!("Extra parse error: {e}"))?;
 
     // Salvium-specific prefix fields
     let tx_type = c.read_varint()? as u8;
@@ -286,7 +287,8 @@ fn parse_transaction_inner(c: &mut Cursor) -> Result<Value, String> {
 
     // Mixin from first input
     let mixin = if let Some(first) = vin.first() {
-        first.get("keyOffsets")
+        first
+            .get("keyOffsets")
             .and_then(|v| v.as_array())
             .map(|a| a.len().saturating_sub(1))
             .unwrap_or(15)
@@ -359,17 +361,15 @@ fn parse_ringct_signature(
 
     // salvium_data based on type
     match rct_type {
-        RCT_TYPE_SALVIUM_ZERO | RCT_TYPE_SALVIUM_ONE => {
-            match parse_salvium_data(c) {
-                Ok(sd) => {
-                    rct["salvium_data"] = sd;
-                }
-                Err(e) => {
-                    rct["salvium_data_parse_error"] = json!(e);
-                    return Ok(rct);
-                }
+        RCT_TYPE_SALVIUM_ZERO | RCT_TYPE_SALVIUM_ONE => match parse_salvium_data(c) {
+            Ok(sd) => {
+                rct["salvium_data"] = sd;
             }
-        }
+            Err(e) => {
+                rct["salvium_data_parse_error"] = json!(e);
+                return Ok(rct);
+            }
+        },
         RCT_TYPE_FULL_PROOFS => {
             // Only pr_proof and sa_proof (2 x 96 bytes)
             let pr_proof = parse_zk_proof(c)?;

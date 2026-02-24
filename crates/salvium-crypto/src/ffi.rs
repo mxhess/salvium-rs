@@ -9,10 +9,10 @@
 //! This module is only compiled on non-wasm targets (guarded by
 //! `#[cfg(not(target_arch = "wasm32"))]` in lib.rs).
 
-use std::slice;
-use std::ptr;
-use std::panic;
 use curve25519_dalek::edwards::CompressedEdwardsY;
+use std::panic;
+use std::ptr;
+use std::slice;
 
 /// Helper: run a closure that may panic, returning -1 on panic instead of aborting.
 /// This is critical for extern "C" functions where unwinding is UB.
@@ -31,11 +31,7 @@ fn is_valid_point(bytes: &[u8; 32]) -> bool {
 // ─── Hashing ────────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_keccak256(
-    data: *const u8,
-    data_len: usize,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_keccak256(data: *const u8, data_len: usize, out: *mut u8) -> i32 {
     let data = slice::from_raw_parts(data, data_len);
     let result = crate::keccak256(data);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -74,11 +70,7 @@ pub unsafe extern "C" fn salvium_blake2b_keyed(
 // ─── Scalar Operations ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_add(
-    a: *const u8,
-    b: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_add(a: *const u8, b: *const u8, out: *mut u8) -> i32 {
     let a = slice::from_raw_parts(a, 32);
     let b = slice::from_raw_parts(b, 32);
     let result = crate::sc_add(a, b);
@@ -87,11 +79,7 @@ pub unsafe extern "C" fn salvium_sc_add(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_sub(
-    a: *const u8,
-    b: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_sub(a: *const u8, b: *const u8, out: *mut u8) -> i32 {
     let a = slice::from_raw_parts(a, 32);
     let b = slice::from_raw_parts(b, 32);
     let result = crate::sc_sub(a, b);
@@ -100,11 +88,7 @@ pub unsafe extern "C" fn salvium_sc_sub(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_mul(
-    a: *const u8,
-    b: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_mul(a: *const u8, b: *const u8, out: *mut u8) -> i32 {
     let a = slice::from_raw_parts(a, 32);
     let b = slice::from_raw_parts(b, 32);
     let result = crate::sc_mul(a, b);
@@ -143,10 +127,7 @@ pub unsafe extern "C" fn salvium_sc_mul_sub(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_reduce32(
-    s: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_reduce32(s: *const u8, out: *mut u8) -> i32 {
     let s = slice::from_raw_parts(s, 32);
     let result = crate::sc_reduce32(s);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -154,10 +135,7 @@ pub unsafe extern "C" fn salvium_sc_reduce32(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_reduce64(
-    s: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_reduce64(s: *const u8, out: *mut u8) -> i32 {
     let s = slice::from_raw_parts(s, 64);
     let result = crate::sc_reduce64(s);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -165,10 +143,7 @@ pub unsafe extern "C" fn salvium_sc_reduce64(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sc_invert(
-    a: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sc_invert(a: *const u8, out: *mut u8) -> i32 {
     let a = slice::from_raw_parts(a, 32);
     let result = crate::sc_invert(a);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -178,22 +153,27 @@ pub unsafe extern "C" fn salvium_sc_invert(
 #[no_mangle]
 pub unsafe extern "C" fn salvium_sc_check(s: *const u8) -> i32 {
     let s = slice::from_raw_parts(s, 32);
-    if crate::sc_check(s) { 1 } else { 0 }
+    if crate::sc_check(s) {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn salvium_sc_is_zero(s: *const u8) -> i32 {
     let s = slice::from_raw_parts(s, 32);
-    if crate::sc_is_zero(s) { 1 } else { 0 }
+    if crate::sc_is_zero(s) {
+        1
+    } else {
+        0
+    }
 }
 
 // ─── Point Operations ───────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_scalar_mult_base(
-    s: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_scalar_mult_base(s: *const u8, out: *mut u8) -> i32 {
     let s = slice::from_raw_parts(s, 32);
     let result = crate::scalar_mult_base(s);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -208,47 +188,44 @@ pub unsafe extern "C" fn salvium_scalar_mult_point(
 ) -> i32 {
     let s = slice::from_raw_parts(s, 32);
     let p = slice::from_raw_parts(p, 32);
-    if !is_valid_point(&crate::to32(p)) { return -1; }
+    if !is_valid_point(&crate::to32(p)) {
+        return -1;
+    }
     let result = crate::scalar_mult_point(s, p);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_point_add(
-    p: *const u8,
-    q: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_point_add(p: *const u8, q: *const u8, out: *mut u8) -> i32 {
     let p = slice::from_raw_parts(p, 32);
     let q = slice::from_raw_parts(q, 32);
-    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) { return -1; }
+    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) {
+        return -1;
+    }
     let result = crate::point_add_compressed(p, q);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_point_sub(
-    p: *const u8,
-    q: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_point_sub(p: *const u8, q: *const u8, out: *mut u8) -> i32 {
     let p = slice::from_raw_parts(p, 32);
     let q = slice::from_raw_parts(q, 32);
-    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) { return -1; }
+    if !is_valid_point(&crate::to32(p)) || !is_valid_point(&crate::to32(q)) {
+        return -1;
+    }
     let result = crate::point_sub_compressed(p, q);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_point_negate(
-    p: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_point_negate(p: *const u8, out: *mut u8) -> i32 {
     let p = slice::from_raw_parts(p, 32);
-    if !is_valid_point(&crate::to32(p)) { return -1; }
+    if !is_valid_point(&crate::to32(p)) {
+        return -1;
+    }
     let result = crate::point_negate(p);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -264,7 +241,9 @@ pub unsafe extern "C" fn salvium_double_scalar_mult_base(
     let a = slice::from_raw_parts(a, 32);
     let p = slice::from_raw_parts(p, 32);
     let b = slice::from_raw_parts(b, 32);
-    if !is_valid_point(&crate::to32(p)) { return -1; }
+    if !is_valid_point(&crate::to32(p)) {
+        return -1;
+    }
     let result = crate::double_scalar_mult_base(a, p, b);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -292,7 +271,9 @@ pub unsafe extern "C" fn salvium_generate_key_derivation(
 ) -> i32 {
     let pk = slice::from_raw_parts(pub_key, 32);
     let sk = slice::from_raw_parts(sec_key, 32);
-    if !is_valid_point(&crate::to32(pk)) { return -1; }
+    if !is_valid_point(&crate::to32(pk)) {
+        return -1;
+    }
     let result = crate::generate_key_derivation(pk, sk);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -322,7 +303,9 @@ pub unsafe extern "C" fn salvium_derive_public_key(
 ) -> i32 {
     let deriv = slice::from_raw_parts(derivation, 32);
     let base = slice::from_raw_parts(base_pub, 32);
-    if !is_valid_point(&crate::to32(base)) { return -1; }
+    if !is_valid_point(&crate::to32(base)) {
+        return -1;
+    }
     let result = crate::derive_public_key(deriv, output_index, base);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
     0
@@ -360,10 +343,7 @@ pub unsafe extern "C" fn salvium_pedersen_commit(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_zero_commit(
-    amount: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_zero_commit(amount: *const u8, out: *mut u8) -> i32 {
     let amount = slice::from_raw_parts(amount, 32);
     // zero_commit decompresses constant H_POINT_BYTES — always valid
     let result = crate::zero_commit(amount);
@@ -372,10 +352,7 @@ pub unsafe extern "C" fn salvium_zero_commit(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_gen_commitment_mask(
-    secret: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_gen_commitment_mask(secret: *const u8, out: *mut u8) -> i32 {
     let secret = slice::from_raw_parts(secret, 32);
     let result = crate::gen_commitment_mask(secret);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -385,11 +362,7 @@ pub unsafe extern "C" fn salvium_gen_commitment_mask(
 // ─── Oracle Signature Verification ──────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_sha256(
-    data: *const u8,
-    data_len: usize,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_sha256(data: *const u8, data_len: usize, out: *mut u8) -> i32 {
     let data = slice::from_raw_parts(data, data_len);
     let result = crate::sha256(data);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -429,7 +402,7 @@ pub unsafe extern "C" fn salvium_argon2id(
     out_len: usize,
     out: *mut u8,
 ) -> i32 {
-    use argon2::{Argon2, Algorithm, Version, Params};
+    use argon2::{Algorithm, Argon2, Params, Version};
 
     let password = slice::from_raw_parts(password, password_len);
     let salt = slice::from_raw_parts(salt, salt_len);
@@ -465,9 +438,9 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace};
-        use aes_gcm::aead::OsRng;
         use aes_gcm::aead::rand_core::RngCore;
+        use aes_gcm::aead::OsRng;
+        use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit};
 
         let key_slice = slice::from_raw_parts(key, 32);
         let plaintext_slice = slice::from_raw_parts(plaintext, plaintext_len);
@@ -487,12 +460,16 @@ pub unsafe extern "C" fn salvium_aes256gcm_encrypt(
         // Write nonce first
         ptr::copy_nonoverlapping(nonce_bytes.as_ptr(), out_slice.as_mut_ptr(), 12);
         // Copy plaintext after nonce
-        ptr::copy_nonoverlapping(plaintext_slice.as_ptr(), out_slice[12..].as_mut_ptr(), plaintext_len);
+        ptr::copy_nonoverlapping(
+            plaintext_slice.as_ptr(),
+            out_slice[12..].as_mut_ptr(),
+            plaintext_len,
+        );
 
         // Encrypt in-place (appends 16-byte tag)
         let mut buffer = out_slice[12..12 + plaintext_len].to_vec();
         match cipher.encrypt_in_place(&nonce, b"", &mut buffer) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => return -1,
         }
 
@@ -518,7 +495,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        use aes_gcm::{Aes256Gcm, KeyInit, AeadInPlace};
+        use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit};
 
         if ciphertext_len < 28 {
             return -1; // Too short: need at least nonce(12) + tag(16)
@@ -540,7 +517,7 @@ pub unsafe extern "C" fn salvium_aes256gcm_decrypt(
         // Decrypt in-place: ciphertext + tag is input[12..]
         let mut buffer = input[12..].to_vec();
         match cipher.decrypt_in_place(&nonce, b"", &mut buffer) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => return -1,
         }
 
@@ -579,10 +556,7 @@ pub unsafe extern "C" fn salvium_x25519_scalar_mult(
 /// out: 32-byte result u-coordinate.
 /// Returns 0 on success.
 #[no_mangle]
-pub unsafe extern "C" fn salvium_edwards_to_montgomery_u(
-    point: *const u8,
-    out: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn salvium_edwards_to_montgomery_u(point: *const u8, out: *mut u8) -> i32 {
     let point = slice::from_raw_parts(point, 32);
     let result = crate::edwards_to_montgomery_u(point);
     ptr::copy_nonoverlapping(result.as_ptr(), out, 32);
@@ -610,11 +584,15 @@ pub unsafe extern "C" fn salvium_clsag_sign(
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let sk = crate::to32(slice::from_raw_parts(secret_key, 32));
     let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
@@ -653,17 +631,23 @@ pub unsafe extern "C" fn salvium_clsag_verify(
 ) -> i32 {
     let n = ring_count as usize;
     let expected = n * 32 + 96;
-    if sig_len < expected { return 0; }
+    if sig_len < expected {
+        return 0;
+    }
 
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
@@ -674,12 +658,23 @@ pub unsafe extern "C" fn salvium_clsag_verify(
             s.push(crate::to32(&sig_data[offset..offset + 32]));
             offset += 32;
         }
-        let c1 = crate::to32(&sig_data[offset..offset + 32]); offset += 32;
-        let key_image = crate::to32(&sig_data[offset..offset + 32]); offset += 32;
+        let c1 = crate::to32(&sig_data[offset..offset + 32]);
+        offset += 32;
+        let key_image = crate::to32(&sig_data[offset..offset + 32]);
+        offset += 32;
         let commitment_image = crate::to32(&sig_data[offset..offset + 32]);
 
-        let sig_struct = crate::clsag::ClsagSignature { s, c1, key_image, commitment_image };
-        if crate::clsag::clsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+        let sig_struct = crate::clsag::ClsagSignature {
+            s,
+            c1,
+            key_image,
+            commitment_image,
+        };
+        if crate::clsag::clsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -705,11 +700,15 @@ pub unsafe extern "C" fn salvium_tclsag_sign(
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let skx = crate::to32(slice::from_raw_parts(secret_key_x, 32));
     let sky = crate::to32(slice::from_raw_parts(secret_key_y, 32));
@@ -729,8 +728,10 @@ pub unsafe extern "C" fn salvium_tclsag_sign(
             ptr::copy_nonoverlapping(s.as_ptr(), out_ptr.add(offset), 32);
             offset += 32;
         }
-        ptr::copy_nonoverlapping(sig.c1.as_ptr(), out_ptr.add(offset), 32); offset += 32;
-        ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out_ptr.add(offset), 32); offset += 32;
+        ptr::copy_nonoverlapping(sig.c1.as_ptr(), out_ptr.add(offset), 32);
+        offset += 32;
+        ptr::copy_nonoverlapping(sig.key_image.as_ptr(), out_ptr.add(offset), 32);
+        offset += 32;
         ptr::copy_nonoverlapping(sig.commitment_image.as_ptr(), out_ptr.add(offset), 32);
         0
     })
@@ -751,32 +752,56 @@ pub unsafe extern "C" fn salvium_tclsag_verify(
 ) -> i32 {
     let n = ring_count as usize;
     let expected = 2 * n * 32 + 96;
-    if sig_len < expected { return 0; }
+    if sig_len < expected {
+        return 0;
+    }
 
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n).map(|i| crate::to32(&flat[i*32..(i+1)*32])).collect()
+        (0..n)
+            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
+            .collect()
     };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
     catch_ffi(move || {
         let mut offset = 0;
         let mut sx = Vec::with_capacity(n);
-        for _ in 0..n { sx.push(crate::to32(&sig_data[offset..offset+32])); offset += 32; }
+        for _ in 0..n {
+            sx.push(crate::to32(&sig_data[offset..offset + 32]));
+            offset += 32;
+        }
         let mut sy = Vec::with_capacity(n);
-        for _ in 0..n { sy.push(crate::to32(&sig_data[offset..offset+32])); offset += 32; }
-        let c1 = crate::to32(&sig_data[offset..offset+32]); offset += 32;
-        let key_image = crate::to32(&sig_data[offset..offset+32]); offset += 32;
-        let commitment_image = crate::to32(&sig_data[offset..offset+32]);
+        for _ in 0..n {
+            sy.push(crate::to32(&sig_data[offset..offset + 32]));
+            offset += 32;
+        }
+        let c1 = crate::to32(&sig_data[offset..offset + 32]);
+        offset += 32;
+        let key_image = crate::to32(&sig_data[offset..offset + 32]);
+        offset += 32;
+        let commitment_image = crate::to32(&sig_data[offset..offset + 32]);
 
-        let sig_struct = crate::tclsag::TclsagSignature { sx, sy, c1, key_image, commitment_image };
-        if crate::tclsag::tclsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) { 1 } else { 0 }
+        let sig_struct = crate::tclsag::TclsagSignature {
+            sx,
+            sy,
+            c1,
+            key_image,
+            commitment_image,
+        };
+        if crate::tclsag::tclsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -818,7 +843,9 @@ pub unsafe extern "C" fn salvium_verify_rct_signatures(
     result_buf: *mut u8,
     result_buf_len: u32,
 ) -> i32 {
-    if result_buf_len < 5 { return -1; }
+    if result_buf_len < 5 {
+        return -1;
+    }
 
     catch_ffi(move || {
         let pfx = slice::from_raw_parts(tx_prefix_hash, tx_prefix_hash_len as usize);
@@ -831,8 +858,17 @@ pub unsafe extern "C" fn salvium_verify_rct_signatures(
         let rcm = slice::from_raw_parts(ring_commitments, ring_commitments_len as usize);
 
         let result = crate::rct_verify::verify_rct_signatures_wasm(
-            rct_type, input_count, ring_size,
-            pfx, rct_b, bp, ki, po, sig, rpk, rcm,
+            rct_type,
+            input_count,
+            ring_size,
+            pfx,
+            rct_b,
+            bp,
+            ki,
+            po,
+            sig,
+            rpk,
+            rcm,
         );
 
         let len = result.len().min(result_buf_len as usize);
@@ -867,21 +903,31 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_prove(
     let out_len_ptr = out_len;
 
     catch_ffi(move || {
-        let amounts_vec: Vec<u64> = (0..n).map(|i| {
-            u64::from_le_bytes([
-                amounts_data[i*8], amounts_data[i*8+1], amounts_data[i*8+2], amounts_data[i*8+3],
-                amounts_data[i*8+4], amounts_data[i*8+5], amounts_data[i*8+6], amounts_data[i*8+7],
-            ])
-        }).collect();
-        let masks_vec: Vec<Scalar> = (0..n).map(|i| {
-            Scalar::from_bytes_mod_order(crate::to32(&masks_data[i*32..(i+1)*32]))
-        }).collect();
+        let amounts_vec: Vec<u64> = (0..n)
+            .map(|i| {
+                u64::from_le_bytes([
+                    amounts_data[i * 8],
+                    amounts_data[i * 8 + 1],
+                    amounts_data[i * 8 + 2],
+                    amounts_data[i * 8 + 3],
+                    amounts_data[i * 8 + 4],
+                    amounts_data[i * 8 + 5],
+                    amounts_data[i * 8 + 6],
+                    amounts_data[i * 8 + 7],
+                ])
+            })
+            .collect();
+        let masks_vec: Vec<Scalar> = (0..n)
+            .map(|i| Scalar::from_bytes_mod_order(crate::to32(&masks_data[i * 32..(i + 1) * 32])))
+            .collect();
 
         let proof = crate::bulletproofs_plus::bulletproof_plus_prove(&amounts_vec, &masks_vec);
         let proof_bytes = crate::bulletproofs_plus::serialize_proof(&proof);
 
         let total = 4 + proof.v.len() * 32 + proof_bytes.len();
-        if total > out_max { return -1; }
+        if total > out_max {
+            return -1;
+        }
 
         let mut off = 0;
         let v_count = proof.v.len() as u32;
@@ -917,17 +963,24 @@ pub unsafe extern "C" fn salvium_bulletproof_plus_verify(
     let comms_data = slice::from_raw_parts(commitments, n * 32).to_vec();
 
     catch_ffi(move || {
-        let v: Vec<_> = (0..n).map(|i| {
-            CompressedEdwardsY(crate::to32(&comms_data[i*32..(i+1)*32])).decompress()
-                .unwrap_or_default()
-        }).collect();
+        let v: Vec<_> = (0..n)
+            .map(|i| {
+                CompressedEdwardsY(crate::to32(&comms_data[i * 32..(i + 1) * 32]))
+                    .decompress()
+                    .unwrap_or_default()
+            })
+            .collect();
 
         let proof = match crate::bulletproofs_plus::parse_proof(&proof_data) {
             Some(p) => p,
             None => return 0,
         };
 
-        if crate::bulletproofs_plus::bulletproof_plus_verify(&v, &proof) { 1 } else { 0 }
+        if crate::bulletproofs_plus::bulletproof_plus_verify(&v, &proof) {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -952,13 +1005,13 @@ pub unsafe extern "C" fn salvium_carrot_scan_output(
     view_tag: *const u8,
     d_e: *const u8,
     enc_amount: *const u8,
-    commitment: *const u8,     // nullable
+    commitment: *const u8, // nullable
     k_vi: *const u8,
     account_spend_pubkey: *const u8,
     input_context: *const u8,
     input_context_len: usize,
-    clear_text_amount: u64,    // u64::MAX = not provided
-    subaddr_data: *const u8,   // n * 40 bytes
+    clear_text_amount: u64,  // u64::MAX = not provided
+    subaddr_data: *const u8, // n * 40 bytes
     n_sub: u32,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
@@ -984,28 +1037,50 @@ pub unsafe extern "C" fn salvium_carrot_scan_output(
         let k_vi_arr = crate::to32(slice::from_raw_parts(k_vi, 32));
         let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
         let ic = slice::from_raw_parts(input_context, input_context_len);
-        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+        let ct_amount = if clear_text_amount == u64::MAX {
+            None
+        } else {
+            Some(clear_text_amount)
+        };
 
         // Parse subaddress map: each entry is 40 bytes (32 key + 4 major + 4 minor)
         let n = n_sub as usize;
-        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
-        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
-            let base = i * 40;
-            let key = crate::to32(&sub_slice[base..base + 32]);
-            let major = u32::from_le_bytes([
-                sub_slice[base + 32], sub_slice[base + 33],
-                sub_slice[base + 34], sub_slice[base + 35],
-            ]);
-            let minor = u32::from_le_bytes([
-                sub_slice[base + 36], sub_slice[base + 37],
-                sub_slice[base + 38], sub_slice[base + 39],
-            ]);
-            (key, major, minor)
-        }).collect();
+        let sub_slice = if n > 0 {
+            slice::from_raw_parts(subaddr_data, n * 40)
+        } else {
+            &[]
+        };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
+            .map(|i| {
+                let base = i * 40;
+                let key = crate::to32(&sub_slice[base..base + 32]);
+                let major = u32::from_le_bytes([
+                    sub_slice[base + 32],
+                    sub_slice[base + 33],
+                    sub_slice[base + 34],
+                    sub_slice[base + 35],
+                ]);
+                let minor = u32::from_le_bytes([
+                    sub_slice[base + 36],
+                    sub_slice[base + 37],
+                    sub_slice[base + 38],
+                    sub_slice[base + 39],
+                ]);
+                (key, major, minor)
+            })
+            .collect();
 
         match crate::carrot_scan::scan_carrot_output(
-            &ko_arr, &vt, &d_e_arr, &enc_amt, commit_opt.as_ref(),
-            &k_vi_arr, &ks_arr, ic, &subaddrs, ct_amount,
+            &ko_arr,
+            &vt,
+            &d_e_arr,
+            &enc_amt,
+            commit_opt.as_ref(),
+            &k_vi_arr,
+            &ks_arr,
+            ic,
+            &subaddrs,
+            ct_amount,
         ) {
             Some(result) => {
                 let json = result.to_json();
@@ -1030,13 +1105,13 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
     view_tag: *const u8,
     d_e: *const u8,
     enc_amount: *const u8,
-    commitment: *const u8,     // nullable
+    commitment: *const u8, // nullable
     view_balance_secret: *const u8,
     account_spend_pubkey: *const u8,
     input_context: *const u8,
     input_context_len: usize,
-    clear_text_amount: u64,    // u64::MAX = not provided
-    subaddr_data: *const u8,   // n * 40 bytes
+    clear_text_amount: u64,  // u64::MAX = not provided
+    subaddr_data: *const u8, // n * 40 bytes
     n_sub: u32,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
@@ -1062,27 +1137,49 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
         let vbs_arr = crate::to32(slice::from_raw_parts(view_balance_secret, 32));
         let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
         let ic = slice::from_raw_parts(input_context, input_context_len);
-        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+        let ct_amount = if clear_text_amount == u64::MAX {
+            None
+        } else {
+            Some(clear_text_amount)
+        };
 
         let n = n_sub as usize;
-        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
-        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
-            let base = i * 40;
-            let key = crate::to32(&sub_slice[base..base + 32]);
-            let major = u32::from_le_bytes([
-                sub_slice[base + 32], sub_slice[base + 33],
-                sub_slice[base + 34], sub_slice[base + 35],
-            ]);
-            let minor = u32::from_le_bytes([
-                sub_slice[base + 36], sub_slice[base + 37],
-                sub_slice[base + 38], sub_slice[base + 39],
-            ]);
-            (key, major, minor)
-        }).collect();
+        let sub_slice = if n > 0 {
+            slice::from_raw_parts(subaddr_data, n * 40)
+        } else {
+            &[]
+        };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
+            .map(|i| {
+                let base = i * 40;
+                let key = crate::to32(&sub_slice[base..base + 32]);
+                let major = u32::from_le_bytes([
+                    sub_slice[base + 32],
+                    sub_slice[base + 33],
+                    sub_slice[base + 34],
+                    sub_slice[base + 35],
+                ]);
+                let minor = u32::from_le_bytes([
+                    sub_slice[base + 36],
+                    sub_slice[base + 37],
+                    sub_slice[base + 38],
+                    sub_slice[base + 39],
+                ]);
+                (key, major, minor)
+            })
+            .collect();
 
         match crate::carrot_scan::scan_carrot_internal_output(
-            &ko_arr, &vt, &d_e_arr, &enc_amt, commit_opt.as_ref(),
-            &vbs_arr, &ks_arr, ic, &subaddrs, ct_amount,
+            &ko_arr,
+            &vt,
+            &d_e_arr,
+            &enc_amt,
+            commit_opt.as_ref(),
+            &vbs_arr,
+            &ks_arr,
+            ic,
+            &subaddrs,
+            ct_amount,
         ) {
             Some(result) => {
                 let json = result.to_json();
@@ -1119,28 +1216,36 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
 /// Returns: 1 = owned, 0 = not owned, -1 = error
 #[no_mangle]
 pub unsafe extern "C" fn salvium_cn_scan_output(
-    output_pubkey: *const u8,       // 32 bytes
-    derivation: *const u8,          // 32 bytes
+    output_pubkey: *const u8, // 32 bytes
+    derivation: *const u8,    // 32 bytes
     output_index: u32,
-    view_tag: i32,                  // -1 = no view tag, 0-255 = expected tag
+    view_tag: i32, // -1 = no view tag, 0-255 = expected tag
     rct_type: u8,
-    clear_text_amount: u64,         // u64::MAX = not provided
+    clear_text_amount: u64,           // u64::MAX = not provided
     ecdh_encrypted_amount: *const u8, // 8 bytes
-    commitment: *const u8,          // 32 bytes, nullable (Pedersen commitment)
-    spend_secret_key: *const u8,    // 32 bytes, nullable (view-only)
-    view_secret_key: *const u8,     // 32 bytes
-    subaddr_data: *const u8,        // n * 40 bytes
+    commitment: *const u8,            // 32 bytes, nullable (Pedersen commitment)
+    spend_secret_key: *const u8,      // 32 bytes, nullable (view-only)
+    view_secret_key: *const u8,       // 32 bytes
+    subaddr_data: *const u8,          // n * 40 bytes
     n_sub: u32,
-    out_ptr: *mut *mut u8,          // Rust-allocated JSON result
+    out_ptr: *mut *mut u8, // Rust-allocated JSON result
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
         let ko_arr = crate::to32(slice::from_raw_parts(output_pubkey, 32));
         let deriv_arr = crate::to32(slice::from_raw_parts(derivation, 32));
 
-        let vt_opt = if view_tag < 0 { None } else { Some(view_tag as u8) };
+        let vt_opt = if view_tag < 0 {
+            None
+        } else {
+            Some(view_tag as u8)
+        };
 
-        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
+        let ct_amount = if clear_text_amount == u64::MAX {
+            None
+        } else {
+            Some(clear_text_amount)
+        };
 
         let enc_amt: [u8; 8] = {
             let s = slice::from_raw_parts(ecdh_encrypted_amount, 8);
@@ -1165,20 +1270,30 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
 
         // Parse subaddress map
         let n = n_sub as usize;
-        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
-        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n).map(|i| {
-            let base = i * 40;
-            let key = crate::to32(&sub_slice[base..base + 32]);
-            let major = u32::from_le_bytes([
-                sub_slice[base + 32], sub_slice[base + 33],
-                sub_slice[base + 34], sub_slice[base + 35],
-            ]);
-            let minor = u32::from_le_bytes([
-                sub_slice[base + 36], sub_slice[base + 37],
-                sub_slice[base + 38], sub_slice[base + 39],
-            ]);
-            (key, major, minor)
-        }).collect();
+        let sub_slice = if n > 0 {
+            slice::from_raw_parts(subaddr_data, n * 40)
+        } else {
+            &[]
+        };
+        let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
+            .map(|i| {
+                let base = i * 40;
+                let key = crate::to32(&sub_slice[base..base + 32]);
+                let major = u32::from_le_bytes([
+                    sub_slice[base + 32],
+                    sub_slice[base + 33],
+                    sub_slice[base + 34],
+                    sub_slice[base + 35],
+                ]);
+                let minor = u32::from_le_bytes([
+                    sub_slice[base + 36],
+                    sub_slice[base + 37],
+                    sub_slice[base + 38],
+                    sub_slice[base + 39],
+                ]);
+                (key, major, minor)
+            })
+            .collect();
 
         match crate::cn_scan::scan_cryptonote_output(
             &ko_arr,
@@ -1255,7 +1370,8 @@ pub unsafe extern "C" fn salvium_carrot_subaddress_map_batch(
         let sp = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
         let vp = crate::to32(slice::from_raw_parts(account_view_pubkey, 32));
         let ga = crate::to32(slice::from_raw_parts(generate_address_secret, 32));
-        let result = crate::subaddress::carrot_subaddress_map_batch(&sp, &vp, &ga, major_count, minor_count);
+        let result =
+            crate::subaddress::carrot_subaddress_map_batch(&sp, &vp, &ga, major_count, minor_count);
         let len = result.len();
         let buf = result.into_boxed_slice();
         let raw = Box::into_raw(buf);
@@ -1589,22 +1705,18 @@ pub unsafe extern "C" fn salvium_storage_open(
 /// Close a storage handle and release resources.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_close(handle: u32) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::storage_close(handle) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        }
+    catch_ffi(|| match crate::storage::storage_close(handle) {
+        Ok(()) => 0,
+        Err(_) => -1,
     })
 }
 
 /// Clear all data in the database (outputs, transactions, key_images, meta).
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_clear(handle: u32) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.clear()) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        }
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.clear()) {
+        Ok(()) => 0,
+        Err(_) => -1,
     })
 }
 
@@ -1618,15 +1730,24 @@ pub unsafe extern "C" fn salvium_storage_put_output(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
             Ok(s) => s,
-            Err(e) => { log::error!("salvium_storage_put_output: invalid UTF-8: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_put_output: invalid UTF-8: {e}");
+                return -1;
+            }
         };
         let row: crate::storage::OutputRow = match serde_json::from_str(json_str) {
             Ok(r) => r,
-            Err(e) => { log::error!("salvium_storage_put_output: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_put_output: JSON parse error: {e}");
+                return -1;
+            }
         };
         match crate::storage::with_db(handle, |db| db.put_output(&row)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_put_output: DB error: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_put_output: DB error: {e}");
+                -1
+            }
         }
     })
 }
@@ -1682,7 +1803,10 @@ pub unsafe extern "C" fn salvium_storage_get_outputs(
         };
         let query: crate::storage::OutputQuery = match serde_json::from_str(query_str) {
             Ok(q) => q,
-            Err(e) => { log::error!("salvium_storage_get_outputs: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_get_outputs: JSON parse error: {e}");
+                return -1;
+            }
         };
         match crate::storage::with_db(handle, |db| db.get_outputs(&query)) {
             Ok(rows) => {
@@ -1738,15 +1862,27 @@ pub unsafe extern "C" fn salvium_storage_put_tx(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json, json_len)) {
             Ok(s) => s,
-            Err(e) => { log::error!("salvium_storage_put_tx: invalid UTF-8: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_put_tx: invalid UTF-8: {e}");
+                return -1;
+            }
         };
         let row: crate::storage::TransactionRow = match serde_json::from_str(json_str) {
             Ok(r) => r,
-            Err(e) => { log::error!("salvium_storage_put_tx: JSON parse error: {e}\n  JSON: {}", &json_str[..json_str.len().min(500)]); return -1; }
+            Err(e) => {
+                log::error!(
+                    "salvium_storage_put_tx: JSON parse error: {e}\n  JSON: {}",
+                    &json_str[..json_str.len().min(500)]
+                );
+                return -1;
+            }
         };
         match crate::storage::with_db(handle, |db| db.put_tx(&row)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_put_tx: DB error: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_put_tx: DB error: {e}");
+                -1
+            }
         }
     })
 }
@@ -1800,7 +1936,10 @@ pub unsafe extern "C" fn salvium_storage_get_txs(
         };
         let query: crate::storage::TxQuery = match serde_json::from_str(query_str) {
             Ok(q) => q,
-            Err(e) => { log::error!("salvium_storage_get_txs: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_get_txs: JSON parse error: {e}");
+                return -1;
+            }
         };
         match crate::storage::with_db(handle, |db| db.get_txs(&query)) {
             Ok(rows) => {
@@ -1834,12 +1973,12 @@ pub unsafe extern "C" fn salvium_storage_get_sync_height(handle: u32) -> i64 {
 /// Set sync height.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_set_sync_height(handle: u32, height: i64) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.set_sync_height(height)) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.set_sync_height(height)) {
             Ok(()) => 0,
             Err(_) => -1,
-        }
-    })
+        },
+    )
 }
 
 /// Store a block hash for a given height.
@@ -1870,8 +2009,8 @@ pub unsafe extern "C" fn salvium_storage_get_block_hash(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_block_hash(height)) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.get_block_hash(height)) {
             Ok(Some(hash)) => {
                 let bytes = hash.into_bytes().into_boxed_slice();
                 let len = bytes.len();
@@ -1882,20 +2021,20 @@ pub unsafe extern "C" fn salvium_storage_get_block_hash(
             }
             Ok(None) => -1,
             Err(_) => -1,
-        }
-    })
+        },
+    )
 }
 
 /// Atomic rollback: deletes outputs/txs/block_hashes above height,
 /// unspends outputs spent above height. All in one transaction.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_rollback(handle: u32, height: i64) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.rollback(height)) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.rollback(height)) {
             Ok(()) => 0,
             Err(_) => -1,
-        }
-    })
+        },
+    )
 }
 
 /// Get distinct asset types present in the wallet. Returns JSON array: ["SAL","SAL1"]
@@ -1905,8 +2044,8 @@ pub unsafe extern "C" fn salvium_storage_get_asset_types(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_asset_types()) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.get_asset_types()) {
             Ok(types) => {
                 let json = serde_json::to_vec(&types).unwrap();
                 let len = json.len();
@@ -1917,8 +2056,8 @@ pub unsafe extern "C" fn salvium_storage_get_asset_types(
                 0
             }
             Err(_) => -1,
-        }
-    })
+        },
+    )
 }
 
 /// Compute balance in Rust. Returns JSON: {"balance":"...","unlockedBalance":"...","lockedBalance":"..."}
@@ -1934,8 +2073,11 @@ pub unsafe extern "C" fn salvium_storage_get_balance(
 ) -> i32 {
     catch_ffi(|| {
         let at_str = std::str::from_utf8(slice::from_raw_parts(asset_type, at_len))
-            .map_err(|_| ()).unwrap();
-        match crate::storage::with_db(handle, |db| db.get_balance(current_height, at_str, account_index)) {
+            .map_err(|_| ())
+            .unwrap();
+        match crate::storage::with_db(handle, |db| {
+            db.get_balance(current_height, at_str, account_index)
+        }) {
             Ok(result) => {
                 let json = serde_json::to_vec(&result).unwrap();
                 let len = json.len();
@@ -1960,7 +2102,9 @@ pub unsafe extern "C" fn salvium_storage_get_all_balances(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_all_balances(current_height, account_index)) {
+        match crate::storage::with_db(handle, |db| {
+            db.get_all_balances(current_height, account_index)
+        }) {
             Ok(result) => {
                 let json = serde_json::to_vec(&result).unwrap();
                 let len = json.len();
@@ -1986,15 +2130,24 @@ pub unsafe extern "C" fn salvium_storage_put_stake(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
             Ok(s) => s,
-            Err(e) => { log::error!("salvium_storage_put_stake: invalid UTF-8: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_put_stake: invalid UTF-8: {e}");
+                return -1;
+            }
         };
         let stake: crate::storage::StakeRow = match serde_json::from_str(json_str) {
             Ok(o) => o,
-            Err(e) => { log::error!("salvium_storage_put_stake: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_put_stake: JSON parse error: {e}");
+                return -1;
+            }
         };
         match crate::storage::with_db(handle, |db| db.put_stake(&stake)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_put_stake: DB error: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_put_stake: DB error: {e}");
+                -1
+            }
         }
     })
 }
@@ -2026,7 +2179,10 @@ pub unsafe extern "C" fn salvium_storage_get_stake(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_stake: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_stake: {e}");
+                -1
+            }
         }
     })
 }
@@ -2061,7 +2217,10 @@ pub unsafe extern "C" fn salvium_storage_get_stakes(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_storage_get_stakes: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_stakes: {e}");
+                -1
+            }
         }
     })
 }
@@ -2093,7 +2252,10 @@ pub unsafe extern "C" fn salvium_storage_get_stake_by_output_key(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_stake_by_output_key: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_stake_by_output_key: {e}");
+                -1
+            }
         }
     })
 }
@@ -2107,11 +2269,17 @@ pub unsafe extern "C" fn salvium_storage_mark_stake_returned(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
             Ok(s) => s,
-            Err(e) => { log::error!("salvium_storage_mark_stake_returned: invalid UTF-8: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_mark_stake_returned: invalid UTF-8: {e}");
+                return -1;
+            }
         };
         let data: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(v) => v,
-            Err(e) => { log::error!("salvium_storage_mark_stake_returned: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_mark_stake_returned: JSON parse error: {e}");
+                return -1;
+            }
         };
         let stake_tx_hash = data["stakeTxHash"].as_str().unwrap_or("");
         let return_tx_hash = data["returnTxHash"].as_str().unwrap_or("");
@@ -2119,25 +2287,34 @@ pub unsafe extern "C" fn salvium_storage_mark_stake_returned(
         let return_timestamp = data["returnTimestamp"].as_i64().unwrap_or(0);
         let return_amount = data["returnAmount"].as_str().unwrap_or("0");
         match crate::storage::with_db(handle, |db| {
-            db.mark_stake_returned(stake_tx_hash, return_tx_hash, return_height, return_timestamp, return_amount)
+            db.mark_stake_returned(
+                stake_tx_hash,
+                return_tx_hash,
+                return_height,
+                return_timestamp,
+                return_amount,
+            )
         }) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_mark_stake_returned: DB error: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_mark_stake_returned: DB error: {e}");
+                -1
+            }
         }
     })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn salvium_storage_delete_stakes_above(
-    handle: u32,
-    height: i64,
-) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.delete_stakes_above(height)) {
+pub unsafe extern "C" fn salvium_storage_delete_stakes_above(handle: u32, height: i64) -> i32 {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.delete_stakes_above(height)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_delete_stakes_above: DB error: {e}"); -1 }
-        }
-    })
+            Err(e) => {
+                log::error!("salvium_storage_delete_stakes_above: DB error: {e}");
+                -1
+            }
+        },
+    )
 }
 
 // ─── Storage: Output Freeze / Thaw / Unspend ────────────────────────────────
@@ -2156,7 +2333,10 @@ pub unsafe extern "C" fn salvium_storage_mark_unspent(
         };
         match crate::storage::with_db(handle, |db| db.mark_unspent(ki_str)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_mark_unspent: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_mark_unspent: {e}");
+                -1
+            }
         }
     })
 }
@@ -2175,7 +2355,10 @@ pub unsafe extern "C" fn salvium_storage_freeze_output(
         };
         match crate::storage::with_db(handle, |db| db.freeze_output(ki_str)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_freeze_output: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_freeze_output: {e}");
+                -1
+            }
         }
     })
 }
@@ -2194,7 +2377,10 @@ pub unsafe extern "C" fn salvium_storage_thaw_output(
         };
         match crate::storage::with_db(handle, |db| db.thaw_output(ki_str)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_thaw_output: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_thaw_output: {e}");
+                -1
+            }
         }
     })
 }
@@ -2228,7 +2414,10 @@ pub unsafe extern "C" fn salvium_storage_get_output_by_public_key(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_output_by_public_key: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_output_by_public_key: {e}");
+                -1
+            }
         }
     })
 }
@@ -2255,7 +2444,10 @@ pub unsafe extern "C" fn salvium_storage_set_tx_note(
         };
         match crate::storage::with_db(handle, |db| db.set_tx_note(hash_str, note_str)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_set_tx_note: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_set_tx_note: {e}");
+                -1
+            }
         }
     })
 }
@@ -2294,7 +2486,10 @@ pub unsafe extern "C" fn salvium_storage_get_tx_notes(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_storage_get_tx_notes: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_tx_notes: {e}");
+                -1
+            }
         }
     })
 }
@@ -2311,11 +2506,17 @@ pub unsafe extern "C" fn salvium_storage_add_address_book_entry(
     catch_ffi(|| {
         let json_str = match std::str::from_utf8(slice::from_raw_parts(json_buf, json_len)) {
             Ok(s) => s,
-            Err(e) => { log::error!("salvium_storage_add_address_book_entry: invalid UTF-8: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_add_address_book_entry: invalid UTF-8: {e}");
+                return -1;
+            }
         };
         let data: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(v) => v,
-            Err(e) => { log::error!("salvium_storage_add_address_book_entry: JSON parse error: {e}"); return -1; }
+            Err(e) => {
+                log::error!("salvium_storage_add_address_book_entry: JSON parse error: {e}");
+                return -1;
+            }
         };
         let address = data["address"].as_str().unwrap_or("");
         let label = data["label"].as_str().unwrap_or("");
@@ -2325,7 +2526,10 @@ pub unsafe extern "C" fn salvium_storage_add_address_book_entry(
             db.add_address_book_entry(address, label, description, payment_id)
         }) {
             Ok(row_id) => row_id as i32,
-            Err(e) => { log::error!("salvium_storage_add_address_book_entry: DB error: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_add_address_book_entry: DB error: {e}");
+                -1
+            }
         }
     })
 }
@@ -2337,8 +2541,8 @@ pub unsafe extern "C" fn salvium_storage_get_address_book(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_address_book()) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.get_address_book()) {
             Ok(entries) => {
                 let json = match serde_json::to_vec(&entries) {
                     Ok(j) => j,
@@ -2351,9 +2555,12 @@ pub unsafe extern "C" fn salvium_storage_get_address_book(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_storage_get_address_book: {e}"); -1 }
-        }
-    })
+            Err(e) => {
+                log::error!("salvium_storage_get_address_book: {e}");
+                -1
+            }
+        },
+    )
 }
 
 /// Get a single address book entry by row_id. Returns JSON object or -1 if not found.
@@ -2364,8 +2571,8 @@ pub unsafe extern "C" fn salvium_storage_get_address_book_entry(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_address_book_entry(row_id)) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.get_address_book_entry(row_id)) {
             Ok(Some(entry)) => {
                 let json = match serde_json::to_vec(&entry) {
                     Ok(j) => j,
@@ -2379,9 +2586,12 @@ pub unsafe extern "C" fn salvium_storage_get_address_book_entry(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_address_book_entry: {e}"); -1 }
-        }
-    })
+            Err(e) => {
+                log::error!("salvium_storage_get_address_book_entry: {e}");
+                -1
+            }
+        },
+    )
 }
 
 /// Edit an address book entry. Input: JSON with "rowId" and optional "address","label","description","paymentId".
@@ -2402,7 +2612,9 @@ pub unsafe extern "C" fn salvium_storage_edit_address_book_entry(
             Err(_) => return -1,
         };
         let row_id = data["rowId"].as_i64().unwrap_or(-1);
-        if row_id < 0 { return -1; }
+        if row_id < 0 {
+            return -1;
+        }
         let address = data.get("address").and_then(|v| v.as_str());
         let label = data.get("label").and_then(|v| v.as_str());
         let description = data.get("description").and_then(|v| v.as_str());
@@ -2412,7 +2624,10 @@ pub unsafe extern "C" fn salvium_storage_edit_address_book_entry(
         }) {
             Ok(true) => 1,
             Ok(false) => 0,
-            Err(e) => { log::error!("salvium_storage_edit_address_book_entry: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_edit_address_book_entry: {e}");
+                -1
+            }
         }
     })
 }
@@ -2423,13 +2638,16 @@ pub unsafe extern "C" fn salvium_storage_delete_address_book_entry(
     handle: u32,
     row_id: i64,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.delete_address_book_entry(row_id)) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.delete_address_book_entry(row_id)) {
             Ok(true) => 1,
             Ok(false) => 0,
-            Err(e) => { log::error!("salvium_storage_delete_address_book_entry: {e}"); -1 }
-        }
-    })
+            Err(e) => {
+                log::error!("salvium_storage_delete_address_book_entry: {e}");
+                -1
+            }
+        },
+    )
 }
 
 // ─── Storage: Key-Value Attributes ──────────────────────────────────────────
@@ -2454,7 +2672,10 @@ pub unsafe extern "C" fn salvium_storage_set_attribute(
         };
         match crate::storage::with_db(handle, |db| db.set_attribute(key_str, val_str)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_set_attribute: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_set_attribute: {e}");
+                -1
+            }
         }
     })
 }
@@ -2483,7 +2704,10 @@ pub unsafe extern "C" fn salvium_storage_get_attribute(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_attribute: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_attribute: {e}");
+                -1
+            }
         }
     })
 }
@@ -2516,7 +2740,10 @@ pub unsafe extern "C" fn salvium_storage_get_staked_balance(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_storage_get_staked_balance: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_staked_balance: {e}");
+                -1
+            }
         }
     })
 }
@@ -2529,8 +2756,8 @@ pub unsafe extern "C" fn salvium_storage_get_all_staked_balances(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(|| {
-        match crate::storage::with_db(handle, |db| db.get_all_staked_balances()) {
+    catch_ffi(
+        || match crate::storage::with_db(handle, |db| db.get_all_staked_balances()) {
             Ok(balances) => {
                 let string_map: std::collections::HashMap<String, String> = balances
                     .into_iter()
@@ -2544,9 +2771,12 @@ pub unsafe extern "C" fn salvium_storage_get_all_staked_balances(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_storage_get_all_staked_balances: {e}"); -1 }
-        }
-    })
+            Err(e) => {
+                log::error!("salvium_storage_get_all_staked_balances: {e}");
+                -1
+            }
+        },
+    )
 }
 
 /// Look up a locked stake by its expected return output key.
@@ -2564,7 +2794,9 @@ pub unsafe extern "C" fn salvium_storage_get_locked_stake_by_return_output_key(
             Ok(s) => s,
             Err(_) => return -1,
         };
-        match crate::storage::with_db(handle, |db| db.get_locked_stake_by_return_output_key(key_str)) {
+        match crate::storage::with_db(handle, |db| {
+            db.get_locked_stake_by_return_output_key(key_str)
+        }) {
             Ok(Some(stake)) => {
                 let json = match serde_json::to_vec(&stake) {
                     Ok(j) => j,
@@ -2578,7 +2810,10 @@ pub unsafe extern "C" fn salvium_storage_get_locked_stake_by_return_output_key(
                 0
             }
             Ok(None) => -1,
-            Err(e) => { log::error!("salvium_storage_get_locked_stake_by_return_output_key: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_get_locked_stake_by_return_output_key: {e}");
+                -1
+            }
         }
     })
 }
@@ -2594,11 +2829,12 @@ pub unsafe extern "C" fn salvium_storage_rekey(
 ) -> i32 {
     catch_ffi(|| {
         let key = slice::from_raw_parts(new_key, key_len);
-        match crate::storage::with_db(handle, |db| {
-            db.rekey(key).map_err(|e| e)
-        }) {
+        match crate::storage::with_db(handle, |db| db.rekey(key)) {
             Ok(()) => 0,
-            Err(e) => { log::error!("salvium_storage_rekey: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_storage_rekey: {e}");
+                -1
+            }
         }
     })
 }
@@ -2707,7 +2943,10 @@ pub unsafe extern "C" fn salvium_create_address(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_create_address: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_create_address: {e}");
+                -1
+            }
         }
     })
 }
@@ -2737,7 +2976,7 @@ pub unsafe extern "C" fn salvium_parse_address(
         };
         match salvium_types::address::parse_address(addr_str) {
             Ok(parsed) => {
-                let pid = parsed.payment_id.map(|p| hex::encode(p));
+                let pid = parsed.payment_id.map(hex::encode);
                 let result = serde_json::json!({
                     "network": format!("{:?}", parsed.network).to_lowercase(),
                     "format": format!("{:?}", parsed.format).to_lowercase(),
@@ -2754,7 +2993,10 @@ pub unsafe extern "C" fn salvium_parse_address(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_parse_address: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_parse_address: {e}");
+                -1
+            }
         }
     })
 }
@@ -2780,7 +3022,10 @@ pub unsafe extern "C" fn salvium_seed_to_mnemonic(
                 *out_len = len;
                 0
             }
-            Err(e) => { log::error!("salvium_seed_to_mnemonic: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_seed_to_mnemonic: {e}");
+                -1
+            }
         }
     })
 }
@@ -2803,7 +3048,10 @@ pub unsafe extern "C" fn salvium_mnemonic_to_seed(
                 ptr::copy_nonoverlapping(result.seed.as_ptr(), out, 32);
                 0
             }
-            Err(e) => { log::error!("salvium_mnemonic_to_seed: {e}"); -1 }
+            Err(e) => {
+                log::error!("salvium_mnemonic_to_seed: {e}");
+                -1
+            }
         }
     })
 }
@@ -2824,30 +3072,31 @@ mod tests {
 
     // Two known scalars (valid mod L, from CryptoNote test vectors)
     const SEC_A: [u8; 32] = [
-        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
     ]; // scalar = 1
 
     const SEC_B: [u8; 32] = [
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
     ]; // scalar = 2
 
     // Ed25519 basepoint (compressed)
     const G: [u8; 32] = [
-        0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66,
     ];
 
     /// Helper: call FFI function, compare output to direct Rust call
     fn assert_ffi_matches(ffi_out: &[u8; 32], rust_result: &[u8]) {
-        assert_eq!(&ffi_out[..], rust_result, "FFI output != direct Rust output");
+        assert_eq!(
+            &ffi_out[..],
+            rust_result,
+            "FFI output != direct Rust output"
+        );
     }
 
     #[test]
@@ -2875,8 +3124,12 @@ mod tests {
         let mut out = [0u8; 32];
         let rc = unsafe {
             salvium_blake2b_keyed(
-                data.as_ptr(), data.len(), 32,
-                key.as_ptr(), key.len(), out.as_mut_ptr(),
+                data.as_ptr(),
+                data.len(),
+                32,
+                key.as_ptr(),
+                key.len(),
+                out.as_mut_ptr(),
             )
         };
         assert_eq!(rc, 0);
@@ -2922,7 +3175,12 @@ mod tests {
         };
         let mut out = [0u8; 32];
         let rc = unsafe {
-            salvium_sc_mul_add(SEC_A.as_ptr(), SEC_B.as_ptr(), three.as_ptr(), out.as_mut_ptr())
+            salvium_sc_mul_add(
+                SEC_A.as_ptr(),
+                SEC_B.as_ptr(),
+                three.as_ptr(),
+                out.as_mut_ptr(),
+            )
         };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::sc_mul_add(&SEC_A, &SEC_B, &three));
@@ -2939,7 +3197,12 @@ mod tests {
         };
         let mut out = [0u8; 32];
         let rc = unsafe {
-            salvium_sc_mul_sub(SEC_A.as_ptr(), SEC_B.as_ptr(), five.as_ptr(), out.as_mut_ptr())
+            salvium_sc_mul_sub(
+                SEC_A.as_ptr(),
+                SEC_B.as_ptr(),
+                five.as_ptr(),
+                out.as_mut_ptr(),
+            )
         };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::sc_mul_sub(&SEC_A, &SEC_B, &five));
@@ -3053,7 +3316,10 @@ mod tests {
         let mut out = [0u8; 32];
         let rc = unsafe {
             salvium_double_scalar_mult_base(
-                SEC_A.as_ptr(), G.as_ptr(), SEC_A.as_ptr(), out.as_mut_ptr(),
+                SEC_A.as_ptr(),
+                G.as_ptr(),
+                SEC_A.as_ptr(),
+                out.as_mut_ptr(),
             )
         };
         assert_eq!(rc, 0);
@@ -3092,9 +3358,8 @@ mod tests {
     fn test_generate_key_image() {
         // KI = sec * H_p(pub)
         let mut out = [0u8; 32];
-        let rc = unsafe {
-            salvium_generate_key_image(G.as_ptr(), SEC_A.as_ptr(), out.as_mut_ptr())
-        };
+        let rc =
+            unsafe { salvium_generate_key_image(G.as_ptr(), SEC_A.as_ptr(), out.as_mut_ptr()) };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::generate_key_image(&G, &SEC_A));
         use curve25519_dalek::edwards::CompressedEdwardsY;
@@ -3145,11 +3410,21 @@ mod tests {
 
         let mut derived_sec = [0u8; 32];
         unsafe {
-            salvium_derive_secret_key(derivation.as_ptr(), 7, SEC_B.as_ptr(), derived_sec.as_mut_ptr());
+            salvium_derive_secret_key(
+                derivation.as_ptr(),
+                7,
+                SEC_B.as_ptr(),
+                derived_sec.as_mut_ptr(),
+            );
         }
         let mut derived_pub = [0u8; 32];
         unsafe {
-            salvium_derive_public_key(derivation.as_ptr(), 7, pub_key.as_ptr(), derived_pub.as_mut_ptr());
+            salvium_derive_public_key(
+                derivation.as_ptr(),
+                7,
+                pub_key.as_ptr(),
+                derived_pub.as_mut_ptr(),
+            );
         }
         // derived_sec * G should == derived_pub
         let mut check = [0u8; 32];
@@ -3160,11 +3435,10 @@ mod tests {
     #[test]
     fn test_pedersen_commit() {
         let amount = SEC_A; // 1
-        let mask = SEC_B;   // 2
+        let mask = SEC_B; // 2
         let mut out = [0u8; 32];
-        let rc = unsafe {
-            salvium_pedersen_commit(amount.as_ptr(), mask.as_ptr(), out.as_mut_ptr())
-        };
+        let rc =
+            unsafe { salvium_pedersen_commit(amount.as_ptr(), mask.as_ptr(), out.as_mut_ptr()) };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::pedersen_commit(&amount, &mask));
         use curve25519_dalek::edwards::CompressedEdwardsY;
@@ -3221,9 +3495,12 @@ mod tests {
         let bad_key = [0u8; 32];
         let rc = unsafe {
             salvium_verify_signature(
-                message.as_ptr(), message.len(),
-                bad_sig.as_ptr(), bad_sig.len(),
-                bad_key.as_ptr(), bad_key.len(),
+                message.as_ptr(),
+                message.len(),
+                bad_sig.as_ptr(),
+                bad_sig.len(),
+                bad_key.as_ptr(),
+                bad_key.len(),
             )
         };
         assert_eq!(rc, 0); // invalid → 0
@@ -3237,16 +3514,17 @@ mod tests {
         let salt = [0x02u8; 16];
         // Known-good output from argon2 crate v0.5 (Argon2id, t=3, m=32, p=4)
         let expected: [u8; 32] = [
-            0x03, 0xaa, 0xb9, 0x65, 0xc1, 0x20, 0x01, 0xc9,
-            0xd7, 0xd0, 0xd2, 0xde, 0x33, 0x19, 0x2c, 0x04,
-            0x94, 0xb6, 0x84, 0xbb, 0x14, 0x81, 0x96, 0xd7,
-            0x3c, 0x1d, 0xf1, 0xac, 0xaf, 0x6d, 0x0c, 0x2e,
+            0x03, 0xaa, 0xb9, 0x65, 0xc1, 0x20, 0x01, 0xc9, 0xd7, 0xd0, 0xd2, 0xde, 0x33, 0x19,
+            0x2c, 0x04, 0x94, 0xb6, 0x84, 0xbb, 0x14, 0x81, 0x96, 0xd7, 0x3c, 0x1d, 0xf1, 0xac,
+            0xaf, 0x6d, 0x0c, 0x2e,
         ];
         let mut out = [0u8; 32];
         let rc = unsafe {
             salvium_argon2id(
-                password.as_ptr(), password.len(),
-                salt.as_ptr(), salt.len(),
+                password.as_ptr(),
+                password.len(),
+                salt.as_ptr(),
+                salt.len(),
                 3,  // t_cost
                 32, // m_cost (32 KiB — tiny, just for test)
                 4,  // parallelism
@@ -3266,9 +3544,15 @@ mod tests {
         let mut out = [0u8; 32];
         let rc = unsafe {
             salvium_argon2id(
-                password.as_ptr(), password.len(),
-                salt.as_ptr(), salt.len(),
-                1, 0, 1, 32, out.as_mut_ptr(),
+                password.as_ptr(),
+                password.len(),
+                salt.as_ptr(),
+                salt.len(),
+                1,
+                0,
+                1,
+                32,
+                out.as_mut_ptr(),
             )
         };
         assert_eq!(rc, -1);
@@ -3309,13 +3593,12 @@ mod tests {
     fn test_verify_signature_ecdsa_p256() {
         // Testnet oracle public key (ECDSA P-256, DER-encoded SPKI)
         let key_der: [u8; 91] = [
-            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
-            0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03,
-            0x42, 0x00, 0x04, 0xe5, 0x80, 0x71, 0x5b, 0x1d, 0x40, 0x64, 0x20, 0x3d,
-            0x8d, 0x35, 0x24, 0xf0, 0xfa, 0xf6, 0xb9, 0x9f, 0x63, 0xa5, 0xf4, 0x6d,
-            0x29, 0x6b, 0xf7, 0x56, 0x8d, 0x7f, 0x1a, 0x7c, 0xbe, 0xd6, 0xf7, 0xda,
-            0xc6, 0xc5, 0xe1, 0x05, 0x08, 0x86, 0xd4, 0xa9, 0x47, 0x91, 0xa7, 0xcd,
-            0x19, 0xaa, 0xf3, 0xa0, 0xbd, 0x16, 0x1d, 0x6e, 0x28, 0x72, 0xa6, 0x9a,
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xe5,
+            0x80, 0x71, 0x5b, 0x1d, 0x40, 0x64, 0x20, 0x3d, 0x8d, 0x35, 0x24, 0xf0, 0xfa, 0xf6,
+            0xb9, 0x9f, 0x63, 0xa5, 0xf4, 0x6d, 0x29, 0x6b, 0xf7, 0x56, 0x8d, 0x7f, 0x1a, 0x7c,
+            0xbe, 0xd6, 0xf7, 0xda, 0xc6, 0xc5, 0xe1, 0x05, 0x08, 0x86, 0xd4, 0xa9, 0x47, 0x91,
+            0xa7, 0xcd, 0x19, 0xaa, 0xf3, 0xa0, 0xbd, 0x16, 0x1d, 0x6e, 0x28, 0x72, 0xa6, 0x9a,
             0xa8, 0x5e, 0x62, 0xbf, 0xc8, 0xb7, 0xe4,
         ];
         // Verify that parsing the key doesn't crash with an invalid signature
@@ -3323,9 +3606,12 @@ mod tests {
         let bad_sig = [0u8; 70];
         let rc = unsafe {
             salvium_verify_signature(
-                message.as_ptr(), message.len(),
-                bad_sig.as_ptr(), bad_sig.len(),
-                key_der.as_ptr(), key_der.len(),
+                message.as_ptr(),
+                message.len(),
+                bad_sig.as_ptr(),
+                bad_sig.len(),
+                key_der.as_ptr(),
+                key_der.len(),
             )
         };
         // Should return 0 (invalid sig), not crash
@@ -3375,8 +3661,11 @@ mod tests {
         let mut enc_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_encrypt(
-                key.as_ptr(), plaintext.as_ptr(), plaintext.len(),
-                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+                key.as_ptr(),
+                plaintext.as_ptr(),
+                plaintext.len(),
+                encrypted.as_mut_ptr(),
+                &mut enc_len as *mut usize,
             )
         };
         assert_eq!(rc, 0);
@@ -3385,8 +3674,11 @@ mod tests {
         let mut dec_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_decrypt(
-                wrong_key.as_ptr(), encrypted.as_ptr(), enc_len,
-                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+                wrong_key.as_ptr(),
+                encrypted.as_ptr(),
+                enc_len,
+                decrypted.as_mut_ptr(),
+                &mut dec_len as *mut usize,
             )
         };
         assert_eq!(rc, -1); // Authentication failure
@@ -3400,8 +3692,11 @@ mod tests {
         let mut enc_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_encrypt(
-                key.as_ptr(), plaintext.as_ptr(), plaintext.len(),
-                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+                key.as_ptr(),
+                plaintext.as_ptr(),
+                plaintext.len(),
+                encrypted.as_mut_ptr(),
+                &mut enc_len as *mut usize,
             )
         };
         assert_eq!(rc, 0);
@@ -3413,8 +3708,11 @@ mod tests {
         let mut dec_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_decrypt(
-                key.as_ptr(), encrypted.as_ptr(), enc_len,
-                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+                key.as_ptr(),
+                encrypted.as_ptr(),
+                enc_len,
+                decrypted.as_mut_ptr(),
+                &mut dec_len as *mut usize,
             )
         };
         assert_eq!(rc, -1); // Authentication failure
@@ -3428,8 +3726,11 @@ mod tests {
         let mut dec_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_decrypt(
-                key.as_ptr(), short.as_ptr(), short.len(),
-                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+                key.as_ptr(),
+                short.as_ptr(),
+                short.len(),
+                decrypted.as_mut_ptr(),
+                &mut dec_len as *mut usize,
             )
         };
         assert_eq!(rc, -1);
@@ -3443,8 +3744,11 @@ mod tests {
         let mut enc_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_encrypt(
-                key.as_ptr(), plaintext.as_ptr(), 0,
-                encrypted.as_mut_ptr(), &mut enc_len as *mut usize,
+                key.as_ptr(),
+                plaintext.as_ptr(),
+                0,
+                encrypted.as_mut_ptr(),
+                &mut enc_len as *mut usize,
             )
         };
         assert_eq!(rc, 0);
@@ -3454,8 +3758,11 @@ mod tests {
         let mut dec_len: usize = 0;
         let rc = unsafe {
             salvium_aes256gcm_decrypt(
-                key.as_ptr(), encrypted.as_ptr(), enc_len,
-                decrypted.as_mut_ptr(), &mut dec_len as *mut usize,
+                key.as_ptr(),
+                encrypted.as_ptr(),
+                enc_len,
+                decrypted.as_mut_ptr(),
+                &mut dec_len as *mut usize,
             )
         };
         assert_eq!(rc, 0);

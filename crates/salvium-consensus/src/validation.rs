@@ -9,17 +9,13 @@
 //! Reference: salvium/src/cryptonote_core/blockchain.cpp
 //!            salvium/src/cryptonote_core/tx_verification_utils.cpp
 
-use salvium_types::constants::{
-    HfVersion, TxType, RctType, Network,
-    DEFAULT_RING_SIZE, TRANSACTION_VERSION_2_OUTS,
-    TRANSACTION_VERSION_CARROT,
-    network_config,
-};
 use salvium_types::consensus::{
-    FEE_PER_BYTE, DYNAMIC_FEE_PER_KB_BASE_FEE,
-    DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD,
-    PER_KB_FEE_QUANTIZATION_DECIMALS,
-    min_block_weight,
+    min_block_weight, DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE,
+    FEE_PER_BYTE, PER_KB_FEE_QUANTIZATION_DECIMALS,
+};
+use salvium_types::constants::{
+    network_config, HfVersion, Network, RctType, TxType, DEFAULT_RING_SIZE,
+    TRANSACTION_VERSION_2_OUTS, TRANSACTION_VERSION_CARROT,
 };
 use thiserror::Error;
 
@@ -39,7 +35,11 @@ pub enum ValidationError {
     InvalidTxVersion { version: u8, hf_version: u8 },
 
     #[error("TX type {tx_type} requires version {required} at HF {hf_version}")]
-    TxVersionMismatch { tx_type: String, required: u8, hf_version: u8 },
+    TxVersionMismatch {
+        tx_type: String,
+        required: u8,
+        hf_version: u8,
+    },
 
     #[error("CONVERT transactions not enabled before oracle HF")]
     ConvertNotEnabled,
@@ -62,17 +62,32 @@ pub enum ValidationError {
     #[error("cannot spend BURN coins")]
     SpendBurn,
 
-    #[error("source asset ({src_asset}) must match destination ({dest_asset}) for TX type {tx_type}")]
-    AssetMismatch { src_asset: String, dest_asset: String, tx_type: String },
+    #[error(
+        "source asset ({src_asset}) must match destination ({dest_asset}) for TX type {tx_type}"
+    )]
+    AssetMismatch {
+        src_asset: String,
+        dest_asset: String,
+        tx_type: String,
+    },
 
     #[error("must spend {expected} coins at HF {hf_version}, got {actual}")]
-    WrongSourceAssetForHf { expected: String, actual: String, hf_version: u8 },
+    WrongSourceAssetForHf {
+        expected: String,
+        actual: String,
+        hf_version: u8,
+    },
 
     #[error("MINER/PROTOCOL must have RCTTypeNull")]
     CoinbaseRctNotNull,
 
     #[error("TX type {tx_type} must use {required} at HF {hf_version}, got {actual}")]
-    WrongRctType { tx_type: String, required: String, actual: String, hf_version: u8 },
+    WrongRctType {
+        tx_type: String,
+        required: String,
+        actual: String,
+        hf_version: u8,
+    },
 
     #[error("MINER/PROTOCOL must have exactly 1 input")]
     CoinbaseInputCount,
@@ -81,7 +96,11 @@ pub enum ValidationError {
     NoInputs,
 
     #[error("input {index} ring size must be {expected}, got {actual}")]
-    WrongRingSize { index: usize, expected: usize, actual: usize },
+    WrongRingSize {
+        index: usize,
+        expected: usize,
+        actual: usize,
+    },
 
     #[error("ring sizes must be consistent: got {min} and {max}")]
     InconsistentRingSizes { min: usize, max: usize },
@@ -120,7 +139,10 @@ pub enum ValidationError {
     WeightExceeded { weight: u64, limit: u64 },
 
     #[error("miner TX input height {input_height} != block height {block_height}")]
-    CoinbaseHeightMismatch { input_height: u64, block_height: u64 },
+    CoinbaseHeightMismatch {
+        input_height: u64,
+        block_height: u64,
+    },
 
     #[error("miner TX version must be > 1")]
     CoinbaseVersionTooLow,
@@ -164,9 +186,8 @@ pub fn is_audit_hf(hf_version: u8) -> bool {
 }
 
 /// Blacklisted transaction hashes.
-pub const TX_BLACKLIST: &[&str] = &[
-    "017a79539e69ce16e91d9aa2267c102f336678c41636567c1129e3e72149499a",
-];
+pub const TX_BLACKLIST: &[&str] =
+    &["017a79539e69ce16e91d9aa2267c102f336678c41636567c1129e3e72149499a"];
 
 // =============================================================================
 // Transaction Type and Version Validation
@@ -248,7 +269,9 @@ pub fn validate_asset_types(
     hf_version: u8,
 ) -> Result<(), ValidationError> {
     if !is_valid_asset(source_asset) {
-        return Err(ValidationError::InvalidSourceAsset(source_asset.to_string()));
+        return Err(ValidationError::InvalidSourceAsset(
+            source_asset.to_string(),
+        ));
     }
     if !is_valid_asset(dest_asset) {
         return Err(ValidationError::InvalidDestAsset(dest_asset.to_string()));
@@ -308,10 +331,7 @@ pub fn validate_asset_types(
     }
 
     // For non-CONVERT, non-BURN types: source must equal dest
-    if tx_type != TxType::Convert
-        && tx_type != TxType::Burn
-        && source_asset != dest_asset
-    {
+    if tx_type != TxType::Convert && tx_type != TxType::Burn && source_asset != dest_asset {
         return Err(ValidationError::AssetMismatch {
             src_asset: source_asset.to_string(),
             dest_asset: dest_asset.to_string(),
@@ -461,7 +481,11 @@ pub fn validate_input_ring_sizes(
 /// Transactions spending unmixable outputs may use version 1;
 /// all-mixable transactions must use version 2+.
 pub fn min_tx_version_for_inputs(n_unmixable: usize) -> u8 {
-    if n_unmixable > 0 { 1 } else { 2 }
+    if n_unmixable > 0 {
+        1
+    } else {
+        2
+    }
 }
 
 /// Validate that key images are sorted in strictly increasing lexicographic order.
@@ -506,10 +530,7 @@ pub fn validate_output_key_sorting(
 // =============================================================================
 
 /// Validate output count for special TX types.
-pub fn validate_output_count(
-    tx_type: TxType,
-    output_count: usize,
-) -> Result<(), ValidationError> {
+pub fn validate_output_count(tx_type: TxType, output_count: usize) -> Result<(), ValidationError> {
     if tx_type == TxType::Audit && output_count != 0 {
         return Err(ValidationError::AuditOutputCount);
     }
@@ -529,7 +550,10 @@ pub fn validate_output_target_types(
 ) -> Result<(), ValidationError> {
     if hf_version >= HfVersion::CARROT {
         for &otype in output_types {
-            if tx_type != TxType::Protocol && tx_type != TxType::Miner && otype != output_type::TO_CARROT_V1 {
+            if tx_type != TxType::Protocol
+                && tx_type != TxType::Miner
+                && otype != output_type::TO_CARROT_V1
+            {
                 return Err(ValidationError::WrongOutputType);
             }
         }
@@ -578,16 +602,18 @@ pub fn validate_audit_tx(
 
     // Validate asset pair: dest must be SAL1
     if dest_asset != "SAL1" {
-        return Err(ValidationError::InvalidDestAsset(
-            format!("AUDIT dest must be SAL1, got {}", dest_asset),
-        ));
+        return Err(ValidationError::InvalidDestAsset(format!(
+            "AUDIT dest must be SAL1, got {}",
+            dest_asset
+        )));
     }
 
     // Source must be SAL or SAL1
     if source_asset != "SAL" && source_asset != "SAL1" {
-        return Err(ValidationError::InvalidSourceAsset(
-            format!("AUDIT source must be SAL or SAL1, got {}", source_asset),
-        ));
+        return Err(ValidationError::InvalidSourceAsset(format!(
+            "AUDIT source must be SAL or SAL1, got {}",
+            source_asset
+        )));
     }
 
     // Return address required
@@ -612,7 +638,9 @@ pub fn validate_audit_tx(
 pub fn validate_output_amounts_overflow(amounts: &[u64]) -> Result<(), ValidationError> {
     let mut total: u64 = 0;
     for &amount in amounts {
-        total = total.checked_add(amount).ok_or(ValidationError::OutputOverflow)?;
+        total = total
+            .checked_add(amount)
+            .ok_or(ValidationError::OutputOverflow)?;
     }
     Ok(())
 }
@@ -629,11 +657,7 @@ pub fn fee_quantization_mask() -> u64 {
 /// Calculate the required fee for a transaction.
 ///
 /// Reference: blockchain.cpp:4411-4440
-pub fn calculate_required_fee(
-    tx_weight: u64,
-    base_reward: u64,
-    hf_version: u8,
-) -> u64 {
+pub fn calculate_required_fee(tx_weight: u64, base_reward: u64, hf_version: u8) -> u64 {
     let fee_per_byte = if hf_version >= HfVersion::SCALING_2021 {
         let base_fee = DYNAMIC_FEE_PER_KB_BASE_FEE / 1024;
         if base_reward > 0 {
@@ -1031,7 +1055,9 @@ mod tests {
         assert!(is_tx_blacklisted(
             "017a79539e69ce16e91d9aa2267c102f336678c41636567c1129e3e72149499a"
         ));
-        assert!(!is_tx_blacklisted("0000000000000000000000000000000000000000000000000000000000000000"));
+        assert!(!is_tx_blacklisted(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
     }
 
     #[test]
@@ -1068,7 +1094,10 @@ mod tests {
         // SAL -> SAL is rejected because dest must be SAL1
         let result = validate_audit_tx("SAL", "SAL", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::InvalidDestAsset(_)
+        ));
     }
 
     #[test]
@@ -1076,7 +1105,10 @@ mod tests {
         // BURN source is rejected
         let result = validate_audit_tx("BURN", "SAL1", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::InvalidSourceAsset(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::InvalidSourceAsset(_)
+        ));
     }
 
     #[test]
@@ -1084,7 +1116,10 @@ mod tests {
         // dest SAL rejected (must be SAL1)
         let result = validate_audit_tx("SAL", "SAL", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::InvalidDestAsset(_)
+        ));
     }
 
     #[test]
@@ -1092,7 +1127,10 @@ mod tests {
         // dest BURN rejected
         let result = validate_audit_tx("SAL", "BURN", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::InvalidDestAsset(_)
+        ));
     }
 
     #[test]
@@ -1100,7 +1138,10 @@ mod tests {
         // Empty return address rejected
         let result = validate_audit_tx("SAL", "SAL1", "", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::AuditReturnRequired));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::AuditReturnRequired
+        ));
     }
 
     #[test]
@@ -1108,7 +1149,10 @@ mod tests {
         // Nonzero change rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 1000, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::AuditNonZeroChange(1000)));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::AuditNonZeroChange(1000)
+        ));
     }
 
     #[test]
@@ -1116,7 +1160,10 @@ mod tests {
         // Zero unlock height rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 0, 0, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::AuditZeroUnlockHeight));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::AuditZeroUnlockHeight
+        ));
     }
 
     #[test]
@@ -1124,7 +1171,10 @@ mod tests {
         // output_count > 0 rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 0, 500000, 2, 1);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ValidationError::AuditOutputCount));
+        assert!(matches!(
+            result.unwrap_err(),
+            ValidationError::AuditOutputCount
+        ));
     }
 
     #[test]
@@ -1139,13 +1189,13 @@ mod tests {
     fn test_audit_all_valid_fields() {
         // Verify all fields are checked in a valid case
         let result = validate_audit_tx(
-            "SAL",           // valid source
-            "SAL1",          // valid dest
-            "SaLvAddr",      // non-empty return address
-            0,               // zero change
-            500000,          // positive unlock height
-            0,               // zero outputs
-            2,               // multiple inputs OK
+            "SAL",      // valid source
+            "SAL1",     // valid dest
+            "SaLvAddr", // non-empty return address
+            0,          // zero change
+            500000,     // positive unlock height
+            0,          // zero outputs
+            2,          // multiple inputs OK
         );
         assert!(result.is_ok());
 

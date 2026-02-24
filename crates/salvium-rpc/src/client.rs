@@ -202,14 +202,11 @@ impl RpcClient {
             });
         }
 
-        let body: JsonRpcResponse =
-            resp.json()
-                .await
-                .map_err(|e| RpcError::Http {
-                    method: method.to_string(),
-                    url: url.to_string(),
-                    source: e,
-                })?;
+        let body: JsonRpcResponse = resp.json().await.map_err(|e| RpcError::Http {
+            method: method.to_string(),
+            url: url.to_string(),
+            source: e,
+        })?;
 
         if let Some(err) = body.error {
             if err.message == "BUSY" {
@@ -259,12 +256,7 @@ impl RpcClient {
         Err(last_err)
     }
 
-    async fn do_post(
-        &self,
-        url: &str,
-        body: &Value,
-        endpoint: &str,
-    ) -> Result<Value, RpcError> {
+    async fn do_post(&self, url: &str, body: &Value, endpoint: &str) -> Result<Value, RpcError> {
         let resp = self
             .client
             .post(url)
@@ -358,9 +350,7 @@ impl RpcClient {
 
     /// Simple connectivity check (GET /get_info).
     pub async fn is_connected(&self) -> bool {
-        self.post("/get_info", &serde_json::json!({}))
-            .await
-            .is_ok()
+        self.post("/get_info", &serde_json::json!({})).await.is_ok()
     }
 }
 

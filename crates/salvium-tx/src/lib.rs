@@ -4,20 +4,20 @@
 //! transactions, CARROT output creation, decoy ring member selection, and
 //! fee estimation. Delegates low-level crypto to salvium-crypto.
 
-pub mod types;
+pub mod analysis;
 pub mod builder;
 pub mod carrot;
 pub mod decoy;
 pub mod fee;
-pub mod analysis;
-pub mod sign;
 pub mod offline;
+pub mod sign;
+pub mod types;
 
-pub use types::{Transaction, TxPrefix, TxInput, TxOutput, RctSignatures, ProtocolTxData};
 pub use builder::TransactionBuilder;
 pub use decoy::DecoySelector;
 pub use fee::estimate_tx_fee;
 pub use sign::sign_transaction;
+pub use types::{ProtocolTxData, RctSignatures, Transaction, TxInput, TxOutput, TxPrefix};
 
 use thiserror::Error;
 

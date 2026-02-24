@@ -344,7 +344,18 @@ mod tests {
 
     #[test]
     fn test_varint_roundtrip() {
-        for val in [0u64, 1, 127, 128, 255, 256, 16383, 16384, u32::MAX as u64, u64::MAX] {
+        for val in [
+            0u64,
+            1,
+            127,
+            128,
+            255,
+            256,
+            16383,
+            16384,
+            u32::MAX as u64,
+            u64::MAX,
+        ] {
             let encoded = encode_varint(val);
             let (decoded, bytes_read) = decode_varint(&encoded, 0).unwrap();
             assert_eq!(decoded, val, "varint roundtrip failed for {val}");
@@ -410,7 +421,8 @@ mod tests {
 
     #[test]
     fn test_serialize_tx_extra_shared_pubkey() {
-        let json = r#"{"txPubKey":"4242424242424242424242424242424242424242424242424242424242424242"}"#;
+        let json =
+            r#"{"txPubKey":"4242424242424242424242424242424242424242424242424242424242424242"}"#;
         let result = serialize_tx_extra(json).unwrap();
         assert_eq!(result[0], 0x01);
         assert_eq!(&result[1..33], &[0x42; 32]);

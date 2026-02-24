@@ -3,14 +3,11 @@
 //! Tests miner transaction creation, genesis block coinbase,
 //! block reward with premine, and protocol TX creation.
 
+use salvium_consensus::validation::{validate_miner_tx_reward, validate_miner_tx_structure};
 use salvium_types::consensus::{
-    block_reward, PREMINE_AMOUNT, MONEY_SUPPLY,
-    hf_version_for_height, MINED_MONEY_UNLOCK_WINDOW,
+    block_reward, hf_version_for_height, MINED_MONEY_UNLOCK_WINDOW, MONEY_SUPPLY, PREMINE_AMOUNT,
 };
-use salvium_types::constants::{TxType, Network};
-use salvium_consensus::validation::{
-    validate_miner_tx_structure, validate_miner_tx_reward,
-};
+use salvium_types::constants::{Network, TxType};
 
 /// Simulated miner transaction output.
 struct MinerTxOutput {

@@ -8,18 +8,22 @@
 //!
 //! Total per entry: 40 bytes.
 
+use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::constants::ED25519_BASEPOINT_TABLE;
 use curve25519_dalek::traits::VartimeMultiscalarMul;
 
-use crate::{to32, keccak256_internal};
+use crate::{keccak256_internal, to32};
 
 // ─── CryptoNote subaddress derivation ────────────────────────────────────────
 
 /// CryptoNote subaddress secret key:
 ///   m = H_s("SubAddr\0" || view_key || major_LE || minor_LE)
-pub(crate) fn cn_subaddress_secret_key(view_secret_key: &[u8; 32], major: u32, minor: u32) -> Scalar {
+pub(crate) fn cn_subaddress_secret_key(
+    view_secret_key: &[u8; 32],
+    major: u32,
+    minor: u32,
+) -> Scalar {
     let mut data = Vec::with_capacity(8 + 32 + 4 + 4);
     // "SubAddr\0" (8 bytes including null terminator)
     data.extend_from_slice(b"SubAddr\0");
@@ -141,7 +145,7 @@ const DOMAIN_ADDRESS_INDEX_GEN: &[u8] = b"Carrot address index generator";
 const DOMAIN_SUBADDRESS_SCALAR: &[u8] = b"Carrot subaddress scalar";
 
 /// CARROT address index extension generator:
-///   s^j_gen = H_32[s_ga](domain || major_LE || minor_LE)
+///   `s_j_gen = H_32(s_ga, domain || major_LE || minor_LE)`
 pub fn carrot_index_extension_generator(
     generate_address_secret: &[u8; 32],
     major: u32,
@@ -275,7 +279,9 @@ mod tests {
         let view_key = [0x01u8; 32];
         let _view_scalar = Scalar::from_bytes_mod_order(view_key);
         let spend_scalar = Scalar::from(42u64);
-        let spend_pub = (ED25519_BASEPOINT_TABLE * &spend_scalar).compress().to_bytes();
+        let spend_pub = (ED25519_BASEPOINT_TABLE * &spend_scalar)
+            .compress()
+            .to_bytes();
 
         let buf = cn_subaddress_map_batch(&spend_pub, &view_key, 1, 1);
         let count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -292,7 +298,9 @@ mod tests {
 
     #[test]
     fn test_cn_batch_entry_count() {
-        let spend_pub = (ED25519_BASEPOINT_TABLE * &Scalar::from(1u64)).compress().to_bytes();
+        let spend_pub = (ED25519_BASEPOINT_TABLE * &Scalar::from(1u64))
+            .compress()
+            .to_bytes();
         let view_key = [0x02u8; 32];
 
         let buf = cn_subaddress_map_batch(&spend_pub, &view_key, 2, 3);
@@ -304,7 +312,9 @@ mod tests {
     #[test]
     fn test_carrot_batch_first_entry_matches_account_spend() {
         let spend_scalar = Scalar::from(99u64);
-        let spend_pub = (ED25519_BASEPOINT_TABLE * &spend_scalar).compress().to_bytes();
+        let spend_pub = (ED25519_BASEPOINT_TABLE * &spend_scalar)
+            .compress()
+            .to_bytes();
         let view_pub = [0x58u8; 32]; // dummy — unused in map generation
         let s_ga = [0x33u8; 32];
 
@@ -318,7 +328,9 @@ mod tests {
 
     #[test]
     fn test_carrot_batch_deterministic() {
-        let spend_pub = (ED25519_BASEPOINT_TABLE * &Scalar::from(7u64)).compress().to_bytes();
+        let spend_pub = (ED25519_BASEPOINT_TABLE * &Scalar::from(7u64))
+            .compress()
+            .to_bytes();
         let view_pub = [0x58u8; 32];
         let s_ga = [0x42u8; 32];
 

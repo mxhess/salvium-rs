@@ -15,8 +15,7 @@ use salvium_tx::types::*;
 const DAEMON_URL: &str = "http://node12.whiskymine.io:29081";
 
 fn daemon() -> DaemonRpc {
-    let url = std::env::var("TESTNET_DAEMON_URL")
-        .unwrap_or_else(|_| DAEMON_URL.to_string());
+    let url = std::env::var("TESTNET_DAEMON_URL").unwrap_or_else(|_| DAEMON_URL.to_string());
     DaemonRpc::new(&url)
 }
 
@@ -68,10 +67,7 @@ async fn fetch_and_parse_tx(d: &DaemonRpc, tx_hash: &str) -> (Transaction, Vec<u
 
 /// Fetch ring members for all key inputs in a transaction.
 /// Returns one Vec<(key, mask)> per key input.
-async fn fetch_mix_ring(
-    d: &DaemonRpc,
-    tx: &Transaction,
-) -> Vec<Vec<([u8; 32], [u8; 32])>> {
+async fn fetch_mix_ring(d: &DaemonRpc, tx: &Transaction) -> Vec<Vec<([u8; 32], [u8; 32])>> {
     let mut mix_ring = Vec::new();
 
     for input in &tx.prefix.inputs {
@@ -85,7 +81,10 @@ async fn fetch_mix_ring(
                 let abs_indices = relative_to_absolute(key_offsets);
                 let requests: Vec<OutputRequest> = abs_indices
                     .iter()
-                    .map(|&idx| OutputRequest { amount: 0, index: idx })
+                    .map(|&idx| OutputRequest {
+                        amount: 0,
+                        index: idx,
+                    })
                     .collect();
 
                 let outs = d
@@ -291,8 +290,7 @@ fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json::Va
                     .unwrap_or(0);
                 write_varint(buf, origin);
                 if origin != 0 {
-                    let ar_stake =
-                        item.get("aR_stake").and_then(|v| v.as_str()).unwrap_or("");
+                    let ar_stake = item.get("aR_stake").and_then(|v| v.as_str()).unwrap_or("");
                     if let Ok(bytes) = hex::decode(ar_stake) {
                         buf.extend_from_slice(&bytes);
                     } else {
@@ -307,7 +305,10 @@ fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json::Va
         }
 
         // spend_pubkey
-        let spk = sd.get("spend_pubkey").and_then(|v| v.as_str()).unwrap_or("");
+        let spk = sd
+            .get("spend_pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if let Ok(bytes) = hex::decode(spk) {
             buf.extend_from_slice(&bytes);
         } else {
@@ -340,8 +341,7 @@ fn serialize_zk_proof_for_hash(buf: &mut Vec<u8>, proof: Option<&serde_json::Val
 
     if r.is_empty() {
         buf.extend_from_slice(&[0u8; 96]);
-    } else if let (Ok(r_b), Ok(z1_b), Ok(z2_b)) =
-        (hex::decode(r), hex::decode(z1), hex::decode(z2))
+    } else if let (Ok(r_b), Ok(z1_b), Ok(z2_b)) = (hex::decode(r), hex::decode(z1), hex::decode(z2))
     {
         buf.extend_from_slice(&r_b);
         buf.extend_from_slice(&z1_b);
@@ -510,10 +510,7 @@ async fn test_verify_tclsag_real_tx() {
     if valid {
         println!("  Result: VALID");
     } else {
-        println!(
-            "  Result: INVALID (failed at input {:?})",
-            failed_idx
-        );
+        println!("  Result: INVALID (failed at input {:?})", failed_idx);
     }
 
     assert!(valid, "TCLSAG verification should pass on real TX");
@@ -636,10 +633,7 @@ async fn test_tampered_tx_fails() {
         &vd.ring_commitments,
     );
 
-    assert!(
-        !valid,
-        "tampered TX should fail verification"
-    );
+    assert!(!valid, "tampered TX should fail verification");
     println!(
         "Tampered TX correctly rejected (failed at input {:?})",
         failed_idx

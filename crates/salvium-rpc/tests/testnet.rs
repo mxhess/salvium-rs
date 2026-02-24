@@ -33,7 +33,10 @@ async fn test_get_info() {
 async fn test_get_block_count() {
     let d = daemon();
     let info = d.get_info().await.expect("get_info failed");
-    assert!(info.height >= 1300, "testnet should have at least 1300 blocks");
+    assert!(
+        info.height >= 1300,
+        "testnet should have at least 1300 blocks"
+    );
 }
 
 // ─── 2. Block Fetching ──────────────────────────────────────────────────────
@@ -42,7 +45,10 @@ async fn test_get_block_count() {
 #[ignore]
 async fn test_get_block_header() {
     let d = daemon();
-    let header = d.get_block_header_by_height(0).await.expect("get_block_header failed");
+    let header = d
+        .get_block_header_by_height(0)
+        .await
+        .expect("get_block_header failed");
 
     assert_eq!(header.height, 0);
     assert!(header.reward > 0, "genesis block should have a reward");
@@ -56,11 +62,18 @@ async fn test_get_block_header() {
 async fn test_get_block_header_at_mined_height() {
     let d = daemon();
     // Our wallet mined blocks 1230-1292.
-    let header = d.get_block_header_by_height(1250).await.expect("get_block_header failed");
+    let header = d
+        .get_block_header_by_height(1250)
+        .await
+        .expect("get_block_header failed");
 
     assert_eq!(header.height, 1250);
     assert!(header.reward > 0);
-    println!("Block 1250 reward: {} ({:.9} SAL)", header.reward, header.reward as f64 / 1e9);
+    println!(
+        "Block 1250 reward: {} ({:.9} SAL)",
+        header.reward,
+        header.reward as f64 / 1e9
+    );
 }
 
 // ─── 3. Output Fetching (get_outs) ──────────────────────────────────────────
@@ -71,7 +84,10 @@ async fn test_get_outs_single() {
     let d = daemon();
     let outputs = d
         .get_outs(
-            &[salvium_rpc::daemon::OutputRequest { amount: 0, index: 0 }],
+            &[salvium_rpc::daemon::OutputRequest {
+                amount: 0,
+                index: 0,
+            }],
             false,
             "",
         )
@@ -93,15 +109,26 @@ async fn test_get_outs_single() {
 async fn test_get_outs_batch() {
     let d = daemon();
     let requests: Vec<salvium_rpc::daemon::OutputRequest> = (0..16)
-        .map(|i| salvium_rpc::daemon::OutputRequest { amount: 0, index: i })
+        .map(|i| salvium_rpc::daemon::OutputRequest {
+            amount: 0,
+            index: i,
+        })
         .collect();
 
-    let outputs = d.get_outs(&requests, false, "").await.expect("get_outs batch failed");
+    let outputs = d
+        .get_outs(&requests, false, "")
+        .await
+        .expect("get_outs batch failed");
 
     assert_eq!(outputs.len(), 16, "should return 16 outputs");
     for (i, out) in outputs.iter().enumerate() {
         assert_eq!(out.key.len(), 64, "output {} key should be 64 hex chars", i);
-        assert_eq!(out.mask.len(), 64, "output {} mask should be 64 hex chars", i);
+        assert_eq!(
+            out.mask.len(),
+            64,
+            "output {} mask should be 64 hex chars",
+            i
+        );
         // Verify the key parses as valid hex → 32 bytes.
         let key_bytes = hex::decode(&out.key).expect("key should be valid hex");
         assert_eq!(key_bytes.len(), 32);
@@ -122,7 +149,10 @@ async fn test_get_output_distribution() {
         .await
         .expect("get_output_distribution failed");
 
-    assert!(!dist.is_empty(), "should have at least one distribution entry");
+    assert!(
+        !dist.is_empty(),
+        "should have at least one distribution entry"
+    );
     let entry = &dist[0];
     assert_eq!(entry.amount, 0, "should be RCT (amount=0) distribution");
     assert!(

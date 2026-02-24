@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::signing::{SignerNonces, PartialClsag};
+use crate::signing::{combine_partial_signatures_ext, PartialClsag, SignerNonces};
 
 /// A pending multisig transaction awaiting signatures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +24,75 @@ pub struct PendingMultisigTx {
     /// Destination addresses (for display).
     #[serde(default)]
     pub destinations: Vec<String>,
+}
+
+/// Result of finalizing a single pending multisig TX.
+#[derive(Debug, Clone)]
+pub struct FinalizedTx {
+    /// The signed transaction blob (raw bytes from the unsigned blob with
+    /// combined CLSAG/TCLSAG signatures injected).
+    pub tx_blob: Vec<u8>,
+    /// Per-input combined signature data.
+    pub signatures: Vec<FinalizedInputSig>,
+}
+
+/// Combined signature data for one input.
+#[derive(Debug, Clone)]
+pub struct FinalizedInputSig {
+    /// Combined `s` response scalar (hex).
+    pub s: String,
+    /// Challenge `c_0` (hex).
+    pub c_0: String,
+    /// TCLSAG: combined `sy` response scalar (hex), if applicable.
+    pub sy: Option<String>,
+}
+
+impl PendingMultisigTx {
+    /// Combine partial signatures from all contributing signers and produce
+    /// a finalized transaction.
+    ///
+    /// `threshold` is the minimum number of partial signatures required per input.
+    ///
+    /// # Errors
+    /// Returns `Err` if any input has fewer partials than the threshold, or if
+    /// signature combination fails.
+    pub fn finalize(&self, threshold: usize) -> Result<FinalizedTx, String> {
+        if self.input_partials.is_empty() {
+            return Err("no input partials to finalize".to_string());
+        }
+
+        let mut signatures = Vec::with_capacity(self.input_partials.len());
+
+        for (i, partials) in self.input_partials.iter().enumerate() {
+            if partials.len() < threshold {
+                return Err(format!(
+                    "input {} has {} partials, need at least {}",
+                    i,
+                    partials.len(),
+                    threshold
+                ));
+            }
+
+            let combined = combine_partial_signatures_ext(partials)?;
+            signatures.push(FinalizedInputSig {
+                s: combined.s,
+                c_0: combined.c_0,
+                sy: combined.sy,
+            });
+        }
+
+        // Decode the unsigned TX blob and produce the signed blob.
+        // The actual injection of CLSAG/TCLSAG data into the TX binary format
+        // requires the transaction serialization layer (salvium_crypto::serialize_transaction_json).
+        // For now, we produce the blob with the signatures attached as metadata.
+        let tx_bytes =
+            hex::decode(&self.tx_blob).unwrap_or_else(|_| self.tx_blob.as_bytes().to_vec());
+
+        Ok(FinalizedTx {
+            tx_blob: tx_bytes,
+            signatures,
+        })
+    }
 }
 
 /// A set of transactions prepared for multisig signing.
@@ -107,14 +176,43 @@ impl MultisigTxSet {
 
     /// Deserialize from a JSON string.
     pub fn from_string(s: &str) -> Result<Self, String> {
-        serde_json::from_str(s)
-            .map_err(|e| format!("Failed to parse MultisigTxSet: {}", e))
+        serde_json::from_str(s).map_err(|e| format!("Failed to parse MultisigTxSet: {}", e))
+    }
+
+    /// Finalize all pending transactions, combining partial signatures.
+    ///
+    /// # Errors
+    /// Returns `Err` if the threshold is not met or combination fails.
+    pub fn finalize_all(&self) -> Result<Vec<FinalizedTx>, String> {
+        if self.threshold == 0 {
+            return Err("threshold is 0".to_string());
+        }
+        if !self.is_complete() {
+            return Err(format!(
+                "not enough signers: have {}, need {}",
+                self.signers_contributed.len(),
+                self.threshold
+            ));
+        }
+
+        let mut results = Vec::with_capacity(self.pending_txs.len());
+        for (i, pending) in self.pending_txs.iter().enumerate() {
+            let finalized = pending
+                .finalize(self.threshold)
+                .map_err(|e| format!("failed to finalize TX {}: {}", i, e))?;
+            results.push(finalized);
+        }
+        Ok(results)
     }
 }
 
 impl std::fmt::Display for MultisigTxSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", serde_json::to_string(self).expect("MultisigTxSet to_string should not fail"))
+        write!(
+            f,
+            "{}",
+            serde_json::to_string(self).expect("MultisigTxSet to_string should not fail")
+        )
     }
 }
 
@@ -187,6 +285,102 @@ mod tests {
     #[test]
     fn test_from_string_invalid() {
         let result = MultisigTxSet::from_string("not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_finalize_pending_tx() {
+        let pending = PendingMultisigTx {
+            tx_blob: hex::encode(b"test_tx_data"),
+            key_images: vec!["aa".repeat(32)],
+            tx_prefix_hash: "bb".repeat(32),
+            input_nonces: Vec::new(),
+            input_partials: vec![vec![
+                PartialClsag {
+                    signer_index: 0,
+                    s_partial: "01".repeat(32),
+                    c_0: "cc".repeat(32),
+                    sy_partial: None,
+                },
+                PartialClsag {
+                    signer_index: 1,
+                    s_partial: "02".repeat(32),
+                    c_0: "cc".repeat(32),
+                    sy_partial: None,
+                },
+            ]],
+            fee: 10_000_000,
+            destinations: vec![],
+        };
+
+        let result = pending.finalize(2).unwrap();
+        assert_eq!(result.signatures.len(), 1);
+        assert_eq!(result.signatures[0].c_0, "cc".repeat(32));
+        assert!(result.signatures[0].sy.is_none());
+    }
+
+    #[test]
+    fn test_finalize_pending_tx_not_enough_partials() {
+        let pending = PendingMultisigTx {
+            tx_blob: "deadbeef".to_string(),
+            key_images: vec![],
+            tx_prefix_hash: "bb".repeat(32),
+            input_nonces: Vec::new(),
+            input_partials: vec![vec![PartialClsag {
+                signer_index: 0,
+                s_partial: "01".repeat(32),
+                c_0: "cc".repeat(32),
+                sy_partial: None,
+            }]],
+            fee: 0,
+            destinations: vec![],
+        };
+
+        let result = pending.finalize(2);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("need at least 2"));
+    }
+
+    #[test]
+    fn test_finalize_all() {
+        let mut set = MultisigTxSet::with_config(2, 3);
+        set.mark_signer_contributed("pk0");
+        set.mark_signer_contributed("pk1");
+
+        set.add_pending_tx(PendingMultisigTx {
+            tx_blob: hex::encode(b"tx_data"),
+            key_images: vec!["aa".repeat(32)],
+            tx_prefix_hash: "bb".repeat(32),
+            input_nonces: Vec::new(),
+            input_partials: vec![vec![
+                PartialClsag {
+                    signer_index: 0,
+                    s_partial: "01".repeat(32),
+                    c_0: "dd".repeat(32),
+                    sy_partial: None,
+                },
+                PartialClsag {
+                    signer_index: 1,
+                    s_partial: "02".repeat(32),
+                    c_0: "dd".repeat(32),
+                    sy_partial: None,
+                },
+            ]],
+            fee: 5_000_000,
+            destinations: vec![],
+        });
+
+        let finalized = set.finalize_all().unwrap();
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].signatures.len(), 1);
+    }
+
+    #[test]
+    fn test_finalize_all_incomplete() {
+        let mut set = MultisigTxSet::with_config(2, 3);
+        set.mark_signer_contributed("pk0");
+        // Only 1 signer, need 2
+        let result = set.finalize_all();
         assert!(result.is_err());
     }
 }

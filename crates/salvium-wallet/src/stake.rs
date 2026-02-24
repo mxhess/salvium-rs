@@ -284,12 +284,7 @@ pub fn record_stake_lifecycle(
                     if let Some(stake) = store.get_stake_by_output_key(origin) {
                         if stake.status == StakeStatus::Locked {
                             let stake_hash = stake.tx_hash.clone();
-                            store.mark_stake_returned(
-                                &stake_hash,
-                                tx_hash,
-                                *amount,
-                                block_height,
-                            );
+                            store.mark_stake_returned(&stake_hash, tx_hash, *amount, block_height);
                             continue;
                         }
                     }
@@ -299,12 +294,7 @@ pub fn record_stake_lifecycle(
                 if let Some(stake) = store.get_stake_by_output_key(pub_key) {
                     if stake.status == StakeStatus::Locked {
                         let stake_hash = stake.tx_hash.clone();
-                        store.mark_stake_returned(
-                            &stake_hash,
-                            tx_hash,
-                            *amount,
-                            block_height,
-                        );
+                        store.mark_stake_returned(&stake_hash, tx_hash, *amount, block_height);
                     }
                 }
             }
@@ -466,9 +456,21 @@ mod tests {
     #[test]
     fn filter_by_status_locked() {
         let mut store = StakeStore::new();
-        store.put_stake(StakeRecord { tx_hash: "st1".into(), status: StakeStatus::Locked, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st2".into(), status: StakeStatus::Returned, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st3".into(), status: StakeStatus::Locked, ..Default::default() });
+        store.put_stake(StakeRecord {
+            tx_hash: "st1".into(),
+            status: StakeStatus::Locked,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st2".into(),
+            status: StakeStatus::Returned,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st3".into(),
+            status: StakeStatus::Locked,
+            ..Default::default()
+        });
 
         let locked = store.get_stakes(Some(StakeStatus::Locked), None);
         assert_eq!(locked.len(), 2);
@@ -477,9 +479,21 @@ mod tests {
     #[test]
     fn filter_by_status_returned() {
         let mut store = StakeStore::new();
-        store.put_stake(StakeRecord { tx_hash: "st1".into(), status: StakeStatus::Locked, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st2".into(), status: StakeStatus::Returned, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st3".into(), status: StakeStatus::Locked, ..Default::default() });
+        store.put_stake(StakeRecord {
+            tx_hash: "st1".into(),
+            status: StakeStatus::Locked,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st2".into(),
+            status: StakeStatus::Returned,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st3".into(),
+            status: StakeStatus::Locked,
+            ..Default::default()
+        });
 
         let returned = store.get_stakes(Some(StakeStatus::Returned), None);
         assert_eq!(returned.len(), 1);
@@ -491,8 +505,16 @@ mod tests {
     #[test]
     fn filter_by_asset_type() {
         let mut store = StakeStore::new();
-        store.put_stake(StakeRecord { tx_hash: "st1".into(), asset_type: "SAL".into(), ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st2".into(), asset_type: "USD".into(), ..Default::default() });
+        store.put_stake(StakeRecord {
+            tx_hash: "st1".into(),
+            asset_type: "SAL".into(),
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st2".into(),
+            asset_type: "USD".into(),
+            ..Default::default()
+        });
 
         let sal = store.get_stakes(None, Some("SAL"));
         assert_eq!(sal.len(), 1);
@@ -536,9 +558,24 @@ mod tests {
     #[test]
     fn delete_stakes_above_removes_stakes() {
         let mut store = StakeStore::new();
-        store.put_stake(StakeRecord { tx_hash: "st_low".into(), block_height: 100, output_key: "k1".into(), ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st_mid".into(), block_height: 200, output_key: "k2".into(), ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "st_high".into(), block_height: 300, output_key: "k3".into(), ..Default::default() });
+        store.put_stake(StakeRecord {
+            tx_hash: "st_low".into(),
+            block_height: 100,
+            output_key: "k1".into(),
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st_mid".into(),
+            block_height: 200,
+            output_key: "k2".into(),
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "st_high".into(),
+            block_height: 300,
+            output_key: "k3".into(),
+            ..Default::default()
+        });
 
         store.delete_stakes_above(150);
 
@@ -729,7 +766,11 @@ mod tests {
             0,
             "SAL",
             false,
-            &[("some_different_key".into(), Some("carrot_origin_key".into()), 51_000_000_000)],
+            &[(
+                "some_different_key".into(),
+                Some("carrot_origin_key".into()),
+                51_000_000_000,
+            )],
         );
 
         let stake = store.get_stake("orig_stake").unwrap();
@@ -901,9 +942,24 @@ mod tests {
     #[test]
     fn multiple_stakes_different_assets() {
         let mut store = StakeStore::new();
-        store.put_stake(StakeRecord { tx_hash: "sal_stake".into(), asset_type: "SAL".into(), amount_staked: 1000, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "usd_stake".into(), asset_type: "USD".into(), amount_staked: 2000, ..Default::default() });
-        store.put_stake(StakeRecord { tx_hash: "sal_stake_2".into(), asset_type: "SAL".into(), amount_staked: 3000, ..Default::default() });
+        store.put_stake(StakeRecord {
+            tx_hash: "sal_stake".into(),
+            asset_type: "SAL".into(),
+            amount_staked: 1000,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "usd_stake".into(),
+            asset_type: "USD".into(),
+            amount_staked: 2000,
+            ..Default::default()
+        });
+        store.put_stake(StakeRecord {
+            tx_hash: "sal_stake_2".into(),
+            asset_type: "SAL".into(),
+            amount_staked: 3000,
+            ..Default::default()
+        });
 
         let sal = store.get_stakes(None, Some("SAL"));
         assert_eq!(sal.len(), 2);

@@ -184,9 +184,7 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // CARROT output: try CARROT scan only (CN derivation is invalid
             // for CARROT since tx_pub_key is X25519).
             if ctx.carrot_enabled && !input_context.is_empty() {
-                if let Some(result) =
-                    try_carrot_scan(ctx, output, &input_context, tx.is_coinbase)
-                {
+                if let Some(result) = try_carrot_scan(ctx, output, &input_context, tx.is_coinbase) {
                     found.push(result);
                 }
             }
@@ -194,7 +192,9 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // Non-CARROT output: try CN scan with shared derivation first.
             let mut cn_found = false;
             if let Some(ref derivation) = cn_derivation {
-                if let Some(result) = try_cn_scan(ctx, derivation, output, tx.is_coinbase, tx.tx_type) {
+                if let Some(result) =
+                    try_cn_scan(ctx, derivation, output, tx.is_coinbase, tx.tx_type)
+                {
                     found.push(result);
                     cn_found = true;
                 }
@@ -206,7 +206,9 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // C++ ref: wallet2.cpp tries both shared and per-output derivations.
             if !cn_found {
                 if let Some(Some(ref per_output_deriv)) = per_output_derivations.get(out_idx) {
-                    if let Some(result) = try_cn_scan(ctx, per_output_deriv, output, tx.is_coinbase, tx.tx_type) {
+                    if let Some(result) =
+                        try_cn_scan(ctx, per_output_deriv, output, tx.is_coinbase, tx.tx_type)
+                    {
                         found.push(result);
                         cn_found = true;
                     }
@@ -216,9 +218,7 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // Fall back to CARROT scan for non-CARROT outputs too
             // (in case of misidentification).
             if !cn_found && ctx.carrot_enabled && !input_context.is_empty() {
-                if let Some(result) =
-                    try_carrot_scan(ctx, output, &input_context, tx.is_coinbase)
-                {
+                if let Some(result) = try_carrot_scan(ctx, output, &input_context, tx.is_coinbase) {
                     found.push(result);
                 }
             }
@@ -255,7 +255,8 @@ fn try_cn_scan(
         ctx.cn_spend_secret.as_ref(),
         &ctx.cn_view_secret,
         &ctx.cn_subaddress_map,
-    ).or_else(|| {
+    )
+    .or_else(|| {
         // Fix #5: PROTOCOL_TX index-0 override.
         // CONVERT/YIELD outputs in PROTOCOL TXs are derived with index 0
         // by the protocol regardless of their actual position in the TX.
@@ -340,7 +341,8 @@ fn try_carrot_scan(
             ) {
                 log::debug!(
                     "Janus protection rejected CARROT external match: out_idx={} amount={}",
-                    output.index, result.amount,
+                    output.index,
+                    result.amount,
                 );
                 // Fall through to try internal scan
             } else {
@@ -437,16 +439,14 @@ fn compute_carrot_key_image(
     let generate_image_key = ctx.carrot_generate_image_key.as_ref()?;
 
     // prove_spend_key is only used for sk_y; pass zeros when unavailable.
-    let prove_spend_key = ctx.carrot_prove_spend_key
+    let prove_spend_key = ctx
+        .carrot_prove_spend_key
         .as_ref()
         .copied()
         .unwrap_or([0u8; 32]);
 
     // Compute the commitment from the derived mask and amount.
-    let commitment = salvium_crypto::pedersen_commit(
-        &result.amount.to_le_bytes(),
-        &result.mask,
-    );
+    let commitment = salvium_crypto::pedersen_commit(&result.amount.to_le_bytes(), &result.mask);
     let mut commit_32 = [0u8; 32];
     let len = commitment.len().min(32);
     commit_32[..len].copy_from_slice(&commitment[..len]);

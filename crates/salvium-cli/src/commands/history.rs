@@ -42,8 +42,20 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
     let wallet = open_wallet(ctx)?;
 
     let query = salvium_crypto::storage::TxQuery {
-        is_incoming: if f.in_ && !f.out { Some(true) } else if f.out && !f.in_ { Some(false) } else { None },
-        is_outgoing: if f.out && !f.in_ { Some(true) } else if f.in_ && !f.out { Some(false) } else { None },
+        is_incoming: if f.in_ && !f.out {
+            Some(true)
+        } else if f.out && !f.in_ {
+            Some(false)
+        } else {
+            None
+        },
+        is_outgoing: if f.out && !f.in_ {
+            Some(true)
+        } else if f.in_ && !f.out {
+            Some(false)
+        } else {
+            None
+        },
         is_confirmed: if f.pending { Some(false) } else { None },
         in_pool: if f.pool { Some(true) } else { None },
         tx_type: if f.burnt {
@@ -177,7 +189,8 @@ pub async fn export_transfers(ctx: &AppContext, output_file: &str) -> Result {
     };
     let transfers = wallet.get_transfers(&query)?;
 
-    let mut csv = String::from("height,type,direction,asset,amount,fee,tx_hash,timestamp,payment_id\n");
+    let mut csv =
+        String::from("height,type,direction,asset,amount,fee,tx_hash,timestamp,payment_id\n");
 
     for tx in &transfers {
         let direction = if tx.incoming_amount != "0" {
@@ -205,7 +218,11 @@ pub async fn export_transfers(ctx: &AppContext, output_file: &str) -> Result {
     }
 
     std::fs::write(output_file, &csv)?;
-    println!("Exported {} transactions to {}", transfers.len(), output_file);
+    println!(
+        "Exported {} transactions to {}",
+        transfers.len(),
+        output_file
+    );
 
     Ok(())
 }
@@ -220,10 +237,7 @@ pub async fn show_stakes(ctx: &AppContext) -> Result {
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:>16} {:<10} TX Hash",
-        "Height", "Amount", "Status"
-    );
+    println!("{:<8} {:>16} {:<10} TX Hash", "Height", "Amount", "Status");
     println!("{}", "-".repeat(70));
 
     for s in &stakes {
