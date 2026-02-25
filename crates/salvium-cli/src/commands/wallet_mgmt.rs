@@ -208,3 +208,45 @@ pub async fn show_restore_height(ctx: &AppContext) -> Result {
     println!("Restore height: {}", height);
     Ok(())
 }
+
+pub async fn encrypted_seed(ctx: &AppContext) -> Result {
+    let wallet = open_wallet(ctx)?;
+
+    if !wallet.can_spend() {
+        return Err("this is a view-only wallet — no seed available".into());
+    }
+
+    let seed = wallet
+        .keys()
+        .seed
+        .ok_or("no seed available for this wallet")?;
+
+    println!("Enter a passphrase to encrypt the seed (empty for no encryption):");
+    let passphrase = rpassword::prompt_password("Passphrase: ")?;
+
+    let display_seed = if passphrase.is_empty() {
+        seed
+    } else {
+        // Offset the seed with keccak256(passphrase), then sc_reduce to stay in scalar field.
+        let offset = salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(passphrase.as_bytes()));
+        let encrypted = salvium_crypto::sc_add(&seed, &offset);
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&encrypted[..32]);
+        arr
+    };
+
+    let mnemonic = salvium_types::mnemonic::seed_to_mnemonic(&display_seed, Some("english"))
+        .map_err(|e| format!("failed to generate mnemonic: {}", e))?;
+
+    if passphrase.is_empty() {
+        println!("Seed phrase (25 words):");
+    } else {
+        println!("Encrypted seed phrase (25 words):");
+        println!("  (requires the same passphrase to restore)");
+    }
+    println!("  {}", mnemonic);
+    println!();
+    println!("WARNING: Never share your seed phrase with anyone!");
+
+    Ok(())
+}

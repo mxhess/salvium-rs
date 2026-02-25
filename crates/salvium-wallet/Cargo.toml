@@ -21,6 +21,14 @@ aes-gcm = "0.10"
 ml-kem = { version = "0.2", features = ["deterministic"] }
 hkdf = "0.12"
 sha2 = "0.10"
+chacha20 = "0.9"
+reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
+hidapi = { version = "2.6", optional = true }
+
+[features]
+default = ["transport"]
+transport = ["reqwest"]
+hardware-wallet = ["hidapi"]
 
 [dev-dependencies]
 salvium-rpc = { path = "../salvium-rpc" }

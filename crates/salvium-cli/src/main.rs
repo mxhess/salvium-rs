@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use salvium_types::constants::Network;
 use std::path::PathBuf;
 
@@ -96,6 +96,8 @@ enum Commands {
     Info,
     /// Show the mnemonic seed phrase.
     Seed,
+    /// Show the seed phrase encrypted with an optional passphrase.
+    EncryptedSeed,
     /// Change the wallet password.
     Password,
     /// Save the wallet to disk.
@@ -271,6 +273,18 @@ enum Commands {
         address: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+    },
+    /// Sweep all funds from a specific account to an address.
+    SweepAccount {
+        #[arg(long)]
+        account: u32,
+        #[arg(long)]
+        address: String,
+        #[arg(long, default_value = "normal")]
+        priority: String,
+        /// Optional subaddress indices to restrict sweep.
+        #[arg(long, num_args = 0..)]
+        indices: Vec<u32>,
     },
     /// Sweep outputs below a threshold.
     SweepBelow {
@@ -549,6 +563,29 @@ enum Commands {
     /// Get the wallet description.
     GetDescription,
 
+    // ── Ring management ──────────────────────────────────────────────────────
+    /// Print ring members for a key image or tx hash.
+    PrintRing {
+        #[arg(long)]
+        key_image_or_txid: String,
+    },
+    /// Set ring members for a key image.
+    SetRing {
+        #[arg(long)]
+        key_image: String,
+        #[arg(long, num_args = 1..)]
+        indices: Vec<u64>,
+        #[arg(long)]
+        relative: bool,
+    },
+    /// Remove ring data for a key image or tx hash.
+    UnsetRing {
+        #[arg(long)]
+        key_image_or_txid: String,
+    },
+    /// Save ring data from known transactions.
+    SaveKnownRings,
+
     // ── Daemon / network ─────────────────────────────────────────────────────
     /// Show daemon/network status.
     Status,
@@ -592,6 +629,17 @@ enum Commands {
     /// Show price/supply information.
     PriceInfo,
 
+    // ── RPC payment mining ───────────────────────────────────────────────────
+    /// Show RPC payment mining info (credits, difficulty).
+    RpcPaymentInfo,
+    /// Start mining for RPC payment credits.
+    StartMiningForRpc {
+        #[arg(long, default_value = "1")]
+        threads: u32,
+    },
+    /// Stop mining for RPC payment credits.
+    StopMiningForRpc,
+
     // ── Config / misc ────────────────────────────────────────────────────────
     /// Set a configuration variable.
     Set {
@@ -604,6 +652,22 @@ enum Commands {
     Get {
         #[arg(long)]
         key: String,
+    },
+    /// Set the log level (0-5 or off/error/warn/info/debug/trace).
+    SetLog {
+        #[arg(long)]
+        level: String,
+    },
+    /// Search commands by keyword.
+    Apropos {
+        #[arg(long)]
+        keyword: String,
+    },
+    /// Show a QR code for the wallet address.
+    ShowQrCode {
+        /// Use CARROT address instead of CryptoNote.
+        #[arg(long)]
+        carrot: bool,
     },
     /// Generate a random payment ID.
     PaymentId,
@@ -651,6 +715,105 @@ enum Commands {
         #[arg(long)]
         input: String,
     },
+
+    // ── MMS (Multisig Messaging System) ──────────────────────────────────────
+    /// MMS subcommands for multisig message coordination.
+    #[command(subcommand)]
+    Mms(MmsAction),
+
+    // ── Hardware wallet ──────────────────────────────────────────────────────
+    /// Sync key images from a connected hardware wallet.
+    HwKeyImagesSync,
+    /// Reconnect to a hardware wallet device.
+    HwReconnect,
+}
+
+/// MMS subcommands.
+#[derive(Subcommand)]
+enum MmsAction {
+    /// Initialize the MMS for M-of-N multisig.
+    Init {
+        #[arg(long)]
+        threshold: usize,
+        #[arg(long)]
+        signers: usize,
+        #[arg(long, default_value = "")]
+        label: String,
+    },
+    /// Show MMS status and configuration.
+    Info,
+    /// View or update a signer's details.
+    Signer {
+        #[arg(long)]
+        index: usize,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        transport: Option<String>,
+        #[arg(long)]
+        address: Option<String>,
+    },
+    /// List all MMS messages.
+    List,
+    /// Show the next recommended multisig action.
+    Next,
+    /// Create and queue sync data for other signers.
+    Sync,
+    /// Create a multisig transfer via MMS.
+    Transfer {
+        #[arg(long)]
+        address: String,
+        #[arg(long)]
+        amount: String,
+    },
+    /// Delete an MMS message.
+    Delete {
+        #[arg(long)]
+        id: i64,
+    },
+    /// Send all queued MMS messages.
+    Send,
+    /// Receive MMS messages from transport.
+    Receive,
+    /// Export an MMS message to a file.
+    Export {
+        #[arg(long)]
+        id: i64,
+        #[arg(long)]
+        output: String,
+    },
+    /// Send a text note to a signer.
+    Note {
+        #[arg(long)]
+        signer: i64,
+        #[arg(long)]
+        text: String,
+    },
+    /// Show details of a single MMS message.
+    Show {
+        #[arg(long)]
+        id: i64,
+    },
+    /// Set an MMS configuration option.
+    Set {
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        value: String,
+    },
+    /// Send signer configuration to all other signers.
+    SendSignerConfig,
+    /// Start auto-configuration and show tokens.
+    StartAutoConfig,
+    /// Process an auto-config token from another signer.
+    AutoConfig {
+        #[arg(long)]
+        token: String,
+    },
+    /// Stop auto-configuration.
+    StopAutoConfig,
+    /// Show MMS config checksum for verification.
+    ConfigChecksum,
 }
 
 /// Application context shared across commands.
@@ -700,6 +863,16 @@ async fn main() {
     let cli = Cli::parse();
     let ctx = AppContext::from_cli(&cli);
 
+    // Handle `apropos` before the main match — it needs access to the Cli command definition.
+    if let Commands::Apropos { ref keyword } = cli.command {
+        let app = Cli::command();
+        if let Err(e) = commands::apropos(keyword, &app) {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let result = match cli.command {
         // Wallet management
         Commands::Create { name } => commands::create_wallet(&ctx, name).await,
@@ -709,6 +882,7 @@ async fn main() {
         } => commands::restore_wallet(&ctx, name, restore_height).await,
         Commands::Info => commands::wallet_info(&ctx).await,
         Commands::Seed => commands::show_seed(&ctx).await,
+        Commands::EncryptedSeed => commands::encrypted_seed(&ctx).await,
         Commands::Password => commands::change_password(&ctx).await,
         Commands::Save => commands::save_wallet(&ctx).await,
         Commands::SaveWatchOnly => commands::save_watch_only(&ctx).await,
@@ -787,6 +961,12 @@ async fn main() {
         Commands::SweepAll { address, priority } => {
             commands::sweep_all(&ctx, &address, &priority).await
         }
+        Commands::SweepAccount {
+            account,
+            address,
+            priority,
+            indices,
+        } => commands::sweep_account(&ctx, account, &address, &priority, &indices).await,
         Commands::SweepBelow {
             address,
             threshold,
@@ -916,15 +1096,33 @@ async fn main() {
         Commands::MarkOutputUnspent { key_image } => {
             commands::mark_output_unspent(&ctx, &key_image).await
         }
-        Commands::IsOutputSpent { key_image } => commands::is_output_spent(&ctx, &key_image).await,
+        Commands::IsOutputSpent { key_image } => {
+            commands::is_output_spent(&ctx, &key_image).await
+        }
 
         // Notes
-        Commands::SetTxNote { tx_hash, note } => commands::set_tx_note(&ctx, &tx_hash, &note).await,
+        Commands::SetTxNote { tx_hash, note } => {
+            commands::set_tx_note(&ctx, &tx_hash, &note).await
+        }
         Commands::GetTxNote { tx_hash } => commands::get_tx_note(&ctx, &tx_hash).await,
         Commands::SetDescription { description } => {
             commands::set_description(&ctx, &description).await
         }
         Commands::GetDescription => commands::get_description(&ctx).await,
+
+        // Ring management
+        Commands::PrintRing { key_image_or_txid } => {
+            commands::print_ring(&ctx, &key_image_or_txid).await
+        }
+        Commands::SetRing {
+            key_image,
+            indices,
+            relative,
+        } => commands::set_ring(&ctx, &key_image, &indices, relative).await,
+        Commands::UnsetRing { key_image_or_txid } => {
+            commands::unset_ring(&ctx, &key_image_or_txid).await
+        }
+        Commands::SaveKnownRings => commands::save_known_rings(&ctx).await,
 
         // Daemon / network
         Commands::Status => commands::show_status(&ctx).await,
@@ -945,9 +1143,19 @@ async fn main() {
         Commands::YieldInfo => commands::yield_info(&ctx).await,
         Commands::PriceInfo => commands::price_info(&ctx).await,
 
+        // RPC payment mining
+        Commands::RpcPaymentInfo => commands::rpc_payment_info(&ctx).await,
+        Commands::StartMiningForRpc { threads } => {
+            commands::start_mining_for_rpc(&ctx, threads).await
+        }
+        Commands::StopMiningForRpc => commands::stop_mining_for_rpc(&ctx).await,
+
         // Config / misc
         Commands::Set { key, value } => commands::set_config(&ctx, &key, &value).await,
         Commands::Get { key } => commands::get_config(&ctx, &key).await,
+        Commands::SetLog { level } => commands::set_log(&level).await,
+        Commands::Apropos { .. } => unreachable!(), // Handled above.
+        Commands::ShowQrCode { carrot } => commands::show_qr_code(&ctx, carrot).await,
         Commands::PaymentId => commands::generate_payment_id().await,
         Commands::Lock => commands::lock_wallet(&ctx).await,
         Commands::Version => commands::show_version().await,
@@ -971,6 +1179,53 @@ async fn main() {
         Commands::ExportRawMultisigTx { input } => {
             commands::export_raw_multisig_tx(&ctx, &input).await
         }
+
+        // MMS
+        Commands::Mms(action) => match action {
+            MmsAction::Init {
+                threshold,
+                signers,
+                label,
+            } => commands::mms_init(&ctx, threshold, signers, &label).await,
+            MmsAction::Info => commands::mms_info(&ctx).await,
+            MmsAction::Signer {
+                index,
+                label,
+                transport,
+                address,
+            } => {
+                commands::mms_signer(
+                    &ctx,
+                    index,
+                    label.as_deref(),
+                    transport.as_deref(),
+                    address.as_deref(),
+                )
+                .await
+            }
+            MmsAction::List => commands::mms_list(&ctx).await,
+            MmsAction::Next => commands::mms_next(&ctx).await,
+            MmsAction::Sync => commands::mms_sync(&ctx).await,
+            MmsAction::Transfer { address, amount } => {
+                commands::mms_transfer(&ctx, &address, &amount).await
+            }
+            MmsAction::Delete { id } => commands::mms_delete(&ctx, id).await,
+            MmsAction::Send => commands::mms_send(&ctx).await,
+            MmsAction::Receive => commands::mms_receive(&ctx).await,
+            MmsAction::Export { id, output } => commands::mms_export(&ctx, id, &output).await,
+            MmsAction::Note { signer, text } => commands::mms_note(&ctx, signer, &text).await,
+            MmsAction::Show { id } => commands::mms_show(&ctx, id).await,
+            MmsAction::Set { key, value } => commands::mms_set(&ctx, &key, &value).await,
+            MmsAction::SendSignerConfig => commands::mms_send_signer_config(&ctx).await,
+            MmsAction::StartAutoConfig => commands::mms_start_auto_config(&ctx).await,
+            MmsAction::AutoConfig { token } => commands::mms_auto_config(&ctx, &token).await,
+            MmsAction::StopAutoConfig => commands::mms_stop_auto_config(&ctx).await,
+            MmsAction::ConfigChecksum => commands::mms_config_checksum(&ctx).await,
+        },
+
+        // Hardware wallet
+        Commands::HwKeyImagesSync => commands::hw_key_images_sync(&ctx).await,
+        Commands::HwReconnect => commands::hw_reconnect(&ctx).await,
     };
 
     if let Err(e) = result {

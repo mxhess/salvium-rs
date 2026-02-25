@@ -160,6 +160,39 @@ CREATE TABLE IF NOT EXISTS salvium_txs (
   subaddr_minor   INTEGER NOT NULL,
   tx_type         INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ring_members (
+  key_image       TEXT NOT NULL,
+  ring_index      INTEGER NOT NULL,
+  global_out      INTEGER NOT NULL,
+  relative        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (key_image, ring_index)
+);
+CREATE INDEX IF NOT EXISTS idx_ring_ki ON ring_members(key_image);
+
+CREATE TABLE IF NOT EXISTS mms_messages (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  msg_type        INTEGER NOT NULL,
+  direction       INTEGER NOT NULL,
+  content         BLOB NOT NULL DEFAULT x'',
+  signer_index    INTEGER NOT NULL DEFAULT 0,
+  state           INTEGER NOT NULL DEFAULT 0,
+  hash            TEXT NOT NULL DEFAULT '',
+  round           INTEGER NOT NULL DEFAULT 0,
+  signature_count INTEGER NOT NULL DEFAULT 0,
+  transport_id    TEXT NOT NULL DEFAULT '',
+  created_at      INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS mms_signers (
+  signer_index        INTEGER PRIMARY KEY,
+  label               TEXT NOT NULL DEFAULT '',
+  transport_address   TEXT NOT NULL DEFAULT '',
+  monero_address      TEXT NOT NULL DEFAULT '',
+  is_me               INTEGER NOT NULL DEFAULT 0,
+  auto_config_token   TEXT NOT NULL DEFAULT '',
+  auto_config_running INTEGER NOT NULL DEFAULT 0
+);
 ";
 
 // ─── Data Models ────────────────────────────────────────────────────────────
@@ -347,6 +380,44 @@ pub struct SubaddressRow {
     #[serde(default)]
     pub used: bool,
     pub created_at: Option<i64>,
+}
+
+/// An MMS message row from the database.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MmsMessageRow {
+    pub id: i64,
+    pub msg_type: i64,
+    pub direction: i64,
+    pub content: Vec<u8>,
+    pub signer_index: i64,
+    pub state: i64,
+    #[serde(default)]
+    pub hash: String,
+    pub round: i64,
+    pub signature_count: i64,
+    #[serde(default)]
+    pub transport_id: String,
+    pub created_at: Option<i64>,
+}
+
+/// An MMS signer row from the database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MmsSignerRow {
+    pub signer_index: i64,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub transport_address: String,
+    #[serde(default)]
+    pub monero_address: String,
+    #[serde(default)]
+    pub is_me: bool,
+    #[serde(default)]
+    pub auto_config_token: String,
+    #[serde(default)]
+    pub auto_config_running: bool,
 }
 
 /// An entry in the `salvium_txs` table, mapping a change output Ko from a
@@ -1808,6 +1879,228 @@ impl WalletDb {
             Some(row) => Ok(Some(row.get(0)?)),
             None => Ok(None),
         }
+    }
+
+    // ── Ring members ────────────────────────────────────────────────────
+
+    /// Get ring member indices for a key image.
+    pub fn get_ring(&self, key_image: &str) -> Result<Vec<(i64, i64, bool)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ring_index, global_out, relative FROM ring_members \
+             WHERE key_image = ?1 ORDER BY ring_index",
+        )?;
+        let rows = stmt.query_map(params![key_image], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0))
+        })?;
+        rows.collect()
+    }
+
+    /// Get all ring members for a given tx hash (by looking up key images from the outputs table).
+    #[allow(clippy::type_complexity)]
+    pub fn get_rings_for_tx(
+        &self,
+        tx_hash: &str,
+    ) -> Result<HashMap<String, Vec<(i64, i64, bool)>>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT key_image FROM outputs WHERE tx_hash = ?1 AND key_image IS NOT NULL",
+        )?;
+        let kis: Vec<String> = stmt
+            .query_map(params![tx_hash], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut result = HashMap::new();
+        for ki in kis {
+            let members = self.get_ring(&ki)?;
+            if !members.is_empty() {
+                result.insert(ki, members);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Store ring member indices for a key image.
+    pub fn set_ring(
+        &self,
+        key_image: &str,
+        members: &[(i64, i64, bool)],
+    ) -> Result<(), rusqlite::Error> {
+        // Clear existing ring data first.
+        self.conn.execute(
+            "DELETE FROM ring_members WHERE key_image = ?1",
+            params![key_image],
+        )?;
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO ring_members (key_image, ring_index, global_out, relative) \
+             VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for (idx, global, relative) in members {
+            stmt.execute(params![key_image, idx, global, *relative as i64])?;
+        }
+        Ok(())
+    }
+
+    /// Remove ring data for a key image.
+    pub fn unset_ring(&self, key_image: &str) -> Result<bool, rusqlite::Error> {
+        let count = self.conn.execute(
+            "DELETE FROM ring_members WHERE key_image = ?1",
+            params![key_image],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Remove ring data for all key images associated with a tx hash.
+    pub fn unset_rings_for_tx(&self, tx_hash: &str) -> Result<usize, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT key_image FROM outputs WHERE tx_hash = ?1 AND key_image IS NOT NULL",
+        )?;
+        let kis: Vec<String> = stmt
+            .query_map(params![tx_hash], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut count = 0;
+        for ki in &kis {
+            if self.unset_ring(ki)? {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    // ── MMS messages ────────────────────────────────────────────────────
+
+    /// Add an MMS message. Returns the new message ID.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_mms_message(
+        &self,
+        msg_type: i64,
+        direction: i64,
+        content: &[u8],
+        signer_index: i64,
+        state: i64,
+        hash: &str,
+        round: i64,
+        signature_count: i64,
+        transport_id: &str,
+    ) -> Result<i64, rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "INSERT INTO mms_messages (msg_type, direction, content, signer_index, state, hash, round, signature_count, transport_id, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![msg_type, direction, content, signer_index, state, hash, round, signature_count, transport_id, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get an MMS message by ID.
+    pub fn get_mms_message(&self, id: i64) -> Result<Option<MmsMessageRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, msg_type, direction, content, signer_index, state, hash, round, signature_count, transport_id, created_at \
+             FROM mms_messages WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(MmsMessageRow {
+                id: row.get(0)?,
+                msg_type: row.get(1)?,
+                direction: row.get(2)?,
+                content: row.get(3)?,
+                signer_index: row.get(4)?,
+                state: row.get(5)?,
+                hash: row.get(6)?,
+                round: row.get(7)?,
+                signature_count: row.get(8)?,
+                transport_id: row.get(9)?,
+                created_at: row.get(10)?,
+            })),
+            None => Ok(None),
+        }
+    }
+
+    /// List all MMS messages.
+    pub fn get_mms_messages(&self) -> Result<Vec<MmsMessageRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, msg_type, direction, content, signer_index, state, hash, round, signature_count, transport_id, created_at \
+             FROM mms_messages ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MmsMessageRow {
+                id: row.get(0)?,
+                msg_type: row.get(1)?,
+                direction: row.get(2)?,
+                content: row.get(3)?,
+                signer_index: row.get(4)?,
+                state: row.get(5)?,
+                hash: row.get(6)?,
+                round: row.get(7)?,
+                signature_count: row.get(8)?,
+                transport_id: row.get(9)?,
+                created_at: row.get(10)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Update MMS message state.
+    pub fn update_mms_message_state(&self, id: i64, state: i64) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE mms_messages SET state = ?2 WHERE id = ?1",
+            params![id, state],
+        )?;
+        Ok(())
+    }
+
+    /// Delete an MMS message.
+    pub fn delete_mms_message(&self, id: i64) -> Result<bool, rusqlite::Error> {
+        let count = self
+            .conn
+            .execute("DELETE FROM mms_messages WHERE id = ?1", params![id])?;
+        Ok(count > 0)
+    }
+
+    // ── MMS signers ─────────────────────────────────────────────────────
+
+    /// Upsert an MMS signer.
+    pub fn set_mms_signer(
+        &self,
+        signer_index: i64,
+        label: &str,
+        transport_address: &str,
+        monero_address: &str,
+        is_me: bool,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO mms_signers (signer_index, label, transport_address, monero_address, is_me) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![signer_index, label, transport_address, monero_address, is_me as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Get all MMS signers.
+    pub fn get_mms_signers(&self) -> Result<Vec<MmsSignerRow>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT signer_index, label, transport_address, monero_address, is_me, \
+             auto_config_token, auto_config_running FROM mms_signers ORDER BY signer_index",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MmsSignerRow {
+                signer_index: row.get(0)?,
+                label: row.get(1)?,
+                transport_address: row.get(2)?,
+                monero_address: row.get(3)?,
+                is_me: row.get::<_, i64>(4)? != 0,
+                auto_config_token: row.get(5)?,
+                auto_config_running: row.get::<_, i64>(6)? != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Delete all MMS data (messages + signers).
+    pub fn clear_mms(&self) -> Result<(), rusqlite::Error> {
+        self.conn.execute("DELETE FROM mms_messages", [])?;
+        self.conn.execute("DELETE FROM mms_signers", [])?;
+        Ok(())
     }
 }
 

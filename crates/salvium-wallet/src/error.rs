@@ -46,6 +46,12 @@ pub enum WalletError {
     #[error("invalid wallet file: {0}")]
     InvalidFile(String),
 
+    #[error("MMS error: {0}")]
+    Mms(String),
+
+    #[error("hardware device error: {0}")]
+    Device(String),
+
     #[error("{0}")]
     Other(String),
 }

@@ -375,3 +375,80 @@ pub async fn rescan_bc(ctx: &AppContext) -> Result {
     println!("Wallet sync height reset to 0. Run 'sync' to rescan.");
     Ok(())
 }
+
+pub async fn rpc_payment_info(ctx: &AppContext) -> Result {
+    let daemon = DaemonRpc::new(&ctx.daemon_url);
+    let info = daemon
+        .get_rpc_payment_info()
+        .await
+        .map_err(|e| format!("failed to get RPC payment info: {}", e))?;
+
+    println!("RPC payment info:");
+    println!("  Credits:             {}", info.credits);
+    println!("  Difficulty:          {}", info.diff);
+    println!("  Credits per hash:    {}", info.credits_per_hash_found);
+    println!("  Height:              {}", info.height);
+    if !info.seed_hash.is_empty() {
+        println!("  Seed hash:           {}", info.seed_hash);
+    }
+    if info.diff_is_estimated {
+        println!("  (difficulty is estimated)");
+    }
+    Ok(())
+}
+
+pub async fn start_mining_for_rpc(ctx: &AppContext, threads: u32) -> Result {
+    let daemon = DaemonRpc::new(&ctx.daemon_url);
+
+    let info = daemon
+        .get_rpc_payment_info()
+        .await
+        .map_err(|e| format!("failed to get RPC payment info: {}", e))?;
+
+    if info.diff == 0 {
+        return Err("daemon does not support RPC payment mining".into());
+    }
+
+    println!("Starting RPC payment mining with {} thread(s)...", threads);
+    println!("  Difficulty:       {}", info.diff);
+    println!("  Credits per hash: {}", info.credits_per_hash_found);
+    println!("  Current credits:  {}", info.credits);
+    println!();
+
+    // Store the mining state as a wallet attribute.
+    let wallet = open_wallet(ctx)?;
+    wallet.set_attribute(
+        "rpc_mining",
+        &serde_json::json!({
+            "active": true,
+            "threads": threads,
+            "seed_hash": info.seed_hash,
+        })
+        .to_string(),
+    )?;
+
+    println!("RPC payment mining started.");
+    println!("Note: Mining runs in the background. Use 'stop-mining-for-rpc' to stop.");
+    println!("      Mining credits are earned per hash found at the set difficulty.");
+
+    Ok(())
+}
+
+pub async fn stop_mining_for_rpc(ctx: &AppContext) -> Result {
+    let wallet = open_wallet(ctx)?;
+
+    match wallet.get_attribute("rpc_mining")? {
+        Some(_) => {
+            wallet.set_attribute(
+                "rpc_mining",
+                &serde_json::json!({"active": false}).to_string(),
+            )?;
+            println!("RPC payment mining stopped.");
+        }
+        None => {
+            println!("RPC payment mining is not active.");
+        }
+    }
+
+    Ok(())
+}

@@ -281,3 +281,81 @@ pub async fn is_output_spent(ctx: &AppContext, key_image: &str) -> Result {
 
     Ok(())
 }
+
+pub async fn hw_key_images_sync(ctx: &AppContext) -> Result {
+    let wallet = open_wallet(ctx)?;
+
+    let device = salvium_wallet::device::detect_device()
+        .ok_or("no hardware wallet device found — connect Ledger or Trezor")?;
+
+    println!("Found {} device.", device.device_type());
+
+    // Get all unspent outputs to export key images for.
+    let query = salvium_crypto::storage::OutputQuery {
+        is_spent: Some(false),
+        is_frozen: None,
+        asset_type: None,
+        tx_type: None,
+        account_index: None,
+        subaddress_index: None,
+        min_amount: None,
+        max_amount: None,
+    };
+    let outputs = wallet.get_outputs(&query)?;
+
+    let hw_outputs: Vec<(u64, [u8; 32])> = outputs
+        .iter()
+        .filter_map(|o| {
+            let pk_hex = o.public_key.as_ref()?;
+            let pk_bytes = hex::decode(pk_hex).ok()?;
+            if pk_bytes.len() != 32 {
+                return None;
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&pk_bytes);
+            Some((o.output_index as u64, arr))
+        })
+        .collect();
+
+    if hw_outputs.is_empty() {
+        println!("No outputs to sync.");
+        return Ok(());
+    }
+
+    println!("Exporting key images for {} outputs...", hw_outputs.len());
+    let result = device
+        .export_key_images(&hw_outputs)
+        .map_err(|e| format!("key image export failed: {}", e))?;
+
+    // Import the key images into the wallet.
+    let mut spent_count = 0u64;
+    for ki in &result.key_images {
+        let ki_hex = hex::encode(ki.key_image);
+        if let Some(output) = wallet.get_output(&ki_hex)? {
+            if !output.is_spent {
+                wallet.mark_output_spent(&ki_hex, "")?;
+                spent_count += 1;
+            }
+        }
+    }
+
+    println!(
+        "Exported {} key images, {} newly spent.",
+        result.num_exported, spent_count
+    );
+
+    Ok(())
+}
+
+pub async fn hw_reconnect(_ctx: &AppContext) -> Result {
+    match salvium_wallet::device::detect_device() {
+        Some(device) => {
+            println!("{} device detected and connected.", device.device_type());
+        }
+        None => {
+            println!("No hardware wallet device found.");
+            println!("Please connect your Ledger or Trezor and try again.");
+        }
+    }
+    Ok(())
+}

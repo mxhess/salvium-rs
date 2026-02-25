@@ -6,10 +6,12 @@ mod daemon;
 mod history;
 mod keys;
 mod misc;
+mod mms;
 mod multisig;
 mod notes;
 mod outputs;
 mod proofs;
+mod rings;
 mod transfers;
 mod wallet_mgmt;
 
@@ -27,10 +29,12 @@ pub use daemon::*;
 pub use history::*;
 pub use keys::*;
 pub use misc::*;
+pub use mms::*;
 pub use multisig::*;
 pub use notes::*;
 pub use outputs::*;
 pub use proofs::*;
+pub use rings::*;
 pub use transfers::*;
 pub use wallet_mgmt::*;
 

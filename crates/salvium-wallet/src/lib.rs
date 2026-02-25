@@ -4,10 +4,14 @@
 //! UTXO selection, and wallet file encryption.
 
 pub mod account;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod device;
 pub mod encryption;
 pub mod error;
 pub mod js_import;
 pub mod keys;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mms;
 pub mod pqc;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod query;
@@ -30,6 +34,6 @@ pub use wallet::{MultisigStatus, Wallet};
 // Re-export storage types from salvium-crypto for convenience.
 #[cfg(not(target_arch = "wasm32"))]
 pub use salvium_crypto::storage::{
-    AddressBookEntry, BalanceResult, OutputQuery, OutputRow, StakeRow, SubaddressIndex,
-    SubaddressRow, TransactionRow, TxQuery, WalletDb,
+    AddressBookEntry, BalanceResult, MmsMessageRow, MmsSignerRow, OutputQuery, OutputRow, StakeRow,
+    SubaddressIndex, SubaddressRow, TransactionRow, TxQuery, WalletDb,
 };

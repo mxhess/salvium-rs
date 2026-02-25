@@ -24,3 +24,9 @@ env_logger.workspace = true
 rpassword = "7"
 rand = "0.8"
 dirs = "5"
+qrcode = "0.14"
+
+[features]
+default = []
+transport = ["salvium-wallet/transport"]
+hardware-wallet = ["salvium-wallet/hardware-wallet"]

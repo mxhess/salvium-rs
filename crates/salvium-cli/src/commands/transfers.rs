@@ -916,3 +916,104 @@ pub async fn donate(ctx: &AppContext, amount_str: &str, priority: &str) -> Resul
     let donate_address = "SaLV1DonateXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXaU6oP9";
     transfer(ctx, donate_address, amount_str, priority).await
 }
+
+pub async fn sweep_account(
+    ctx: &AppContext,
+    account: u32,
+    address: &str,
+    priority: &str,
+    subaddr_indices: &[u32],
+) -> Result {
+    let wallet = open_wallet(ctx)?;
+
+    if !wallet.can_spend() {
+        return Err("cannot sweep from a view-only wallet".into());
+    }
+
+    let parsed_addr = salvium_types::address::parse_address(address)
+        .map_err(|e| format!("invalid destination address: {}", e))?;
+    let fee_priority = tx_common::parse_fee_priority(priority);
+
+    // Get outputs for the specific account (and optional subaddress filter).
+    let query = salvium_crypto::storage::OutputQuery {
+        is_spent: Some(false),
+        is_frozen: Some(false),
+        asset_type: Some("SAL".to_string()),
+        tx_type: None,
+        account_index: Some(account as i64),
+        subaddress_index: None,
+        min_amount: None,
+        max_amount: None,
+    };
+    let outputs = wallet.get_outputs(&query)?;
+
+    // Filter by subaddress indices if specified.
+    let filtered: Vec<_> = if subaddr_indices.is_empty() {
+        outputs
+    } else {
+        outputs
+            .into_iter()
+            .filter(|o| subaddr_indices.contains(&(o.subaddress_index.minor as u32)))
+            .collect()
+    };
+
+    if filtered.is_empty() {
+        println!("No outputs found in account {}.", account);
+        return Ok(());
+    }
+
+    let total: u64 = filtered
+        .iter()
+        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
+        .sum();
+    let est_fee = salvium_tx::estimate_tx_fee(filtered.len(), 1, 16, true, 0x04, fee_priority);
+
+    if total <= est_fee {
+        return Err("total of outputs in account doesn't cover the fee".into());
+    }
+
+    let sweep_amount = total - est_fee;
+    println!("Sweep account {}:", account);
+    println!("  To:       {}", address);
+    println!("  Outputs:  {}", filtered.len());
+    println!("  Amount:   {} SAL", format_sal_u64(sweep_amount));
+    println!("  Fee:      ~{} SAL", format_sal_u64(est_fee));
+
+    if !tx_common::confirm("Confirm sweep? [y/N] ")? {
+        println!("Sweep cancelled.");
+        return Ok(());
+    }
+
+    let pipeline = TxPipeline::new(&wallet, ctx, fee_priority);
+    let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
+        sweep_amount,
+        est_fee,
+        "SAL",
+        salvium_wallet::utxo::SelectionStrategy::All,
+    )?;
+    let final_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
+    let prepared = pipeline.fetch_decoys(&inputs).await?;
+
+    let is_subaddress =
+        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
+
+    let builder = salvium_tx::TransactionBuilder::new()
+        .add_inputs(prepared)
+        .add_destination(salvium_tx::builder::Destination {
+            spend_pubkey: parsed_addr.spend_public_key,
+            view_pubkey: parsed_addr.view_public_key,
+            amount: final_amount,
+            asset_type: "SAL".to_string(),
+            payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
+            is_subaddress,
+        })
+        .set_fee(actual_fee);
+
+    let result = pipeline.build_sign_submit(builder).await?;
+    println!("Sweep submitted successfully!");
+    println!("  TX hash: {}", hex::encode(result.tx_hash));
+    println!("  Swept:   {} SAL", format_sal_u64(final_amount));
+    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
+
+    Ok(())
+}

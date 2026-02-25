@@ -256,6 +256,25 @@ pub struct SupplyInfo {
     pub extra: serde_json::Map<String, Value>,
 }
 
+/// RPC payment info response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcPaymentInfo {
+    #[serde(default)]
+    pub credits: u64,
+    #[serde(default)]
+    pub diff: u64,
+    #[serde(default)]
+    pub credits_per_hash_found: u64,
+    #[serde(default)]
+    pub height: u64,
+    #[serde(default)]
+    pub seed_hash: String,
+    #[serde(default)]
+    pub top_hash: String,
+    #[serde(default)]
+    pub diff_is_estimated: bool,
+}
+
 /// Sync info.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SyncInfo {
@@ -1643,6 +1662,44 @@ impl DaemonRpc {
         } else {
             Ok(salvium_types::constants::Network::Mainnet)
         }
+    }
+
+    /// Get RPC payment info (credits, difficulty, hash rate).
+    ///
+    /// Used by the client-side payment mining system where clients mine
+    /// to earn RPC credits for queries.
+    pub async fn get_rpc_payment_info(&self) -> Result<RpcPaymentInfo, RpcError> {
+        let val = self
+            .client
+            .call("rpc_access_info", serde_json::json!({}))
+            .await?;
+
+        Ok(RpcPaymentInfo {
+            credits: val["credits"].as_u64().unwrap_or(0),
+            diff: val["diff"].as_u64().unwrap_or(0),
+            credits_per_hash_found: val["credits_per_hash_found"].as_u64().unwrap_or(0),
+            height: val["height"].as_u64().unwrap_or(0),
+            seed_hash: val["seed_hash"].as_str().unwrap_or("").to_string(),
+            top_hash: val["top_hash"].as_str().unwrap_or("").to_string(),
+            diff_is_estimated: val["diff_is_estimated"].as_bool().unwrap_or(false),
+        })
+    }
+
+    /// Submit mining nonce for RPC payment credits.
+    pub async fn rpc_access_submit_nonce(
+        &self,
+        nonce: u32,
+        cookie: &str,
+    ) -> Result<Value, RpcError> {
+        self.client
+            .call(
+                "rpc_access_submit_nonce",
+                serde_json::json!({
+                    "nonce": nonce,
+                    "cookie": cookie,
+                }),
+            )
+            .await
     }
 }
 
