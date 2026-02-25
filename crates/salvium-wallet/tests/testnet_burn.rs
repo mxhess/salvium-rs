@@ -65,7 +65,7 @@ async fn test_burn_transaction_build() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),
@@ -129,7 +129,7 @@ async fn test_burn_submit_testnet() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

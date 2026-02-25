@@ -44,7 +44,7 @@ async fn test_full_sync_balance() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),
@@ -136,7 +136,7 @@ async fn test_view_only_sync() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("view-only.db");
-    let wallet = Wallet::open(view_keys, db_path.to_str().unwrap(), &[0u8; 32])
+    let mut wallet = Wallet::open(view_keys, db_path.to_str().unwrap(), &[0u8; 32])
         .expect("open view-only wallet");
 
     let d = daemon();
@@ -200,7 +200,7 @@ async fn test_carrot_view_only_sync() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("carrot-view-only.db");
-    let wallet = Wallet::open(view_keys, db_path.to_str().unwrap(), &[0u8; 32])
+    let mut wallet = Wallet::open(view_keys, db_path.to_str().unwrap(), &[0u8; 32])
         .expect("open CARROT view-only wallet");
 
     let d = daemon();
@@ -248,7 +248,7 @@ async fn test_sync_idempotent() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

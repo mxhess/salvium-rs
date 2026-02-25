@@ -277,6 +277,22 @@ pub fn scan_cryptonote_output(
     })
 }
 
+/// Public wrapper for `derive_subaddress_pubkey` that operates on raw byte arrays.
+///
+/// Computes `Ko - H_s(derivation || varint(output_index)) * G`, returning the
+/// derived subaddress spend pubkey as 32 bytes. Used by the pre-CARROT PROTOCOL
+/// return key image override to recover the change output's spend pubkey.
+pub fn derive_subaddress_pubkey_bytes(
+    output_pubkey: &[u8; 32],
+    derivation: &[u8; 32],
+    output_index: u32,
+) -> [u8; 32] {
+    let ko_point = CompressedEdwardsY(*output_pubkey)
+        .decompress()
+        .expect("invalid output pubkey");
+    derive_subaddress_pubkey(&ko_point, derivation, output_index)
+}
+
 // ─── Key Derivation for Spending ─────────────────────────────────────────────
 
 /// Derive the one-time spend secret key for a CryptoNote output.

@@ -65,7 +65,7 @@ async fn test_real_testnet_transfer() {
     let db_path = temp_dir.path().join("wallet-a.db");
     let db_key = [0u8; 32];
 
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

@@ -128,7 +128,7 @@ pub async fn save_bc(ctx: &AppContext) -> Result {
 }
 
 pub async fn sync_wallet(ctx: &AppContext) -> Result {
-    let wallet = open_wallet(ctx)?;
+    let mut wallet = open_wallet(ctx)?;
     let daemon = DaemonRpc::new(&ctx.daemon_url);
 
     let info = daemon.get_info().await?;

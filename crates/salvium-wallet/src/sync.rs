@@ -116,7 +116,7 @@ impl SyncEngine {
     pub async fn sync(
         daemon: &DaemonRpc,
         db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
-        scan_ctx: &ScanContext,
+        scan_ctx: &mut ScanContext,
         stake_lock_period: u64,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
     ) -> Result<u64, WalletError> {
@@ -137,6 +137,19 @@ impl SyncEngine {
 
         if sync_height as u64 >= top_block {
             return Ok(sync_height as u64);
+        }
+
+        // Load salvium_txs change output Kos into CN subaddress map so
+        // pre-CARROT PROTOCOL return outputs can be found during scanning.
+        {
+            let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+            if let Ok(keys) = db.get_all_salvium_tx_keys() {
+                for (ko, major, minor) in keys {
+                    if !scan_ctx.cn_subaddress_map.iter().any(|(k, _, _)| *k == ko) {
+                        scan_ctx.cn_subaddress_map.push((ko, major, minor));
+                    }
+                }
+            }
         }
 
         if let Some(tx) = event_tx {
@@ -382,7 +395,7 @@ struct ParsedBlock {
 #[cfg(not(target_arch = "wasm32"))]
 async fn process_bin_block(
     db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
-    scan_ctx: &ScanContext,
+    scan_ctx: &mut ScanContext,
     height: u64,
     entry: &salvium_rpc::daemon::BinBlockEntry,
     header: &salvium_rpc::daemon::BlockHeader,
@@ -430,7 +443,7 @@ async fn process_bin_block(
             {
                 let found = scanner::scan_transaction(scan_ctx, &scan_data);
                 outputs_found += found.len();
-                store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
             }
         }
     }
@@ -514,7 +527,7 @@ async fn process_bin_block(
                     );
                 }
                 outputs_found += found.len();
-                store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
             } else if ptx_vout_count > 0 {
                 // parse_tx_for_scanning returned None — likely no tx_pub_key
                 log::debug!(
@@ -586,7 +599,7 @@ async fn process_bin_block(
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
-                    store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                    store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
                 }
             }
             Err(e) => {
@@ -671,7 +684,7 @@ async fn process_bin_block(
 #[allow(dead_code)]
 fn process_block_data(
     db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
-    scan_ctx: &ScanContext,
+    scan_ctx: &mut ScanContext,
     height: u64,
     block: &salvium_rpc::daemon::BlockResult,
     tx_entries: &[salvium_rpc::daemon::TransactionEntry],
@@ -703,7 +716,7 @@ fn process_block_data(
             {
                 let found = scanner::scan_transaction(scan_ctx, &scan_data);
                 outputs_found += found.len();
-                store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
             }
         }
 
@@ -724,7 +737,7 @@ fn process_block_data(
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
-                    store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                    store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
                 }
             }
         }
@@ -773,7 +786,7 @@ fn process_block_data(
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
-                    store_found_outputs(db, &found, &scan_data, block_timestamp)?;
+                    store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
                 }
             }
             Err(e) => {
@@ -806,7 +819,7 @@ fn process_block_data(
 async fn sync_block(
     daemon: &DaemonRpc,
     db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
-    scan_ctx: &ScanContext,
+    scan_ctx: &mut ScanContext,
     height: u64,
 ) -> Result<usize, WalletError> {
     // Get block data.
@@ -1512,6 +1525,7 @@ fn detect_spent_outputs(
 #[cfg(not(target_arch = "wasm32"))]
 fn store_found_outputs(
     db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    scan_ctx: &mut ScanContext,
     found: &[FoundOutput],
     tx: &ScanTxData,
     block_timestamp: u64,
@@ -1619,17 +1633,123 @@ fn store_found_outputs(
         db.put_output(&row)
             .map_err(|e| WalletError::Storage(e.to_string()))?;
 
-        // Fix #8 (TODO): Pre-CARROT PROTOCOL/RETURN key image override.
-        // C++ ref: wallet2.cpp:2684-2719
-        // For pre-CARROT outputs in PROTOCOL_TX that have an origin STAKE/AUDIT TX,
-        // the key image must be re-derived using the origin TX's public key and
-        // output index instead of the PROTOCOL TX's. This requires:
-        //   1. Looking up the origin TX via m_salvium_txs (our outputs table)
-        //   2. Re-deriving the CN key image with the origin's derivation
-        // This only affects pre-CARROT (pre-HF10) wallets; CARROT key images
-        // are computed correctly via the existing CARROT key image logic.
-        // For now, post-HF10 PROTOCOL_TX outputs use CARROT scanning which
-        // handles key images correctly.
+        // Populate salvium_txs for CONVERT(4)/STAKE(6)/AUDIT(8) change outputs.
+        // These entries are needed later for pre-CARROT PROTOCOL return key
+        // image overrides. Also add the Ko to the live CN subaddress map so
+        // subsequent blocks can find PROTOCOL returns.
+        // C++ ref: `m_salvium_txs` population in wallet2.cpp
+        if matches!(tx.tx_type, 4 | 6 | 8) {
+            let ko_hex = hex::encode(output.output_public_key);
+            let tx_pub_hex = hex::encode(tx.tx_pub_key);
+            let _ = db.put_salvium_tx(
+                &ko_hex,
+                &tx_pub_hex,
+                output.output_index as i64,
+                output.subaddress_major as i64,
+                output.subaddress_minor as i64,
+                tx.tx_type as i64,
+            );
+
+            // Add to live CN subaddress map if not already present.
+            if !scan_ctx
+                .cn_subaddress_map
+                .iter()
+                .any(|(k, _, _)| *k == output.output_public_key)
+            {
+                scan_ctx.cn_subaddress_map.push((
+                    output.output_public_key,
+                    output.subaddress_major,
+                    output.subaddress_minor,
+                ));
+            }
+
+            // Update the stake's change_output_key for STAKE TXs.
+            if tx.tx_type == 6 {
+                let ko_hex = hex::encode(output.output_public_key);
+                let tx_hash_hex = hex::encode(tx.tx_hash);
+                if let Ok(stakes) = db.get_stakes(Some("locked"), None) {
+                    if let Some(stake) =
+                        stakes.iter().find(|s| s.stake_tx_hash == tx_hash_hex)
+                    {
+                        let _ = db.update_stake_change_key(&stake.stake_tx_hash, &ko_hex);
+                    }
+                }
+            }
+        }
+
+        // Pre-CARROT PROTOCOL return key image override.
+        // C++ ref: wallet2.cpp:2684-2719, generate_key_image_helper_precomp use_origin_data
+        // For non-CARROT outputs in PROTOCOL_TX (tx_type=2), the key image
+        // must use two-step derivation through the origin STAKE/AUDIT/CONVERT TX.
+        if tx.tx_type == 2 && !output.is_carrot {
+            if let Some(ref spend_secret) = scan_ctx.cn_spend_secret {
+                let derivation =
+                    salvium_crypto::generate_key_derivation(&tx.tx_pub_key, &scan_ctx.cn_view_secret);
+                if derivation.len() == 32 {
+                    let mut d = [0u8; 32];
+                    d.copy_from_slice(&derivation);
+                    // P_change = Ko_return - Hs(D || 0) * G
+                    let p_change =
+                        salvium_crypto::cn_scan::derive_subaddress_pubkey_bytes(
+                            &output.output_public_key,
+                            &d,
+                            0,
+                        );
+                    let p_change_hex = hex::encode(p_change);
+
+                    if let Ok(Some(origin)) = db.get_salvium_tx(&p_change_hex) {
+                        if let Ok(origin_pub) = hex::decode(&origin.origin_tx_pub) {
+                            if origin_pub.len() == 32 {
+                                let mut origin_pub_arr = [0u8; 32];
+                                origin_pub_arr.copy_from_slice(&origin_pub);
+
+                                // Two-step derivation (faithful to C++ generate_key_image_helper_precomp)
+                                // Step 1: sk_change = derive_output_spend_key(view, spend, origin_pub, origin_idx, major, minor)
+                                let sk_change =
+                                    salvium_crypto::cn_scan::derive_output_spend_key(
+                                        &scan_ctx.cn_view_secret,
+                                        spend_secret,
+                                        &origin_pub_arr,
+                                        origin.origin_out_idx as u32,
+                                        origin.subaddr_major as u32,
+                                        origin.subaddr_minor as u32,
+                                    );
+                                // Step 2: x_return = derive_output_spend_key(view, &sk_change, protocol_pub, 0, 0, 0)
+                                let x_return =
+                                    salvium_crypto::cn_scan::derive_output_spend_key(
+                                        &scan_ctx.cn_view_secret,
+                                        &sk_change,
+                                        &tx.tx_pub_key,
+                                        0,
+                                        0,
+                                        0,
+                                    );
+                                // Step 3: KI = generate_key_image(Ko_return, x_return)
+                                let ki = salvium_crypto::generate_key_image(
+                                    &output.output_public_key,
+                                    &x_return,
+                                );
+                                if ki.len() == 32 {
+                                    let new_ki = hex::encode(&ki);
+                                    let old_ki =
+                                        row.key_image.as_deref().unwrap_or("");
+                                    if old_ki != new_ki {
+                                        log::info!(
+                                            "key image override: height={} old={:.16} new={:.16}",
+                                            tx.block_height,
+                                            old_ki,
+                                            &new_ki
+                                        );
+                                        let _ = db.replace_key_image(old_ki, &new_ki);
+                                        row.key_image = Some(new_ki);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Fix #2: Return output detection for PROTOCOL_TX.
         // C++ ref: wallet2.cpp:2754-2756 (m_locked_coins.erase on return)

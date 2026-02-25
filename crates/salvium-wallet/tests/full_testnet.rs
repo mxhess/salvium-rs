@@ -1120,7 +1120,7 @@ struct SyncStats {
     outputs_found: usize,
 }
 
-async fn sync_wallet_checked(wallet: &Wallet, daemon: &DaemonRpc, label: &str) -> SyncStats {
+async fn sync_wallet_checked(wallet: &mut Wallet, daemon: &DaemonRpc, label: &str) -> SyncStats {
     println!("  Syncing wallet {}...", label);
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<SyncEvent>(256);
 
@@ -1565,13 +1565,10 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
 async fn run_full_tests(
     daemon: &DaemonRpc,
     daemon_url: &str,
-    fixture: &TestFixture,
+    fixture: &mut TestFixture,
     fork: &ForkSpec,
     stats: &mut RunStats,
 ) {
-    let transactor_a = TestTransactor::new(daemon, &fixture.wallet_a);
-    let transactor_b = TestTransactor::new(daemon, &fixture.wallet_b);
-
     let (dest_b_spend, dest_b_view) = dest_keys(&fixture.wallet_b, fork);
     let (dest_a_spend, dest_a_view) = dest_keys(&fixture.wallet_a, fork);
     let addr_a = mining_address(&fixture.wallet_a, fork);
@@ -1584,7 +1581,7 @@ async fn run_full_tests(
             amount_s,
             fork.asset
         );
-        let result = transactor_a
+        let result = TestTransactor::new(daemon, &fixture.wallet_a)
             .transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false)
             .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
@@ -1620,16 +1617,16 @@ async fn run_full_tests(
         }
     }
 
-    sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
-    sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
+    sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
+    sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
     // Transfer B→A (requires B to have received and matured the A→B transfers)
-    let db_asset_b = transactor_b.db_asset_type(fork);
+    let db_asset_b = if fork.hf >= 6 { "SAL1" } else { "SAL" };
     let bal_b = fixture.wallet_b.get_balance(db_asset_b, 0).unwrap();
     let unlocked_b: u64 = bal_b.unlocked_balance.parse().unwrap_or(0);
     if unlocked_b >= sal(0.5) + sal(0.1) {
         println!("\n  TX 4: Transfer B->A 0.5 {} SAL", fork.asset);
-        let result = transactor_b
+        let result = TestTransactor::new(daemon, &fixture.wallet_b)
             .transfer(dest_a_spend, dest_a_view, sal(0.5), fork, false)
             .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
@@ -1684,10 +1681,10 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 5: Stake 10 {} SAL", fork.asset);
-        let result = transactor_a.stake(sal(10.0), fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a).stake(sal(10.0), fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
@@ -1702,7 +1699,7 @@ async fn run_full_tests(
         .await;
         stats.record_mining(&ms);
 
-        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         // Verify stake return was detected
         let stakes = fixture.wallet_a.get_stakes(None).unwrap();
@@ -1743,10 +1740,10 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 6: Burn 0.1 {} SAL", fork.asset);
-        let result = transactor_a.burn(sal(0.1), fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a).burn(sal(0.1), fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
@@ -1762,10 +1759,10 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
+        sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
         println!("\n  TX 7: Sweep B->B");
-        let result = transactor_b.sweep(dest_b_spend, dest_b_view, fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_b).sweep(dest_b_spend, dest_b_view, fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
@@ -1782,7 +1779,7 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet_checked(&fixture.wallet_a, daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 8: Transfer A->B subaddress (0,1)");
         let b_maps = fixture.wallet_b.subaddress_maps();
@@ -1808,7 +1805,7 @@ async fn run_full_tests(
                 .expect("subaddress (0,1) not found in wallet B's CN map");
             (sub_01.0, fixture.wallet_b.keys().cn.view_public_key)
         };
-        let sub_result = transactor_a
+        let sub_result = TestTransactor::new(daemon, &fixture.wallet_a)
             .transfer(sub_spend, sub_view, sal(0.5), fork, true)
             .await;
         println!(
@@ -1828,7 +1825,7 @@ async fn run_full_tests(
         )
         .await;
         stats.record_mining(&ms);
-        sync_wallet_checked(&fixture.wallet_b, daemon, "B").await;
+        sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
         // Verify B has an output with subaddress major=0, minor=1
         let b_query = salvium_crypto::storage::OutputQuery {
@@ -1856,7 +1853,7 @@ async fn run_full_tests(
 /// Run lightweight transfer test at intermediate forks.
 async fn run_lightweight_test(
     daemon: &DaemonRpc,
-    fixture: &TestFixture,
+    fixture: &mut TestFixture,
     fork: &ForkSpec,
     stats: &mut RunStats,
 ) {
@@ -1912,7 +1909,7 @@ async fn full_testnet_hardfork_progression() {
         );
     }
 
-    let fixture = TestFixture::create();
+    let mut fixture = TestFixture::create();
     println!(
         "  Wallet A (CN):     {}...",
         &fixture.wallet_a.cn_address().unwrap()[..30]
@@ -1972,8 +1969,8 @@ async fn full_testnet_hardfork_progression() {
         }
 
         // Sync wallets
-        sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
-        sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
+        sync_wallet_checked(&mut fixture.wallet_a, &daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_b, &daemon, "B").await;
 
         // Print pre-test balances
         print_balance(&fixture.wallet_a, "A", fork.asset);
@@ -1985,10 +1982,10 @@ async fn full_testnet_hardfork_progression() {
                 println!("  (HF1 genesis — no TX tests, coinbase not yet mature)");
             }
             TestMode::Full => {
-                run_full_tests(&daemon, &url, &fixture, fork, &mut stats).await;
+                run_full_tests(&daemon, &url, &mut fixture, fork, &mut stats).await;
             }
             TestMode::Lightweight => {
-                run_lightweight_test(&daemon, &fixture, fork, &mut stats).await;
+                run_lightweight_test(&daemon, &mut fixture, fork, &mut stats).await;
             }
             TestMode::Paused => {
                 println!(
@@ -2010,8 +2007,8 @@ async fn full_testnet_hardfork_progression() {
         stats.record_mining(&ms);
 
         // Sync and print post-test balances
-        sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
-        sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
+        sync_wallet_checked(&mut fixture.wallet_a, &daemon, "A").await;
+        sync_wallet_checked(&mut fixture.wallet_b, &daemon, "B").await;
 
         // Wallet A should always have a positive balance (mined many blocks)
         assert_balance_positive(&fixture.wallet_a, "A", fork.asset);
@@ -2030,8 +2027,8 @@ async fn full_testnet_hardfork_progression() {
     println!("  Phase 7: Final Reconciliation");
     println!("{}", "=".repeat(60));
 
-    sync_wallet_checked(&fixture.wallet_a, &daemon, "A").await;
-    sync_wallet_checked(&fixture.wallet_b, &daemon, "B").await;
+    sync_wallet_checked(&mut fixture.wallet_a, &daemon, "A").await;
+    sync_wallet_checked(&mut fixture.wallet_b, &daemon, "B").await;
 
     let final_height = get_daemon_height(&daemon).await;
     println!("\n  Chain height: {}", final_height);
@@ -2103,13 +2100,13 @@ async fn full_testnet_hardfork_progression() {
             Network::Testnet,
         );
         let tmp_vo = tempfile::tempdir().unwrap();
-        let wallet_vo = Wallet::open(
+        let mut wallet_vo = Wallet::open(
             view_keys,
             tmp_vo.path().join("vo.db").to_str().unwrap(),
             &[0u8; 32],
         )
         .unwrap();
-        sync_wallet_checked(&wallet_vo, &daemon, "A-ViewOnly").await;
+        sync_wallet_checked(&mut wallet_vo, &daemon, "A-ViewOnly").await;
 
         // Compare SAL balance.
         // View-only wallets cannot compute CN key images (no spend secret), so
@@ -2216,7 +2213,7 @@ async fn full_testnet_hardfork_progression() {
         .as_nanos() as u64;
     seed_c[2..10].copy_from_slice(&ts.to_le_bytes());
 
-    let wallet_c = Wallet::create(
+    let mut wallet_c = Wallet::create(
         seed_c,
         Network::Testnet,
         db_path_c.to_str().unwrap(),
@@ -2226,7 +2223,7 @@ async fn full_testnet_hardfork_progression() {
 
     println!("  Wallet C: {}...", &wallet_c.cn_address().unwrap()[..30]);
     println!("  Syncing from genesis...");
-    sync_wallet_checked(&wallet_c, &daemon, "C").await;
+    sync_wallet_checked(&mut wallet_c, &daemon, "C").await;
 
     // Verify zero balance
     let hf_info = daemon.hard_fork_info().await.unwrap();
@@ -2238,7 +2235,7 @@ async fn full_testnet_hardfork_progression() {
     println!("\n  Phase 8b: Sync idempotency...");
     let pre_height = fixture.wallet_a.sync_height().unwrap();
     let pre_bal = fixture.wallet_a.get_balance(at, 0).unwrap();
-    sync_wallet_checked(&fixture.wallet_a, &daemon, "A-idempotent").await;
+    sync_wallet_checked(&mut fixture.wallet_a, &daemon, "A-idempotent").await;
     let post_height = fixture.wallet_a.sync_height().unwrap();
     let post_bal = fixture.wallet_a.get_balance(at, 0).unwrap();
     assert_eq!(pre_height, post_height, "sync height should be unchanged");

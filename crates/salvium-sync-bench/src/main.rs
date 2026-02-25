@@ -165,7 +165,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut db_key);
 
-    let wallet = if let Some(ref mnemonic) = args.mnemonic {
+    let mut wallet = if let Some(ref mnemonic) = args.mnemonic {
         source_label = "mnemonic";
         Wallet::from_mnemonic(mnemonic, network, &db_path, &db_key)?
     } else if let Some(ref seed_hex) = args.seed {

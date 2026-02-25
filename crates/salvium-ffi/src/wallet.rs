@@ -3,7 +3,7 @@
 use std::ffi::{c_char, c_void};
 
 use crate::error::{ffi_try, ffi_try_ptr, ffi_try_string};
-use crate::handles::{borrow_handle, drop_handle};
+use crate::handles::{borrow_handle, borrow_handle_mut, drop_handle};
 use crate::strings::c_str_to_str;
 
 use salvium_wallet::Wallet;
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn salvium_wallet_sync(
     callback: Option<SyncCallbackFn>,
 ) -> i32 {
     ffi_try(|| {
-        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
+        let wallet_ref = unsafe { borrow_handle_mut::<Wallet>(wallet) }?;
         let daemon_ref = unsafe { borrow_handle::<salvium_rpc::DaemonRpc>(daemon) }?;
         let rt = crate::runtime();
 

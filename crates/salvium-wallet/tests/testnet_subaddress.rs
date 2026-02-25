@@ -327,7 +327,7 @@ async fn test_self_transfer_to_subaddress() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

@@ -151,6 +151,15 @@ CREATE TABLE IF NOT EXISTS multisig_signers (
   public_key      TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS salvium_txs (
+  change_ko       TEXT PRIMARY KEY,
+  origin_tx_pub   TEXT NOT NULL,
+  origin_out_idx  INTEGER NOT NULL,
+  subaddr_major   INTEGER NOT NULL,
+  subaddr_minor   INTEGER NOT NULL,
+  tx_type         INTEGER NOT NULL
+);
 ";
 
 // ─── Data Models ────────────────────────────────────────────────────────────
@@ -338,6 +347,20 @@ pub struct SubaddressRow {
     #[serde(default)]
     pub used: bool,
     pub created_at: Option<i64>,
+}
+
+/// An entry in the `salvium_txs` table, mapping a change output Ko from a
+/// CONVERT/STAKE/AUDIT TX to its origin TX metadata. Used for pre-CARROT
+/// PROTOCOL return key image overrides.
+/// C++ ref: `m_salvium_txs` in wallet2.h
+#[derive(Debug)]
+pub struct SalviumTxEntry {
+    pub change_ko: String,
+    pub origin_tx_pub: String,
+    pub origin_out_idx: i64,
+    pub subaddr_major: i64,
+    pub subaddr_minor: i64,
+    pub tx_type: i64,
 }
 
 fn default_zero_str() -> String {
@@ -903,6 +926,15 @@ impl WalletDb {
     pub fn rollback(&self, height: i64) -> Result<(), rusqlite::Error> {
         let tx = self.conn.unchecked_transaction()?;
 
+        // Delete salvium_txs entries whose change_ko came from outputs above height.
+        // Must run BEFORE deleting outputs so the subquery can still match.
+        tx.execute(
+            "DELETE FROM salvium_txs WHERE change_ko IN (
+                SELECT public_key FROM outputs WHERE block_height > ?1
+            )",
+            params![height],
+        )?;
+
         // Delete outputs above height
         tx.execute(
             "DELETE FROM outputs WHERE block_height > ?1",
@@ -954,7 +986,8 @@ impl WalletDb {
              DELETE FROM transactions;
              DELETE FROM key_images;
              DELETE FROM meta;
-             DELETE FROM address_book;",
+             DELETE FROM address_book;
+             DELETE FROM salvium_txs;",
         )
     }
 
@@ -1376,6 +1409,118 @@ impl WalletDb {
              return_timestamp = NULL, return_amount = '0', updated_at = ?1
              WHERE return_height > ?2",
             params![now, height],
+        )?;
+        Ok(())
+    }
+
+    // ── Salvium TX Map (pre-CARROT key image overrides) ────────────────
+
+    /// Record a change output Ko from a CONVERT/STAKE/AUDIT TX for later
+    /// key image override when the PROTOCOL TX returns the funds.
+    /// C++ ref: `m_salvium_txs` population in wallet2.cpp
+    pub fn put_salvium_tx(
+        &self,
+        change_ko: &str,
+        origin_tx_pub: &str,
+        origin_out_idx: i64,
+        subaddr_major: i64,
+        subaddr_minor: i64,
+        tx_type: i64,
+    ) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO salvium_txs (
+                change_ko, origin_tx_pub, origin_out_idx,
+                subaddr_major, subaddr_minor, tx_type
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                change_ko,
+                origin_tx_pub,
+                origin_out_idx,
+                subaddr_major,
+                subaddr_minor,
+                tx_type
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Look up origin TX data for a change output Ko.
+    /// Returns `None` if no matching entry exists.
+    pub fn get_salvium_tx(
+        &self,
+        change_ko: &str,
+    ) -> Result<Option<SalviumTxEntry>, rusqlite::Error> {
+        self.conn
+            .query_row(
+                "SELECT change_ko, origin_tx_pub, origin_out_idx,
+                        subaddr_major, subaddr_minor, tx_type
+                 FROM salvium_txs WHERE change_ko = ?1",
+                params![change_ko],
+                |r| {
+                    Ok(SalviumTxEntry {
+                        change_ko: r.get(0)?,
+                        origin_tx_pub: r.get(1)?,
+                        origin_out_idx: r.get(2)?,
+                        subaddr_major: r.get(3)?,
+                        subaddr_minor: r.get(4)?,
+                        tx_type: r.get(5)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// Get all salvium_txs entries as (Ko bytes, major, minor) for CN
+    /// subaddress map population. Returns decoded 32-byte Kos.
+    pub fn get_all_salvium_tx_keys(&self) -> Result<Vec<([u8; 32], u32, u32)>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT change_ko, subaddr_major, subaddr_minor FROM salvium_txs",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (ko_hex, major, minor) = row?;
+            if let Ok(bytes) = hex::decode(&ko_hex) {
+                if bytes.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&bytes);
+                    result.push((arr, major as u32, minor as u32));
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Delete salvium_txs entries for outputs above a given height.
+    /// Used during reorg rollback. Since salvium_txs doesn't store height,
+    /// we delete entries whose change_ko matches outputs above the height.
+    pub fn delete_salvium_txs_above(&self, height: i64) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "DELETE FROM salvium_txs WHERE change_ko IN (
+                SELECT public_key FROM outputs WHERE block_height > ?1
+            )",
+            params![height],
+        )?;
+        Ok(())
+    }
+
+    /// Update the change_output_key for a stake.
+    pub fn update_stake_change_key(
+        &self,
+        stake_tx_hash: &str,
+        change_ko: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let now = now_millis();
+        self.conn.execute(
+            "UPDATE stakes SET change_output_key = ?1, updated_at = ?2
+             WHERE stake_tx_hash = ?3",
+            params![change_ko, now, stake_tx_hash],
         )?;
         Ok(())
     }

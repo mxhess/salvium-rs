@@ -65,7 +65,7 @@ async fn test_convert_transaction_build() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),
@@ -127,7 +127,7 @@ async fn test_convert_expected_rejection() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

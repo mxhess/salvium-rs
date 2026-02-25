@@ -66,7 +66,7 @@ async fn test_stake_transaction_build() {
 
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),
@@ -181,7 +181,7 @@ async fn test_stake_submit_testnet() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),
@@ -458,7 +458,7 @@ async fn test_stake_return_detection() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let wallet = Wallet::create(
+    let mut wallet = Wallet::create(
         secrets.seed,
         Network::Testnet,
         db_path.to_str().unwrap(),

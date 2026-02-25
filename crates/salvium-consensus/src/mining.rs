@@ -169,15 +169,43 @@ pub fn format_difficulty(difficulty: u128) -> String {
     }
 }
 
-/// Calculate difficulty target (2^256 / difficulty).
+/// Calculate difficulty target: `(2^256 - 1) / difficulty`.
+///
+/// Returns the target as a 32-byte little-endian array. The result satisfies
+/// `check_hash(&target, difficulty) == true` for any difficulty >= 1.
+///
+/// Uses bit-by-bit long division of a 256-bit all-ones dividend by a u128
+/// divisor. The remainder can exceed u128 during the left-shift step, so we
+/// track a carry flag to handle the 129th bit.
 pub fn difficulty_to_target(difficulty: u128) -> Option<[u8; 32]> {
     if difficulty == 0 {
         return None;
     }
-    // target = (2^256 - 1) / difficulty (approximation using u256-like math)
-    // For practical purposes, this is used for display only
-    // The actual check is done by check_hash() in salvium-types
-    None // TODO: implement when u256 is needed
+
+    // Bit-by-bit long division: (2^256 - 1) / difficulty
+    // Dividend: all 256 bits set. Divisor: u128.
+    // Remainder needs 129 bits during shift; handle via carry flag.
+    let mut result = [0u8; 32]; // LE
+    let mut remainder: u128 = 0;
+
+    for bit in (0..256).rev() {
+        // Shift remainder left by 1, bring in dividend bit (always 1)
+        let carry = remainder >> 127 != 0;
+        remainder = remainder.wrapping_shl(1) | 1;
+
+        // True value = if carry { 2^128 + remainder } else { remainder }
+        if carry || remainder >= difficulty {
+            if carry {
+                // 2^128 + remainder - difficulty (fits in u128 since result < difficulty)
+                remainder = 0u128.wrapping_sub(difficulty).wrapping_add(remainder);
+            } else {
+                remainder -= difficulty;
+            }
+            result[bit / 8] |= 1 << (bit % 8);
+        }
+    }
+
+    Some(result)
 }
 
 // =============================================================================
@@ -354,5 +382,57 @@ mod tests {
         let hex = format_block_for_submission(&blob, 42, 39);
         let bytes = hex::decode(&hex).unwrap();
         assert_eq!(get_nonce(&bytes, 39), 42);
+    }
+
+    #[test]
+    fn test_difficulty_to_target_zero() {
+        assert!(difficulty_to_target(0).is_none());
+    }
+
+    #[test]
+    fn test_difficulty_to_target_one() {
+        // (2^256 - 1) / 1 = 2^256 - 1 = all 0xFF bytes
+        let target = difficulty_to_target(1).unwrap();
+        assert_eq!(target, [0xFF; 32]);
+    }
+
+    #[test]
+    fn test_difficulty_to_target_two() {
+        // (2^256 - 1) / 2 = 0x7FFF...FFFF
+        let target = difficulty_to_target(2).unwrap();
+        // In LE, the last byte should be 0x7F, all others 0xFF
+        assert_eq!(target[31], 0x7F);
+        for i in 0..31 {
+            assert_eq!(target[i], 0xFF, "byte {} should be 0xFF", i);
+        }
+    }
+
+    #[test]
+    fn test_difficulty_to_target_roundtrip_check_hash() {
+        // For various difficulties, verify check_hash(target, difficulty) passes
+        for diff in [1u128, 2, 100, 1000, 65536, 1_000_000, u128::MAX] {
+            let target = difficulty_to_target(diff).unwrap();
+            assert!(
+                salvium_types::consensus::check_hash(&target, diff),
+                "check_hash should pass for difficulty={}",
+                diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_difficulty_to_target_barely_fails() {
+        // For difficulty > 1, check_hash(target, difficulty + 1) should generally fail
+        // because target * (difficulty + 1) > 2^256 - 1
+        for diff in [2u128, 100, 1000, 65536, 1_000_000] {
+            let target = difficulty_to_target(diff).unwrap();
+            // target is floor((2^256-1)/diff), so target*(diff+1) > 2^256-1
+            // unless remainder is zero (unlikely for these values)
+            assert!(
+                !salvium_types::consensus::check_hash(&target, diff + 1),
+                "check_hash should fail for difficulty={} + 1",
+                diff
+            );
+        }
     }
 }

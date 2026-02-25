@@ -222,13 +222,13 @@ impl Wallet {
     /// Sync the wallet with the blockchain.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn sync(
-        &self,
+        &mut self,
         daemon: &salvium_rpc::DaemonRpc,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
-        SyncEngine::sync(daemon, &self.db, &self.scan_context, lock_period, event_tx).await
+        SyncEngine::sync(daemon, &self.db, &mut self.scan_context, lock_period, event_tx).await
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────

@@ -197,7 +197,7 @@ async fn wallet_sync_and_balance_check() {
     // ── Create wallet + database ────────────────────────────────────────
     let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
     let db_path = temp_dir.path().join("sync_test.db");
-    let wallet =
+    let mut wallet =
         Wallet::open(keys, db_path.to_str().unwrap(), &db_key).expect("failed to open wallet");
 
     // ── Connect to daemon ───────────────────────────────────────────────
