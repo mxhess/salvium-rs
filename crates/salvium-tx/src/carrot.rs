@@ -363,8 +363,8 @@ mod tests {
 
         // Verify K^0_v == scalar_mult_base(k_vi)
         let k_vi_times_g = salvium_crypto::scalar_mult_base(&k_vi);
-        println!("k_vi: {}", hex::encode(&k_vi));
-        println!("K^0_v (from derivation): {}", hex::encode(&k_v_pub));
+        println!("k_vi: {}", hex::encode(k_vi));
+        println!("K^0_v (from derivation): {}", hex::encode(k_v_pub));
         println!(
             "k_vi * G (scalar_mult_base): {}",
             hex::encode(&k_vi_times_g)
@@ -558,8 +558,8 @@ mod tests {
         assert_eq!(sub_major, 0);
         assert_eq!(sub_minor, 1);
 
-        println!("K_s (main): {}", hex::encode(&keys.account_spend_pubkey));
-        println!("K_s_sub (0,1): {}", hex::encode(&sub_k_s));
+        println!("K_s (main): {}", hex::encode(keys.account_spend_pubkey));
+        println!("K_s_sub (0,1): {}", hex::encode(sub_k_s));
         assert_ne!(
             sub_k_s, keys.account_spend_pubkey,
             "subaddress key should differ from main"
@@ -570,7 +570,7 @@ mod tests {
             &keys.view_incoming_key,
             &sub_k_s,
         ));
-        println!("K_v_sub: {}", hex::encode(&kv_sub));
+        println!("K_v_sub: {}", hex::encode(kv_sub));
 
         // Create output to the subaddress
         let params = CarrotOutputParams {
@@ -586,10 +586,10 @@ mod tests {
 
         let (output, d_e_priv, d_e_pub) = create_carrot_output(&params).expect("create failed");
 
-        println!("d_e_priv: {}", hex::encode(&d_e_priv));
-        println!("D_e: {}", hex::encode(&d_e_pub));
-        println!("Ko: {}", hex::encode(&output.onetime_address));
-        println!("view_tag: {}", hex::encode(&output.view_tag));
+        println!("d_e_priv: {}", hex::encode(d_e_priv));
+        println!("D_e: {}", hex::encode(d_e_pub));
+        println!("Ko: {}", hex::encode(output.onetime_address));
+        println!("view_tag: {}", hex::encode(output.view_tag));
 
         // Build subaddress map for scanning: [(K_s_sub, 0, 1)]
         let subaddr_map: Vec<([u8; 32], u32, u32)> = vec![(sub_k_s, 0, 1)];
@@ -612,7 +612,7 @@ mod tests {
         let mut clamped = keys.view_incoming_key;
         clamped[31] &= 0x7F;
         let scanner_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(&clamped, &d_e_pub));
-        println!("Scanner ECDH (k_vi * D_e): {}", hex::encode(&scanner_ecdh));
+        println!("Scanner ECDH (k_vi * D_e): {}", hex::encode(scanner_ecdh));
 
         // Creator ECDH for comparison
         let creator_ecdh = to_32(&salvium_crypto::x25519_scalar_mult(
@@ -621,7 +621,7 @@ mod tests {
         ));
         println!(
             "Creator ECDH (d_e * mont(K_v_sub)): {}",
-            hex::encode(&creator_ecdh)
+            hex::encode(creator_ecdh)
         );
         println!("ECDH match: {}", scanner_ecdh == creator_ecdh);
 

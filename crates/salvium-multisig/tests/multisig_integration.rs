@@ -29,7 +29,7 @@ fn generate_random_scalar() -> (String, [u8; 32]) {
     let reduced = salvium_crypto::sc_reduce32(&buf);
     let mut s = [0u8; 32];
     s.copy_from_slice(&reduced[..32]);
-    (hex::encode(&s), s)
+    (hex::encode(s), s)
 }
 
 /// Run a complete KEX protocol for an M-of-N multisig group.
@@ -229,7 +229,7 @@ fn test_kex_deterministic_with_same_keys() {
     let view1 = "44".repeat(32);
 
     let run = || {
-        let mut accounts = vec![
+        let mut accounts = [
             MultisigAccount::new(2, 2).unwrap(),
             MultisigAccount::new(2, 2).unwrap(),
         ];
@@ -469,7 +469,7 @@ fn test_kex_verification_corrupted_hash() {
     let spend1 = "33".repeat(32);
     let view1 = "44".repeat(32);
 
-    let mut accounts = vec![
+    let mut accounts = [
         MultisigAccount::new(2, 2).unwrap(),
         MultisigAccount::new(2, 2).unwrap(),
     ];

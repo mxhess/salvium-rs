@@ -587,7 +587,12 @@ mod tests {
             key_image_y: None,
         };
         let nonces0 = generate_nonces(0, &key_image).unwrap();
-        let result = partial_sign(&ctx, &nonces0, &"11".repeat(32), &[nonces0.clone()]);
+        let result = partial_sign(
+            &ctx,
+            &nonces0,
+            &"11".repeat(32),
+            std::slice::from_ref(&nonces0),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("at least 2"));
     }
