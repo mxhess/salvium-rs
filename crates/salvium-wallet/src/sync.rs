@@ -370,6 +370,14 @@ struct BlockProcessResult {
     parse_error: bool,
 }
 
+/// Information about spent outputs detected in a transaction.
+#[derive(Debug, Default)]
+struct SpentInfo {
+    count: usize,
+    total_amount: u64,
+    asset_type: Option<String>,
+}
+
 /// Parsed block JSON from salvium-crypto's `parse_block_bytes`.
 ///
 /// Field names use camelCase to match the JSON output:
@@ -444,6 +452,25 @@ async fn process_bin_block(
                 let found = scanner::scan_transaction(scan_ctx, &scan_data);
                 outputs_found += found.len();
                 store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                if !found.is_empty() {
+                    let row = build_transaction_row(
+                        miner_tx_hash,
+                        &hex::encode(scan_data.tx_pub_key),
+                        height,
+                        block_timestamp,
+                        &found,
+                        &SpentInfo::default(),
+                        0,
+                        scan_data.tx_type,
+                        true,
+                        scan_data.unlock_time,
+                    );
+                    db.lock()
+                        .map_err(|e| WalletError::Storage(e.to_string()))?
+                        .put_tx(&row)
+                        .map_err(|e| WalletError::Storage(e.to_string()))?;
+                }
             }
         }
     }
@@ -528,6 +555,25 @@ async fn process_bin_block(
                 }
                 outputs_found += found.len();
                 store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                if !found.is_empty() {
+                    let row = build_transaction_row(
+                        ptx_hash,
+                        &hex::encode(scan_data.tx_pub_key),
+                        height,
+                        block_timestamp,
+                        &found,
+                        &SpentInfo::default(),
+                        0,
+                        scan_data.tx_type,
+                        true,
+                        scan_data.unlock_time,
+                    );
+                    db.lock()
+                        .map_err(|e| WalletError::Storage(e.to_string()))?
+                        .put_tx(&row)
+                        .map_err(|e| WalletError::Storage(e.to_string()))?;
+                }
             } else if ptx_vout_count > 0 {
                 // parse_tx_for_scanning returned None — likely no tx_pub_key
                 log::debug!(
@@ -593,13 +639,70 @@ async fn process_bin_block(
                     continue;
                 };
 
-                detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
+                let spent_info = detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
 
-                if let Some(scan_data) = parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
+                let found = if let Some(scan_data) =
+                    parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
                     store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                    if !found.is_empty() || spent_info.count > 0 {
+                        let fee = extract_fee(&tx_json);
+                        let row = build_transaction_row(
+                            tx_hash_hex,
+                            &hex::encode(scan_data.tx_pub_key),
+                            height,
+                            block_timestamp,
+                            &found,
+                            &spent_info,
+                            fee,
+                            scan_data.tx_type,
+                            false,
+                            scan_data.unlock_time,
+                        );
+                        db.lock()
+                            .map_err(|e| WalletError::Storage(e.to_string()))?
+                            .put_tx(&row)
+                            .map_err(|e| WalletError::Storage(e.to_string()))?;
+                    }
+                    found
+                } else {
+                    Vec::new()
+                };
+
+                // If we spent outputs but parse_tx_for_scanning returned None
+                // (no tx_pub_key), still record the outgoing transaction.
+                if spent_info.count > 0 && found.is_empty() {
+                    let fee = extract_fee(&tx_json);
+                    let prefix = tx_json.get("prefix").unwrap_or(&tx_json);
+                    let tx_type = prefix
+                        .get("txType")
+                        .or_else(|| prefix.get("tx_type"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(3) as u8;
+                    let unlock_time = prefix
+                        .get("unlockTime")
+                        .or_else(|| prefix.get("unlock_time"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let row = build_transaction_row(
+                        tx_hash_hex,
+                        "",
+                        height,
+                        block_timestamp,
+                        &[],
+                        &spent_info,
+                        fee,
+                        tx_type,
+                        false,
+                        unlock_time,
+                    );
+                    db.lock()
+                        .map_err(|e| WalletError::Storage(e.to_string()))?
+                        .put_tx(&row)
+                        .map_err(|e| WalletError::Storage(e.to_string()))?;
                 }
             }
             Err(e) => {
@@ -717,6 +820,25 @@ fn process_block_data(
                 let found = scanner::scan_transaction(scan_ctx, &scan_data);
                 outputs_found += found.len();
                 store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                if !found.is_empty() {
+                    let row = build_transaction_row(
+                        &block.miner_tx_hash,
+                        &hex::encode(scan_data.tx_pub_key),
+                        height,
+                        block_timestamp,
+                        &found,
+                        &SpentInfo::default(),
+                        0,
+                        scan_data.tx_type,
+                        true,
+                        scan_data.unlock_time,
+                    );
+                    db.lock()
+                        .map_err(|e| WalletError::Storage(e.to_string()))?
+                        .put_tx(&row)
+                        .map_err(|e| WalletError::Storage(e.to_string()))?;
+                }
             }
         }
 
@@ -738,6 +860,25 @@ fn process_block_data(
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
                     store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                    if !found.is_empty() {
+                        let row = build_transaction_row(
+                            hash,
+                            &hex::encode(scan_data.tx_pub_key),
+                            height,
+                            block_timestamp,
+                            &found,
+                            &SpentInfo::default(),
+                            0,
+                            scan_data.tx_type,
+                            true,
+                            scan_data.unlock_time,
+                        );
+                        db.lock()
+                            .map_err(|e| WalletError::Storage(e.to_string()))?
+                            .put_tx(&row)
+                            .map_err(|e| WalletError::Storage(e.to_string()))?;
+                    }
                 }
             }
         }
@@ -780,13 +921,68 @@ fn process_block_data(
 
         match serde_json::from_str::<serde_json::Value>(&tx_json_str) {
             Ok(tx_json) => {
-                detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
+                let spent_info = detect_spent_outputs(db, &tx_json, tx_hash_hex, height)?;
 
-                if let Some(scan_data) = parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
+                let found = if let Some(scan_data) =
+                    parse_tx_for_scanning(&tx_json, tx_hash_hex, height, false)
                 {
                     let found = scanner::scan_transaction(scan_ctx, &scan_data);
                     outputs_found += found.len();
                     store_found_outputs(db, scan_ctx, &found, &scan_data, block_timestamp)?;
+
+                    if !found.is_empty() || spent_info.count > 0 {
+                        let fee = extract_fee(&tx_json);
+                        let row = build_transaction_row(
+                            tx_hash_hex,
+                            &hex::encode(scan_data.tx_pub_key),
+                            height,
+                            block_timestamp,
+                            &found,
+                            &spent_info,
+                            fee,
+                            scan_data.tx_type,
+                            false,
+                            scan_data.unlock_time,
+                        );
+                        db.lock()
+                            .map_err(|e| WalletError::Storage(e.to_string()))?
+                            .put_tx(&row)
+                            .map_err(|e| WalletError::Storage(e.to_string()))?;
+                    }
+                    found
+                } else {
+                    Vec::new()
+                };
+
+                if spent_info.count > 0 && found.is_empty() {
+                    let fee = extract_fee(&tx_json);
+                    let prefix = tx_json.get("prefix").unwrap_or(&tx_json);
+                    let tx_type = prefix
+                        .get("txType")
+                        .or_else(|| prefix.get("tx_type"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(3) as u8;
+                    let unlock_time = prefix
+                        .get("unlockTime")
+                        .or_else(|| prefix.get("unlock_time"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let row = build_transaction_row(
+                        tx_hash_hex,
+                        "",
+                        height,
+                        block_timestamp,
+                        &[],
+                        &spent_info,
+                        fee,
+                        tx_type,
+                        false,
+                        unlock_time,
+                    );
+                    db.lock()
+                        .map_err(|e| WalletError::Storage(e.to_string()))?
+                        .put_tx(&row)
+                        .map_err(|e| WalletError::Storage(e.to_string()))?;
                 }
             }
             Err(e) => {
@@ -1359,6 +1555,81 @@ fn extract_inputs_with_offsets(prefix: &serde_json::Value) -> Vec<ParsedTxInput>
 ///    appears as a ring member and has a synthetic "vo:" key image (CN view-only),
 ///    we learn its real key image from the on-chain input and mark it as spent.
 ///
+/// Extract the transaction fee from parsed TX JSON.
+///
+/// Looks for `rct.txnFee` or `rct_signatures.txnFee`. Returns 0 for
+/// coinbase/protocol transactions (which have no fee).
+fn extract_fee(tx_json: &serde_json::Value) -> u64 {
+    tx_json
+        .get("rct")
+        .or_else(|| tx_json.get("rct_signatures"))
+        .and_then(|r| r.get("txnFee").or_else(|| r.get("txn_fee")))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(0)
+}
+
+/// Build a `TransactionRow` from sync data for persistence.
+#[allow(clippy::too_many_arguments)]
+fn build_transaction_row(
+    tx_hash_hex: &str,
+    tx_pub_key_hex: &str,
+    block_height: u64,
+    block_timestamp: u64,
+    found: &[FoundOutput],
+    spent_info: &SpentInfo,
+    fee: u64,
+    tx_type: u8,
+    is_coinbase: bool,
+    unlock_time: u64,
+) -> salvium_crypto::storage::TransactionRow {
+    let is_incoming = !found.is_empty();
+    let is_outgoing = spent_info.count > 0;
+    let incoming_amount: u64 = found.iter().map(|o| o.amount).sum();
+    let outgoing_amount = spent_info.total_amount;
+    // When we're the sender, incoming outputs are change back to us
+    let change_amount = if is_outgoing { incoming_amount } else { 0 };
+
+    // Asset type: prefer spent asset type, then first found output, then "SAL"
+    let asset_type = spent_info
+        .asset_type
+        .clone()
+        .or_else(|| found.first().map(|o| o.asset_type.clone()))
+        .unwrap_or_else(|| "SAL".to_string());
+
+    let is_miner_tx = is_coinbase && tx_type == 1;
+    let is_protocol_tx = tx_type == 2;
+
+    salvium_crypto::storage::TransactionRow {
+        tx_hash: tx_hash_hex.to_string(),
+        tx_pub_key: Some(tx_pub_key_hex.to_string()),
+        block_height: Some(block_height as i64),
+        block_timestamp: Some(block_timestamp as i64),
+        confirmations: 0,
+        in_pool: false,
+        is_failed: false,
+        is_confirmed: true,
+        is_incoming,
+        is_outgoing,
+        incoming_amount: incoming_amount.to_string(),
+        outgoing_amount: outgoing_amount.to_string(),
+        fee: fee.to_string(),
+        change_amount: change_amount.to_string(),
+        transfers: None,
+        payment_id: None,
+        unlock_time: unlock_time.to_string(),
+        tx_type: tx_type as i64,
+        asset_type,
+        is_miner_tx,
+        is_protocol_tx,
+        note: String::new(),
+        created_at: None,
+        updated_at: None,
+    }
+}
+
 /// Fix #4: When a STAKE TX (tx_type=6) spends our output, record the stake
 /// in the stakes table so staked amounts appear in the total balance.
 /// C++ ref: wallet2.cpp:2759-2764 (m_locked_coins tracking)
@@ -1373,12 +1644,12 @@ fn detect_spent_outputs(
     tx_json: &serde_json::Value,
     tx_hash_hex: &str,
     block_height: u64,
-) -> Result<usize, WalletError> {
+) -> Result<SpentInfo, WalletError> {
     let prefix = tx_json.get("prefix").unwrap_or(tx_json);
     let key_images = extract_all_key_images(prefix);
 
     if key_images.is_empty() {
-        return Ok(0);
+        return Ok(SpentInfo::default());
     }
 
     // Determine tx_type for STAKE tracking.
@@ -1389,7 +1660,7 @@ fn detect_spent_outputs(
         .unwrap_or(3);
 
     let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-    let mut spent_count = 0;
+    let mut spent_info = SpentInfo::default();
 
     // ── Pass 1: Key image matching (primary mechanism) ──────────────────
     let mut matched_key_images = std::collections::HashSet::new();
@@ -1402,7 +1673,11 @@ fn detect_spent_outputs(
             // Count all outputs that belong to us, even if already marked spent
             // (e.g. by mark_inputs_spent after TX submission). This ensures
             // stake recording still triggers when the block is later synced.
-            spent_count += 1;
+            spent_info.count += 1;
+            spent_info.total_amount += row.amount.parse::<u64>().unwrap_or(0);
+            if spent_info.asset_type.is_none() {
+                spent_info.asset_type = Some(row.asset_type.clone());
+            }
             matched_key_images.insert(ki_hex.clone());
             if !row.is_spent {
                 db.mark_spent(ki_hex, tx_hash_hex, block_height as i64)
@@ -1453,7 +1728,7 @@ fn detect_spent_outputs(
     // and tx.source_asset_type for the asset. This avoids double-counting: the change
     // output is already in unspent outputs, so using spent input amounts would add
     // (fee + change) extra to the staked total.
-    if spent_count > 0 && (tx_type == 6 || tx_type == 8) {
+    if spent_info.count > 0 && (tx_type == 6 || tx_type == 8) {
         let amount_burnt: u64 = prefix
             .get("amount_burnt")
             .and_then(|v| {
@@ -1515,7 +1790,7 @@ fn detect_spent_outputs(
         }
     }
 
-    Ok(spent_count)
+    Ok(spent_info)
 }
 
 /// Store found outputs in the database.

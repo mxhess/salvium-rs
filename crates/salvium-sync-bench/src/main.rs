@@ -8,7 +8,7 @@
 //!   cargo run --release -p salvium-sync-bench -- --mnemonic "25 words ..." --network testnet
 
 use clap::Parser;
-use salvium_crypto::storage::OutputQuery;
+use salvium_crypto::storage::{OutputQuery, TxQuery};
 use salvium_rpc::DaemonRpc;
 use salvium_types::constants::{self, Network};
 use salvium_wallet::{SyncEvent, Wallet, WalletKeys, WalletType};
@@ -503,6 +503,68 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 format_sal(&bal.locked_balance),
             );
         }
+    }
+
+    // Transaction history
+    let transfers = wallet.get_transfers(&TxQuery {
+        is_incoming: None,
+        is_outgoing: None,
+        is_confirmed: Some(true),
+        in_pool: None,
+        tx_type: None,
+        min_height: None,
+        max_height: None,
+        tx_hash: None,
+    })?;
+    if !transfers.is_empty() {
+        println!();
+        println!("Transaction History ({} total)", transfers.len());
+        println!("{}", "-".repeat(110));
+        println!(
+            "{:>8} {:<8} {:<5} {:>18} {:>18} {:>12} {:<18}",
+            "Height", "Asset", "Type", "In (atomic)", "Out (atomic)", "Fee", "TX Hash"
+        );
+        println!("{}", "-".repeat(110));
+
+        // Show most recent 20
+        let start_idx = transfers.len().saturating_sub(20);
+        if start_idx > 0 {
+            println!("  ... ({} earlier transactions omitted)", start_idx);
+        }
+        for tx in &transfers[start_idx..] {
+            let height_str = tx
+                .block_height
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "?".into());
+            let type_str = match tx.tx_type {
+                1 => "miner",
+                2 => "proto",
+                3 => "xfer",
+                4 => "conv",
+                5 => "burn",
+                6 => "stake",
+                7 => "ret",
+                _ => "?",
+            };
+            let dir = if tx.is_incoming && tx.is_outgoing {
+                "both"
+            } else if tx.is_incoming {
+                "in"
+            } else {
+                "out"
+            };
+            println!(
+                "{:>8} {:<8} {:<5} {:>18} {:>18} {:>12} {:.18}",
+                height_str,
+                tx.asset_type,
+                format!("{}/{}", type_str, dir),
+                tx.incoming_amount,
+                tx.outgoing_amount,
+                tx.fee,
+                tx.tx_hash,
+            );
+        }
+        println!("{}", "-".repeat(110));
     }
 
     println!();
