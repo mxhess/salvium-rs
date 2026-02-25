@@ -2169,6 +2169,7 @@ dependencies = [
 name = "salvium-multisig"
 version = "1.0.7-r001"
 dependencies = [
+ "curve25519-dalek",
  "hex",
  "rand 0.8.5",
  "salvium-crypto",

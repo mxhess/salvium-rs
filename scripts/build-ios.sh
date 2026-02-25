@@ -28,24 +28,48 @@ FRAMEWORK_NAMES=( "SalviumCrypto"    "SalviumFfi"     )
 
 echo "==> Building Salvium libraries for iOS targets..."
 
-# Minimum iOS version — must be consistent across Rust and C compilation.
-# Prevents ___chkstk_darwin linker errors from vendored C code (OpenSSL/SQLCipher)
-# being compiled with macOS settings instead of iOS.
+# Minimum iOS version — consistent across Rust and all vendored C compilation.
 export IPHONEOS_DEPLOYMENT_TARGET="14.0"
-
-# Set cross-compilation C compiler per target so vendored C builds (openssl-sys,
-# libsqlite3-sys) use the correct iOS SDK instead of the macOS host SDK.
-export CC_aarch64_apple_ios="$(xcrun --sdk iphoneos --find clang)"
-export CFLAGS_aarch64_apple_ios="-isysroot $(xcrun --sdk iphoneos --show-sdk-path) -mios-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
-
-export CC_aarch64_apple_ios_sim="$(xcrun --sdk iphonesimulator --find clang)"
-export CFLAGS_aarch64_apple_ios_sim="-isysroot $(xcrun --sdk iphonesimulator --show-sdk-path) -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
-
-export CC_x86_64_apple_ios="$(xcrun --sdk iphonesimulator --find clang)"
-export CFLAGS_x86_64_apple_ios="-isysroot $(xcrun --sdk iphonesimulator --show-sdk-path) -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
 
 for target in "${TARGETS[@]}"; do
   echo "  -> $target"
+
+  # Determine the correct Apple SDK for this target
+  case "$target" in
+    aarch64-apple-ios)
+      sdk="iphoneos"
+      min_ver_flag="-mios-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
+      ;;
+    *)
+      sdk="iphonesimulator"
+      min_ver_flag="-mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
+      ;;
+  esac
+
+  SDK_PATH="$(xcrun --sdk "$sdk" --show-sdk-path)"
+  CC_PATH="$(xcrun --sdk "$sdk" --find clang)"
+  AR_PATH="$(xcrun --sdk "$sdk" --find ar)"
+  RANLIB_PATH="$(xcrun --sdk "$sdk" --find ranlib)"
+
+  # Env var key: aarch64-apple-ios -> aarch64_apple_ios
+  target_env="${target//-/_}"
+
+  # ── cc crate (libsqlite3-sys / SQLCipher build) ──
+  export "CC_${target_env}=${CC_PATH}"
+  export "CFLAGS_${target_env}=-isysroot ${SDK_PATH} ${min_ver_flag}"
+  export "AR_${target_env}=${AR_PATH}"
+  export "RANLIB_${target_env}=${RANLIB_PATH}"
+
+  # ── openssl-src (uses its own Configure/make, not the cc crate) ──
+  # OpenSSL ios64-xcrun / iossimulator-xcrun configs look up the SDK via
+  # CROSS_TOP + CROSS_SDK (e.g. .../iPhoneOS.platform/Developer + iPhoneOS17.0.sdk).
+  # Without these, openssl-src falls back to the macOS host SDK and produces
+  # ___chkstk_darwin references that don't exist on iOS.
+  PLATFORM_DIR="${SDK_PATH%/SDKs/*}"          # .../iPhoneOS.platform/Developer
+  SDK_NAME="${SDK_PATH##*/}"                   # iPhoneOS17.0.sdk
+  export CROSS_TOP="$PLATFORM_DIR"
+  export CROSS_SDK="$SDK_NAME"
+
   for crate in "${CRATES[@]}"; do
     cargo build --release \
       --target "$target" \
