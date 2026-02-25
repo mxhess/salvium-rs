@@ -23,13 +23,13 @@ TARGETS=(
 
 # Libraries to build and package
 declare -A LIB_NAMES=(
-  [salvium-crypto]="libsalvium_crypto"
-  [salvium-ffi]="libsalvium_ffi"
+  ["salvium-crypto"]="libsalvium_crypto"
+  ["salvium-ffi"]="libsalvium_ffi"
 )
 
 declare -A FRAMEWORK_NAMES=(
-  [salvium-crypto]="SalviumCrypto"
-  [salvium-ffi]="SalviumFfi"
+  ["salvium-crypto"]="SalviumCrypto"
+  ["salvium-ffi"]="SalviumFfi"
 )
 
 echo "==> Building Salvium libraries for iOS targets..."
@@ -48,8 +48,8 @@ echo "==> Creating xcframeworks..."
 mkdir -p "$WORK_DIR"
 
 for crate in "${!LIB_NAMES[@]}"; do
-  lib="${LIB_NAMES[$crate]}"
-  framework="${FRAMEWORK_NAMES[$crate]}"
+  lib="${LIB_NAMES["$crate"]}"
+  framework="${FRAMEWORK_NAMES["$crate"]}"
 
   echo "  -> $framework.xcframework"
 

@@ -28,15 +28,15 @@ fi
 
 # Map Rust target -> Android ABI -> NDK toolchain target
 declare -A TARGET_ABI=(
-  [aarch64-linux-android]="arm64-v8a"
-  [armv7-linux-androideabi]="armeabi-v7a"
-  [x86_64-linux-android]="x86_64"
+  ["aarch64-linux-android"]="arm64-v8a"
+  ["armv7-linux-androideabi"]="armeabi-v7a"
+  ["x86_64-linux-android"]="x86_64"
 )
 
 declare -A TARGET_CC=(
-  [aarch64-linux-android]="aarch64-linux-android21-clang"
-  [armv7-linux-androideabi]="armv7a-linux-androideabi21-clang"
-  [x86_64-linux-android]="x86_64-linux-android21-clang"
+  ["aarch64-linux-android"]="aarch64-linux-android21-clang"
+  ["armv7-linux-androideabi"]="armv7a-linux-androideabi21-clang"
+  ["x86_64-linux-android"]="x86_64-linux-android21-clang"
 )
 
 # Find the NDK toolchain bin directory
@@ -61,8 +61,8 @@ echo "    Crates: ${CRATES[*]}"
 echo ""
 
 for target in "${!TARGET_ABI[@]}"; do
-  abi="${TARGET_ABI[$target]}"
-  cc="${TARGET_CC[$target]}"
+  abi="${TARGET_ABI["$target"]}"
+  cc="${TARGET_CC["$target"]}"
   echo "  ── $target ($abi) ──"
 
   # Set linker/compiler for this target via CARGO_TARGET env vars
@@ -71,6 +71,7 @@ for target in "${!TARGET_ABI[@]}"; do
   export "CARGO_TARGET_${target_upper}_LINKER=$TOOLCHAIN/$cc"
   export "CC_${target//-/_}=$TOOLCHAIN/$cc"
   export "AR_${target//-/_}=$TOOLCHAIN/llvm-ar"
+  export PATH="$TOOLCHAIN:$PATH"
 
   for crate in "${CRATES[@]}"; do
     echo "    Building $crate..."
@@ -96,7 +97,7 @@ done
 
 echo "==> Done. Libraries:"
 for target in "${!TARGET_ABI[@]}"; do
-  abi="${TARGET_ABI[$target]}"
+  abi="${TARGET_ABI["$target"]}"
   echo "  $abi:"
   ls -lh "$OUT_DIR/$abi/"*.so
 done
