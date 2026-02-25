@@ -46,6 +46,10 @@ struct Args {
     #[arg(long)]
     no_large_pages: bool,
 
+    /// Disable CPU core pinning (thread affinity is enabled by default on Linux)
+    #[arg(long)]
+    no_affinity: bool,
+
     /// IPC mode: read jobs from stdin, write results to stdout (JSON lines)
     #[arg(long)]
     ipc: bool,
@@ -69,7 +73,7 @@ fn main() {
     let args = Args::parse();
 
     if args.ipc {
-        salvium_miner::ipc::run_ipc(args.threads, args.light, !args.no_large_pages);
+        salvium_miner::ipc::run_ipc(args.threads, args.light, !args.no_large_pages, args.no_affinity);
         return;
     }
 
@@ -162,9 +166,9 @@ fn run_benchmark(args: &Args) {
 fn init_engine(args: &Args, seed_bytes: &[u8]) -> MiningEngine {
     let use_large_pages = !args.no_large_pages;
     let engine = if args.light {
-        MiningEngine::new_light(args.threads, seed_bytes, use_large_pages)
+        MiningEngine::new_light(args.threads, seed_bytes, use_large_pages, args.no_affinity)
     } else {
-        MiningEngine::new_full(args.threads, seed_bytes, use_large_pages)
+        MiningEngine::new_full(args.threads, seed_bytes, use_large_pages, args.no_affinity)
     };
 
     match engine {

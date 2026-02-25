@@ -61,6 +61,7 @@ impl MiningEngine {
         num_threads: usize,
         seed_hash: &[u8],
         use_large_pages: bool,
+        no_affinity: bool,
     ) -> Result<Self, String> {
         let base_flags = RandomXFlag::get_recommended_flags()
             | RandomXFlag::FLAG_FULL_MEM
@@ -106,6 +107,10 @@ impl MiningEngine {
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
 
             let handle = thread::spawn(move || {
+                #[cfg(target_os = "linux")]
+                if !no_affinity {
+                    pin_to_core(worker_id);
+                }
                 let vm = match RandomXVM::new(flags, None, Some(ds.0.clone())) {
                     Ok(vm) => vm,
                     Err(e) => {
@@ -134,6 +139,7 @@ impl MiningEngine {
         num_threads: usize,
         seed_hash: &[u8],
         use_large_pages: bool,
+        no_affinity: bool,
     ) -> Result<Self, String> {
         let base_flags = RandomXFlag::get_recommended_flags() | RandomXFlag::FLAG_JIT;
 
@@ -170,6 +176,10 @@ impl MiningEngine {
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
 
             let handle = thread::spawn(move || {
+                #[cfg(target_os = "linux")]
+                if !no_affinity {
+                    pin_to_core(worker_id);
+                }
                 let vm = match RandomXVM::new(flags, Some(ca.0.clone()), None) {
                     Ok(vm) => vm,
                     Err(e) => {
@@ -225,7 +235,23 @@ fn alloc_cache(
     Ok((cache, base_flags, false))
 }
 
-/// Worker loop: fetch jobs, hash nonces, check targets.
+/// Pin the calling thread to a specific CPU core (Linux only).
+#[cfg(target_os = "linux")]
+fn pin_to_core(core_id: usize) {
+    unsafe {
+        let mut set = std::mem::zeroed::<libc::cpu_set_t>();
+        libc::CPU_ZERO(&mut set);
+        libc::CPU_SET(core_id % libc::CPU_SETSIZE as usize, &mut set);
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+    }
+}
+
+/// Number of nonces hashed per pipelined batch (RandomX first/next/last overlap).
+const BATCH_SIZE: usize = 4;
+/// Flush the thread-local hash counter to the shared atomic every N hashes.
+const COUNTER_FLUSH_INTERVAL: u64 = 256;
+
+/// Worker loop: fetch jobs, batch-hash nonces, check targets.
 fn worker_loop(
     vm: &RandomXVM,
     job_rx: &mpsc::Receiver<MiningJob>,
@@ -234,7 +260,8 @@ fn worker_loop(
     result_tx: &mpsc::Sender<FoundBlock>,
     nonce_start: u32,
 ) {
-    let mut blob = Vec::new();
+    let mut blobs: Vec<Vec<u8>> = vec![Vec::new(); BATCH_SIZE];
+    let mut local_count: u64 = 0;
 
     while running.load(Ordering::Relaxed) {
         // Wait for a job
@@ -248,43 +275,73 @@ fn worker_loop(
             .nonce_offset
             .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
-        blob.clone_from(&job.hashing_blob);
+        for blob in &mut blobs {
+            blob.clone_from(&job.hashing_blob);
+        }
 
         loop {
             if !running.load(Ordering::Relaxed) {
                 break;
             }
 
-            // Check for new job (non-blocking)
+            // Check for new job once per batch
             if let Ok(new_job) = job_rx.try_recv() {
+                if local_count > 0 {
+                    hash_count.fetch_add(local_count, Ordering::Relaxed);
+                    local_count = 0;
+                }
                 job = new_job;
                 nonce_offset = job
                     .nonce_offset
                     .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                 nonce = nonce_start;
-                blob.clone_from(&job.hashing_blob);
+                for blob in &mut blobs {
+                    blob.clone_from(&job.hashing_blob);
+                }
             }
 
-            set_nonce(&mut blob, nonce_offset, nonce);
-            let hash_vec = vm.calculate_hash(&blob).expect("RandomX hash failed");
-            hash_count.fetch_add(1, Ordering::Relaxed);
-
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&hash_vec);
-
-            let meets = match job.target {
-                Some(ref t) => check_hash_target(&hash, t),
-                None => check_hash(&hash, job.difficulty),
-            };
-            if meets {
-                submit_block(&job, nonce, &hash, result_tx);
+            // Prepare batch: set nonces N..N+3
+            for (i, blob) in blobs.iter_mut().enumerate() {
+                set_nonce(blob, nonce_offset, nonce.wrapping_add(i as u32));
             }
 
-            nonce = nonce.wrapping_add(1);
-            if nonce == nonce_start {
+            // Pipelined hash (uses RandomX first/next/last internally)
+            let batch_refs: Vec<&[u8]> = blobs.iter().map(|b| b.as_slice()).collect();
+            let hashes = vm
+                .calculate_hash_set(&batch_refs)
+                .expect("RandomX batch hash failed");
+            local_count += BATCH_SIZE as u64;
+
+            // Check all results
+            for (i, hash_vec) in hashes.iter().enumerate() {
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(hash_vec);
+
+                let meets = match job.target {
+                    Some(ref t) => check_hash_target(&hash, t),
+                    None => check_hash(&hash, job.difficulty),
+                };
+                if meets {
+                    submit_block(&job, nonce.wrapping_add(i as u32), &hash, result_tx);
+                }
+            }
+
+            // Flush counter periodically to reduce cache-line bouncing
+            if local_count >= COUNTER_FLUSH_INTERVAL {
+                hash_count.fetch_add(local_count, Ordering::Relaxed);
+                local_count = 0;
+            }
+
+            nonce = nonce.wrapping_add(BATCH_SIZE as u32);
+            if nonce.wrapping_sub(nonce_start) < BATCH_SIZE as u32 {
                 break; // exhausted nonce space
             }
         }
+    }
+
+    // Flush remaining count
+    if local_count > 0 {
+        hash_count.fetch_add(local_count, Ordering::Relaxed);
     }
 }
 
@@ -308,10 +365,7 @@ fn submit_block(
 }
 
 pub fn set_nonce(blob: &mut [u8], offset: usize, nonce: u32) {
-    blob[offset] = (nonce & 0xff) as u8;
-    blob[offset + 1] = ((nonce >> 8) & 0xff) as u8;
-    blob[offset + 2] = ((nonce >> 16) & 0xff) as u8;
-    blob[offset + 3] = ((nonce >> 24) & 0xff) as u8;
+    blob[offset..offset + 4].copy_from_slice(&nonce.to_le_bytes());
 }
 
 /// Find nonce offset in block hashing blob.
