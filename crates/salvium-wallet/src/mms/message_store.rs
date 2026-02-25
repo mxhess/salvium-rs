@@ -27,19 +27,12 @@ impl Wallet {
             own_index,
             auto_send: true,
         };
-        let json =
-            serde_json::to_string(&config).map_err(|e| WalletError::Other(e.to_string()))?;
+        let json = serde_json::to_string(&config).map_err(|e| WalletError::Other(e.to_string()))?;
         self.set_attribute("mms_config", &json)?;
 
         // Create signer slots.
         for i in 0..signer_count {
-            self.set_mms_signer(
-                i as i64,
-                &format!("Signer #{}", i),
-                "",
-                "",
-                i == own_index,
-            )?;
+            self.set_mms_signer(i as i64, &format!("Signer #{}", i), "", "", i == own_index)?;
         }
 
         Ok(())

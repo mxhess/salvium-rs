@@ -6,5 +6,6 @@ pub mod key_image;
 pub mod partial_sig;
 pub mod signer;
 pub mod signing;
+pub mod tx_builder;
 pub mod tx_set;
 pub mod wallet;

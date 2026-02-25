@@ -65,7 +65,7 @@ pub(crate) fn hash_to_point(key: &[u8; 32]) -> EdwardsPoint {
 }
 
 /// INV_EIGHT: 8^(-1) mod L
-pub(crate) fn inv_eight() -> Scalar {
+pub fn inv_eight() -> Scalar {
     Scalar::from(8u64).invert()
 }
 

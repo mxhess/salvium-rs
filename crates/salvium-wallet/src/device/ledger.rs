@@ -48,13 +48,7 @@ impl LedgerDevice {
 
     /// Send an APDU command and receive the response.
     #[cfg(feature = "hardware-wallet")]
-    fn exchange_apdu(
-        &self,
-        ins: u8,
-        p1: u8,
-        p2: u8,
-        data: &[u8],
-    ) -> Result<Vec<u8>, WalletError> {
+    fn exchange_apdu(&self, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>, WalletError> {
         // Build APDU: CLA INS P1 P2 Lc Data
         let mut apdu = vec![CLA, ins, p1, p2, data.len() as u8];
         apdu.extend_from_slice(data);
@@ -94,8 +88,8 @@ impl LedgerDevice {
 
         // Check status word (last 2 bytes).
         if response.len() >= 2 {
-            let sw = ((response[response.len() - 2] as u16) << 8)
-                | response[response.len() - 1] as u16;
+            let sw =
+                ((response[response.len() - 2] as u16) << 8) | response[response.len() - 1] as u16;
             if sw != 0x9000 {
                 return Err(WalletError::Device(format!(
                     "Ledger returned error: 0x{:04X}",

@@ -48,11 +48,7 @@ impl TrezorDevice {
 
     /// Send a protobuf message to the Trezor and receive a response.
     #[cfg(feature = "hardware-wallet")]
-    fn exchange(
-        &self,
-        msg_type: u16,
-        data: &[u8],
-    ) -> Result<(u16, Vec<u8>), WalletError> {
+    fn exchange(&self, msg_type: u16, data: &[u8]) -> Result<(u16, Vec<u8>), WalletError> {
         // Trezor V2 protocol framing:
         // Header: '##' + msg_type(2BE) + data_len(4BE) + data
         let mut frame = Vec::new();
@@ -81,16 +77,15 @@ impl TrezorDevice {
             .map_err(|e| WalletError::Device(format!("USB read failed: {}", e)))?;
 
         if n < 9 || header_buf[0] != b'#' || header_buf[1] != b'#' {
-            return Err(WalletError::Device("invalid Trezor response header".to_string()));
+            return Err(WalletError::Device(
+                "invalid Trezor response header".to_string(),
+            ));
         }
 
         let resp_type = ((header_buf[2] as u16) << 8) | header_buf[3] as u16;
-        let resp_len = u32::from_be_bytes([
-            header_buf[4],
-            header_buf[5],
-            header_buf[6],
-            header_buf[7],
-        ]) as usize;
+        let resp_len =
+            u32::from_be_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]])
+                as usize;
 
         let mut response = Vec::with_capacity(resp_len);
         let first_chunk_len = std::cmp::min(resp_len, n - 8);
@@ -168,7 +163,9 @@ impl HwDevice for TrezorDevice {
             // Parse protobuf response: field 1 = watch_key (bytes).
             // Simple protobuf parsing for a single bytes field.
             if response.len() < 34 {
-                return Err(WalletError::Device("view key response too short".to_string()));
+                return Err(WalletError::Device(
+                    "view key response too short".to_string(),
+                ));
             }
 
             // Skip protobuf field header (tag + length) to get raw key bytes.
@@ -180,7 +177,9 @@ impl HwDevice for TrezorDevice {
                 }
                 2
             } else {
-                return Err(WalletError::Device("unexpected protobuf format".to_string()));
+                return Err(WalletError::Device(
+                    "unexpected protobuf format".to_string(),
+                ));
             };
 
             let mut key = [0u8; 32];
@@ -209,7 +208,9 @@ impl HwDevice for TrezorDevice {
 
             let (resp_type, _) = self.exchange(MSG_MONERO_KEY_IMAGE_EXPORT_INIT, &init_data)?;
             if resp_type != MSG_MONERO_KEY_IMAGE_EXPORT_INIT + 1 {
-                return Err(WalletError::Device("key image export init failed".to_string()));
+                return Err(WalletError::Device(
+                    "key image export init failed".to_string(),
+                ));
             }
 
             // Step 2: Sync each output.

@@ -68,7 +68,13 @@ pub async fn set_log(level: &str) -> Result {
         "3" | "info" => log::LevelFilter::Info,
         "4" | "debug" => log::LevelFilter::Debug,
         "5" | "trace" => log::LevelFilter::Trace,
-        _ => return Err(format!("unknown log level: {} (use 0-5, off/error/warn/info/debug/trace)", level).into()),
+        _ => {
+            return Err(format!(
+                "unknown log level: {} (use 0-5, off/error/warn/info/debug/trace)",
+                level
+            )
+            .into())
+        }
     };
     log::set_max_level(filter);
     println!("Log level set to: {}", filter);
@@ -145,9 +151,9 @@ pub async fn show_qr_code(ctx: &AppContext, use_carrot: bool) -> Result {
                 false
             };
             let ch = match (top, bottom) {
-                (true, true) => '\u{2588}',   // FULL BLOCK
-                (true, false) => '\u{2580}',  // UPPER HALF BLOCK
-                (false, true) => '\u{2584}',  // LOWER HALF BLOCK
+                (true, true) => '\u{2588}',  // FULL BLOCK
+                (true, false) => '\u{2580}', // UPPER HALF BLOCK
+                (false, true) => '\u{2584}', // LOWER HALF BLOCK
                 (false, false) => ' ',
             };
             line.push(ch);

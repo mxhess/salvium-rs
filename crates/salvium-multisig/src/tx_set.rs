@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::signing::{combine_partial_signatures_ext, PartialClsag, SignerNonces};
+use crate::signing::{
+    combine_partial_signatures_ext, MultisigClsagContext, PartialClsag, SignerNonces,
+};
 
 /// A pending multisig transaction awaiting signatures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,14 @@ pub struct PendingMultisigTx {
     /// Destination addresses (for display).
     #[serde(default)]
     pub destinations: Vec<String>,
+    /// Per-input CLSAG signing contexts (ring data, key images, fake responses, etc.).
+    /// Other signers use these to reconstruct `ClsagContext` for ring traversal.
+    #[serde(default)]
+    pub signing_contexts: Vec<MultisigClsagContext>,
+    /// The proper signing message: H(prefix_hash || H(rct_base) || H(bp_components)).
+    /// Shared across all inputs; also stored in each signing context's `message` field.
+    #[serde(default)]
+    pub signing_message: String,
 }
 
 /// Result of finalizing a single pending multisig TX.
@@ -39,12 +49,17 @@ pub struct FinalizedTx {
 /// Combined signature data for one input.
 #[derive(Debug, Clone)]
 pub struct FinalizedInputSig {
-    /// Combined `s` response scalar (hex).
+    /// Combined `s` response scalar at the real index (hex).
     pub s: String,
-    /// Challenge `c_0` (hex).
+    /// Challenge `c_0` at ring position 0 (hex).
     pub c_0: String,
     /// TCLSAG: combined `sy` response scalar (hex), if applicable.
     pub sy: Option<String>,
+    /// Full response vector for the ring (hex-encoded scalars).
+    /// `responses[real_index]` is the combined `s`, rest are fake responses.
+    pub responses: Vec<String>,
+    /// Real index in the ring (for convenience).
+    pub real_index: usize,
 }
 
 impl PendingMultisigTx {
@@ -74,17 +89,29 @@ impl PendingMultisigTx {
             }
 
             let combined = combine_partial_signatures_ext(partials)?;
+
+            // Build the full response vector from signing context if available.
+            let (responses, real_index) = if i < self.signing_contexts.len() {
+                let ctx = &self.signing_contexts[i];
+                let mut resp: Vec<String> = ctx.fake_responses.clone();
+                if ctx.real_index < resp.len() {
+                    resp[ctx.real_index] = combined.s.clone();
+                }
+                (resp, ctx.real_index)
+            } else {
+                // Legacy: no signing context, return just the combined s
+                (vec![combined.s.clone()], 0)
+            };
+
             signatures.push(FinalizedInputSig {
                 s: combined.s,
                 c_0: combined.c_0,
                 sy: combined.sy,
+                responses,
+                real_index,
             });
         }
 
-        // Decode the unsigned TX blob and produce the signed blob.
-        // The actual injection of CLSAG/TCLSAG data into the TX binary format
-        // requires the transaction serialization layer (salvium_crypto::serialize_transaction_json).
-        // For now, we produce the blob with the signatures attached as metadata.
         let tx_bytes =
             hex::decode(&self.tx_blob).unwrap_or_else(|_| self.tx_blob.as_bytes().to_vec());
 
@@ -311,6 +338,8 @@ mod tests {
             ]],
             fee: 10_000_000,
             destinations: vec![],
+            signing_contexts: Vec::new(),
+            signing_message: String::new(),
         };
 
         let result = pending.finalize(2).unwrap();
@@ -334,6 +363,8 @@ mod tests {
             }]],
             fee: 0,
             destinations: vec![],
+            signing_contexts: Vec::new(),
+            signing_message: String::new(),
         };
 
         let result = pending.finalize(2);
@@ -368,6 +399,8 @@ mod tests {
             ]],
             fee: 5_000_000,
             destinations: vec![],
+            signing_contexts: Vec::new(),
+            signing_message: String::new(),
         });
 
         let finalized = set.finalize_all().unwrap();

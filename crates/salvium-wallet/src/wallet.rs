@@ -915,6 +915,14 @@ impl Wallet {
     }
 
     /// Prepare an unsigned multisig transaction set.
+    ///
+    /// Creates a `MultisigTxSet` with the transaction destinations and fee.
+    /// The initiating signer generates nonces for each input.
+    ///
+    /// Note: Full UTXO selection and ring member fetching require daemon RPC
+    /// (async). For now, callers should use `tx_builder::build_multisig_contexts()`
+    /// to construct a `PendingMultisigTx` with proper signing contexts, then wrap
+    /// it in a `MultisigTxSet` via `add_pending_tx()`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn prepare_multisig_tx(
         &self,
@@ -935,7 +943,6 @@ impl Wallet {
             account.signer_count,
         );
 
-        // Create a pending TX with the destinations and fee.
         let pending = salvium_multisig::tx_set::PendingMultisigTx {
             tx_blob: String::new(),
             key_images: Vec::new(),
@@ -947,6 +954,8 @@ impl Wallet {
                 .iter()
                 .map(|(d, a)| format!("{}:{}", d, a))
                 .collect(),
+            signing_contexts: Vec::new(),
+            signing_message: String::new(),
         };
         tx_set.add_pending_tx(pending);
 
@@ -954,6 +963,12 @@ impl Wallet {
     }
 
     /// Sign a multisig transaction set with this signer's partial key.
+    ///
+    /// For each pending TX that has signing contexts:
+    ///   1. Generates nonces for each input and adds them to the TX.
+    ///   2. If enough signers' nonces are collected (threshold), computes
+    ///      partial CLSAG/TCLSAG signatures via proper ring traversal.
+    ///   3. Adds partial signatures to the TX.
     ///
     /// Returns `true` if enough signatures have been collected (threshold met).
     #[cfg(not(target_arch = "wasm32"))]
@@ -976,29 +991,88 @@ impl Wallet {
             .spend_secret_key
             .ok_or(WalletError::Other("no spend key".into()))?;
 
-        // Mark this signer as having contributed.
         let signer_pub = hex::encode(self.keys.cn.spend_public_key);
         tx_set.mark_signer_contributed(&signer_pub);
 
-        // For each pending TX, add our partial signature.
         for pending in &mut tx_set.pending_txs {
-            let tx_hash = salvium_crypto::keccak256(pending.tx_blob.as_bytes());
-            let sig = salvium_crypto::sc_mul_sub(
-                &salvium_crypto::sc_reduce32(&tx_hash),
-                &spend_secret,
-                &salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(&spend_secret)),
-            );
-            // Store the partial sig for this input
-            let partial = salvium_multisig::signing::PartialClsag {
-                signer_index: account.signer_index,
-                s_partial: hex::encode(&sig),
-                c_0: hex::encode(&tx_hash[..32]),
-                sy_partial: None,
-            };
-            if pending.input_partials.is_empty() {
-                pending.input_partials.push(Vec::new());
+            let num_inputs = pending.signing_contexts.len();
+            if num_inputs == 0 {
+                // No signing contexts — legacy fallback (no-op, contexts must be populated
+                // by the caller via build_multisig_contexts).
+                continue;
             }
-            pending.input_partials[0].push(partial);
+
+            // 1. Generate nonces for each input and add to the TX.
+            let mut our_nonces = Vec::with_capacity(num_inputs);
+            for ctx in &pending.signing_contexts {
+                let pk_hex = &ctx.ring[ctx.real_index];
+                let ki_y = ctx.key_image_y.as_deref();
+                let nonces = salvium_multisig::signing::generate_nonces_ext(
+                    account.signer_index,
+                    pk_hex,
+                    ki_y,
+                )
+                .map_err(|e| WalletError::Other(format!("nonce generation failed: {}", e)))?;
+                our_nonces.push(nonces);
+            }
+
+            // Ensure input_nonces has the right structure (one Vec per input).
+            while pending.input_nonces.len() < num_inputs {
+                pending.input_nonces.push(Vec::new());
+            }
+            for (i, nonces) in our_nonces.iter().enumerate() {
+                pending.input_nonces[i].push(nonces.clone());
+            }
+
+            // 2. Check if we have enough nonces to sign.
+            let have_enough_nonces = pending
+                .input_nonces
+                .iter()
+                .all(|n| n.len() >= account.threshold);
+
+            if have_enough_nonces {
+                // 3. Compute partial signatures for each input.
+                while pending.input_partials.len() < num_inputs {
+                    pending.input_partials.push(Vec::new());
+                }
+
+                let spend_hex = hex::encode(spend_secret);
+                // Commitment mask share — in a full implementation, each signer has
+                // their share of the commitment mask from the multisig key exchange.
+                // For now, use the spend secret as the mask share (single-signer equivalent).
+                let z_share_hex = hex::encode(spend_secret);
+
+                for (i, ctx) in pending.signing_contexts.iter().enumerate() {
+                    let all_nonces = &pending.input_nonces[i];
+
+                    let partial = if ctx.use_tclsag {
+                        // TCLSAG: need Y key share (not available in basic wallet keys).
+                        // Use zero Y share as placeholder — full TCLSAG multisig requires
+                        // extended key exchange to distribute y key shares.
+                        let y_share_hex = "00".repeat(32);
+                        salvium_multisig::signing::partial_sign_tclsag(
+                            ctx,
+                            &our_nonces[i],
+                            &spend_hex,
+                            &y_share_hex,
+                            &z_share_hex,
+                            all_nonces,
+                        )
+                        .map_err(|e| WalletError::Other(format!("TCLSAG sign failed: {}", e)))?
+                    } else {
+                        salvium_multisig::signing::partial_sign(
+                            ctx,
+                            &our_nonces[i],
+                            &spend_hex,
+                            &z_share_hex,
+                            all_nonces,
+                        )
+                        .map_err(|e| WalletError::Other(format!("CLSAG sign failed: {}", e)))?
+                    };
+
+                    pending.input_partials[i].push(partial);
+                }
+            }
         }
 
         Ok(tx_set.is_complete())
@@ -1019,10 +1093,7 @@ impl Wallet {
 
     /// Get ring member indices for a key image.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn get_ring(
-        &self,
-        key_image: &str,
-    ) -> Result<Vec<(i64, i64, bool)>, WalletError> {
+    pub fn get_ring(&self, key_image: &str) -> Result<Vec<(i64, i64, bool)>, WalletError> {
         let db = self
             .db
             .lock()
@@ -1191,8 +1262,14 @@ impl Wallet {
             .db
             .lock()
             .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_mms_signer(signer_index, label, transport_address, monero_address, is_me)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        db.set_mms_signer(
+            signer_index,
+            label,
+            transport_address,
+            monero_address,
+            is_me,
+        )
+        .map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get all MMS signers.

@@ -105,9 +105,9 @@ pub fn next_action(
 
     // Check if we need to create sync data (if there are outgoing messages that
     // need sync data before they can proceed).
-    let has_ready_to_send = messages.iter().any(|m| {
-        m.state == MessageState::ReadyToSend && m.direction == MessageDirection::Out
-    });
+    let has_ready_to_send = messages
+        .iter()
+        .any(|m| m.state == MessageState::ReadyToSend && m.direction == MessageDirection::Out);
 
     if has_ready_to_send {
         return Some(ProcessingAction::CreateSyncData);

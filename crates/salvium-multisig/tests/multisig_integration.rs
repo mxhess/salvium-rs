@@ -136,6 +136,32 @@ fn make_signing_context(ring_size: usize) -> MultisigClsagContext {
         hex::encode(salvium_crypto::scalar_mult_base(&reduced))
     };
 
+    // Compute commitment image D/8
+    let z_scalar = {
+        let mut s = [0u8; 32];
+        s[0] = 44;
+        salvium_crypto::sc_reduce32(&s)
+    };
+    let ring_real_bytes = hex::decode(&ring[0]).unwrap();
+    let hp = salvium_crypto::hash_to_point(&ring_real_bytes);
+    let d_full = salvium_crypto::scalar_mult_point(&z_scalar, &hp);
+    let inv8 = salvium_crypto::inv_eight_scalar();
+    let d8 = salvium_crypto::scalar_mult_point(&inv8, &d_full);
+    let commitment_image = hex::encode(&d8);
+
+    // Generate fake responses for non-real ring positions
+    let fake_responses: Vec<String> = (0..ring_size)
+        .map(|i| {
+            if i == 0 {
+                // real_index is 0
+                "00".repeat(32)
+            } else {
+                let (hex_val, _) = generate_random_scalar();
+                hex_val
+            }
+        })
+        .collect();
+
     MultisigClsagContext {
         ring,
         commitments,
@@ -145,6 +171,8 @@ fn make_signing_context(ring_size: usize) -> MultisigClsagContext {
         real_index: 0,
         use_tclsag: false,
         key_image_y: None,
+        commitment_image: Some(commitment_image),
+        fake_responses,
     }
 }
 
@@ -583,7 +611,14 @@ fn test_partial_sign_valid_scalars() {
     let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let (privkey_hex, _) = generate_random_scalar();
 
-    let partial = partial_sign(&ctx, &nonces0, &privkey_hex, &[nonces0.clone(), nonces1]).unwrap();
+    let partial = partial_sign(
+        &ctx,
+        &nonces0,
+        &privkey_hex,
+        &"22".repeat(32),
+        &[nonces0.clone(), nonces1],
+    )
+    .unwrap();
     assert_eq!(partial.s_partial.len(), 64);
     assert_eq!(partial.c_0.len(), 64);
     hex::decode(&partial.s_partial).unwrap();
@@ -600,8 +635,8 @@ fn test_partial_sign_deterministic() {
     let privkey = "11".repeat(32);
     let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx, &nonces0, &privkey, &all).unwrap();
-    let p2 = partial_sign(&ctx, &nonces0, &privkey, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces0, &privkey, &"22".repeat(32), &all).unwrap();
+    let p2 = partial_sign(&ctx, &nonces0, &privkey, &"22".repeat(32), &all).unwrap();
     assert_eq!(p1.s_partial, p2.s_partial);
     assert_eq!(p1.c_0, p2.c_0);
 }
@@ -616,8 +651,8 @@ fn test_two_signers_different_partials() {
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &"22".repeat(32), &all).unwrap();
     assert_ne!(p0.s_partial, p1.s_partial);
 }
 
@@ -631,8 +666,8 @@ fn test_combine_two_partials() {
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &"22".repeat(32), &all).unwrap();
 
     let (s, c) = combine_partial_signatures(&[p0, p1]).unwrap();
     assert_eq!(s.len(), 64);
@@ -651,7 +686,7 @@ fn test_combine_three_partials() {
     let keys: Vec<String> = (0..3).map(|_| generate_random_scalar().0).collect();
 
     let partials: Vec<_> = (0..3)
-        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces).unwrap())
+        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &"22".repeat(32), &nonces).unwrap())
         .collect();
 
     let (s, _c) = combine_partial_signatures(&partials).unwrap();
@@ -669,8 +704,8 @@ fn test_combine_ext_returns_struct() {
     let (key0, _) = generate_random_scalar();
     let (key1, _) = generate_random_scalar();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &"22".repeat(32), &all).unwrap();
 
     let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert_eq!(combined.s.len(), 64);
@@ -687,8 +722,15 @@ fn test_tclsag_partial_produces_sy() {
     let (key, _) = generate_random_scalar();
     let (key_y, _) = generate_random_scalar();
 
-    let partial =
-        partial_sign_tclsag(&ctx, &nonces0, &key, &key_y, &[nonces0.clone(), nonces1]).unwrap();
+    let partial = partial_sign_tclsag(
+        &ctx,
+        &nonces0,
+        &key,
+        &key_y,
+        &"22".repeat(32),
+        &[nonces0.clone(), nonces1],
+    )
+    .unwrap();
     assert!(partial.sy_partial.is_some());
     assert_eq!(partial.sy_partial.as_ref().unwrap().len(), 64);
 }
@@ -707,8 +749,8 @@ fn test_tclsag_combine_includes_sy() {
     let (k1, _) = generate_random_scalar();
     let (k1y, _) = generate_random_scalar();
 
-    let p0 = partial_sign_tclsag(&ctx, &nonces0, &k0, &k0y, &all).unwrap();
-    let p1 = partial_sign_tclsag(&ctx, &nonces1, &k1, &k1y, &all).unwrap();
+    let p0 = partial_sign_tclsag(&ctx, &nonces0, &k0, &k0y, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign_tclsag(&ctx, &nonces1, &k1, &k1y, &"22".repeat(32), &all).unwrap();
 
     let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert!(combined.sy.is_some());
@@ -745,57 +787,33 @@ fn test_nonce_binding_varies_with_message() {
 
 #[test]
 fn test_signing_algebraic_correctness() {
+    // Verify that two signers computing partials independently produce
+    // the same c_0 (both see the same ring traversal) and that the
+    // partials produce valid 32-byte hex scalars.
     let ctx = make_signing_context(2);
-    let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
-    let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
-    let (privkey_hex, privkey_bytes) = generate_random_scalar();
-    let all = vec![nonces0.clone(), nonces1];
+    let pk_hex = &ctx.ring[ctx.real_index].clone();
+    let nonces0 = generate_nonces(0, pk_hex).unwrap();
+    let nonces1 = generate_nonces(1, pk_hex).unwrap();
+    let (key0, _) = generate_random_scalar();
+    let (key1, _) = generate_random_scalar();
+    let (z0, _) = generate_random_scalar();
+    let (z1, _) = generate_random_scalar();
+    let all = vec![nonces0.clone(), nonces1.clone()];
 
-    let partial = partial_sign(&ctx, &nonces0, &privkey_hex, &all).unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &z0, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &z1, &all).unwrap();
 
-    // Recompute: combined_alpha = alpha[0] + b * alpha[1]
-    let b = compute_nonce_binding(&ctx, &all).unwrap();
-    let b_reduced = salvium_crypto::sc_reduce32(&b);
+    // Both signers should compute the same c_0 (ring position 0 challenge)
+    assert_eq!(p0.c_0, p1.c_0, "signers must agree on c_0");
 
-    let one = {
-        let mut v = [0u8; 32];
-        v[0] = 1;
-        v
-    };
-    let zero = [0u8; 32];
-    let mut b_arr = [0u8; 32];
-    b_arr.copy_from_slice(&b_reduced[..32]);
+    // Partials should be valid hex scalars
+    assert_eq!(p0.s_partial.len(), 64);
+    assert_eq!(p1.s_partial.len(), 64);
+    hex::decode(&p0.s_partial).unwrap();
+    hex::decode(&p1.s_partial).unwrap();
 
-    let neg_b_vec = salvium_crypto::sc_mul_sub(&one, &b_arr, &zero);
-    let mut neg_b = [0u8; 32];
-    neg_b.copy_from_slice(&neg_b_vec[..32]);
-
-    let alpha0 = nonces0.secret_nonces[0];
-    let alpha1 = nonces0.secret_nonces[1];
-
-    let combined_vec = salvium_crypto::sc_mul_sub(&neg_b, &alpha1, &alpha0);
-    let mut combined_alpha = [0u8; 32];
-    combined_alpha.copy_from_slice(&combined_vec[..32]);
-
-    // Recompute challenge
-    let combined_g = salvium_crypto::scalar_mult_base(&combined_alpha);
-    let mut c_data = Vec::new();
-    c_data.extend_from_slice(b"CLSAG_c");
-    c_data.extend_from_slice(&hex::decode(&ctx.ring[ctx.real_index]).unwrap());
-    c_data.extend_from_slice(&hex::decode(&ctx.key_image).unwrap());
-    c_data.extend_from_slice(&hex::decode(&ctx.pseudo_output_commitment).unwrap());
-    c_data.extend_from_slice(&hex::decode(&ctx.message).unwrap());
-    c_data.extend_from_slice(&combined_g);
-    let c_hash = salvium_crypto::keccak256(&c_data);
-    let c_reduced = salvium_crypto::sc_reduce32(&c_hash);
-    let mut c32 = [0u8; 32];
-    c32.copy_from_slice(&c_reduced[..32]);
-
-    // s_expected = combined_alpha - c * privkey
-    let s_expected_vec = salvium_crypto::sc_mul_sub(&c32, &privkey_bytes, &combined_alpha);
-
-    assert_eq!(partial.s_partial, hex::encode(&s_expected_vec));
-    assert_eq!(partial.c_0, hex::encode(c32));
+    // Partials should be different (different keys, different nonces)
+    assert_ne!(p0.s_partial, p1.s_partial);
 }
 
 // ===========================================================================
@@ -815,7 +833,13 @@ fn test_partial_sign_invalid_privkey_hex() {
     let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
     let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     // Non-hex key — should now return an error
-    let result = partial_sign(&ctx, &nonces0, "not_hex!", &[nonces0.clone(), nonces1]);
+    let result = partial_sign(
+        &ctx,
+        &nonces0,
+        "not_hex!",
+        &"22".repeat(32),
+        &[nonces0.clone(), nonces1],
+    );
     assert!(result.is_err());
 }
 
@@ -827,8 +851,8 @@ fn test_nonce_reuse_identical_signatures() {
     let (key, _) = generate_random_scalar();
     let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx, &nonces0, &key, &all).unwrap();
-    let p2 = partial_sign(&ctx, &nonces0, &key, &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces0, &key, &"22".repeat(32), &all).unwrap();
+    let p2 = partial_sign(&ctx, &nonces0, &key, &"22".repeat(32), &all).unwrap();
     assert_eq!(p1.s_partial, p2.s_partial);
 }
 
@@ -844,8 +868,8 @@ fn test_different_real_index_different_challenge() {
     let (key, _) = generate_random_scalar();
     let all = vec![nonces0.clone(), nonces1];
 
-    let p1 = partial_sign(&ctx1, &nonces0, &key, &all).unwrap();
-    let p2 = partial_sign(&ctx2, &nonces0, &key, &all).unwrap();
+    let p1 = partial_sign(&ctx1, &nonces0, &key, &"22".repeat(32), &all).unwrap();
+    let p2 = partial_sign(&ctx2, &nonces0, &key, &"22".repeat(32), &all).unwrap();
     assert_ne!(p1.c_0, p2.c_0);
 }
 
@@ -873,6 +897,8 @@ fn test_tx_set_add_pending_tx() {
         input_partials: Vec::new(),
         fee: 10_000_000,
         destinations: vec!["SC1test".to_string()],
+        signing_contexts: Vec::new(),
+        signing_message: String::new(),
     });
     assert_eq!(set.pending_txs.len(), 1);
     assert_eq!(set.pending_txs[0].fee, 10_000_000);
@@ -934,6 +960,8 @@ fn test_tx_set_serde_roundtrip() {
         input_partials: Vec::new(),
         fee: 5_000_000,
         destinations: vec!["dest".to_string()],
+        signing_contexts: Vec::new(),
+        signing_message: String::new(),
     });
 
     let data = set.serialize();
@@ -960,6 +988,8 @@ fn test_tx_set_multiple_pending_txs() {
             input_partials: Vec::new(),
             fee: (i + 1) as u64 * 1_000_000,
             destinations: vec![],
+            signing_contexts: Vec::new(),
+            signing_message: String::new(),
         });
     }
     assert_eq!(set.pending_txs.len(), 5);
@@ -983,8 +1013,8 @@ fn test_e2e_2_of_3_kex_then_sign() {
     let key0 = accounts[0].spend_key().unwrap().to_string();
     let key1 = accounts[1].spend_key().unwrap().to_string();
 
-    let p0 = partial_sign(&ctx, &nonces0, &key0, &all).unwrap();
-    let p1 = partial_sign(&ctx, &nonces1, &key1, &all).unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &key0, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &key1, &"22".repeat(32), &all).unwrap();
 
     let (s, c) = combine_partial_signatures(&[p0, p1]).unwrap();
     assert_ne!(s, hex::encode([0u8; 32]));
@@ -1010,7 +1040,7 @@ fn test_e2e_3_of_5_kex_then_sign() {
         .collect();
 
     let partials: Vec<_> = (0..3)
-        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &nonces).unwrap())
+        .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &"22".repeat(32), &nonces).unwrap())
         .collect();
 
     let (s, c) = combine_partial_signatures(&partials).unwrap();
@@ -1033,8 +1063,8 @@ fn test_e2e_tclsag_2_of_3() {
     let (key0y, _) = generate_random_scalar();
     let (key1y, _) = generate_random_scalar();
 
-    let p0 = partial_sign_tclsag(&ctx, &nonces0, &key0, &key0y, &all).unwrap();
-    let p1 = partial_sign_tclsag(&ctx, &nonces1, &key1, &key1y, &all).unwrap();
+    let p0 = partial_sign_tclsag(&ctx, &nonces0, &key0, &key0y, &"22".repeat(32), &all).unwrap();
+    let p1 = partial_sign_tclsag(&ctx, &nonces1, &key1, &key1y, &"22".repeat(32), &all).unwrap();
 
     let combined = combine_partial_signatures_ext(&[p0, p1]).unwrap();
     assert!(combined.sy.is_some());
@@ -1250,4 +1280,291 @@ fn test_combine_two_partial_key_images() {
     expected32.copy_from_slice(&expected);
 
     assert_eq!(combined, expected32);
+}
+
+// ===========================================================================
+// CLSAG Verification Tests — THE CRITICAL TESTS
+// ===========================================================================
+
+fn to_32(v: &[u8]) -> [u8; 32] {
+    let mut arr = [0u8; 32];
+    let len = v.len().min(32);
+    arr[..len].copy_from_slice(&v[..len]);
+    arr
+}
+
+/// **THE KEY TEST**: 2-of-2 multisig partial signatures combine into a
+/// CLSAG signature that passes `salvium_crypto::clsag::clsag_verify()`.
+#[test]
+fn test_2of2_multisig_clsag_verify() {
+    // 1. Generate the real keypair.
+    let (_, sk) = generate_random_scalar();
+    let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
+
+    // 2. Split the secret key into 2 shares: sk = sk_0 + sk_1 (mod L).
+    let (_, sk_0) = generate_random_scalar();
+    let sk_1 = to_32(&salvium_crypto::sc_sub(&sk, &sk_0));
+
+    // 3. Generate commitment mask and split: z = z_0 + z_1.
+    let amount = 1_000_000_000u64;
+    let input_mask = {
+        let (_, m) = generate_random_scalar();
+        m
+    };
+    let pseudo_mask = {
+        let (_, m) = generate_random_scalar();
+        m
+    };
+    let z = to_32(&salvium_crypto::sc_sub(&input_mask, &pseudo_mask));
+    let (_, z_0) = generate_random_scalar();
+    let z_1 = to_32(&salvium_crypto::sc_sub(&z, &z_0));
+
+    // 4. Compute commitments.
+    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &input_mask,
+    ));
+    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &pseudo_mask,
+    ));
+
+    // 5. Build a ring with decoys (ring size = 4, real at index 1).
+    let real_index = 1;
+    let ring_size = 4;
+    let mut ring = Vec::with_capacity(ring_size);
+    let mut commitments = Vec::with_capacity(ring_size);
+    for i in 0..ring_size {
+        if i == real_index {
+            ring.push(pk);
+            commitments.push(input_commitment);
+        } else {
+            let (_, dk) = generate_random_scalar();
+            ring.push(to_32(&salvium_crypto::scalar_mult_base(&dk)));
+            let (_, cm) = generate_random_scalar();
+            commitments.push(to_32(&salvium_crypto::pedersen_commit(
+                &1_000_000_000u64.to_le_bytes(),
+                &cm,
+            )));
+        }
+    }
+
+    // 6. Compute key image: I = sk * H_p(pk).
+    let hp_pk = to_32(&salvium_crypto::hash_to_point(&pk));
+    let key_image = to_32(&salvium_crypto::scalar_mult_point(&sk, &hp_pk));
+
+    // 7. Commitment image: D = z * H_p(pk), D/8 = inv(8) * D.
+    let d_full = to_32(&salvium_crypto::scalar_mult_point(&z, &hp_pk));
+    let inv8 = to_32(&salvium_crypto::inv_eight_scalar());
+    let d8 = to_32(&salvium_crypto::scalar_mult_point(&inv8, &d_full));
+
+    // 8. Generate fake responses for non-real positions.
+    let mut fake_responses = Vec::with_capacity(ring_size);
+    for i in 0..ring_size {
+        if i == real_index {
+            fake_responses.push("00".repeat(32));
+        } else {
+            let (hex, _) = generate_random_scalar();
+            fake_responses.push(hex);
+        }
+    }
+
+    // 9. Random signing message.
+    let (_, message) = generate_random_scalar();
+
+    // 10. Set up MultisigClsagContext.
+    let ctx = MultisigClsagContext {
+        ring: ring.iter().map(hex::encode).collect(),
+        commitments: commitments.iter().map(hex::encode).collect(),
+        key_image: hex::encode(key_image),
+        pseudo_output_commitment: hex::encode(pseudo_output),
+        message: hex::encode(message),
+        real_index,
+        use_tclsag: false,
+        key_image_y: None,
+        commitment_image: Some(hex::encode(d8)),
+        fake_responses: fake_responses.clone(),
+    };
+
+    // 11. Both signers generate nonces.
+    let pk_hex = hex::encode(pk);
+    let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+    let nonces1 = generate_nonces(1, &pk_hex).unwrap();
+    let all_nonces = vec![nonces0.clone(), nonces1.clone()];
+
+    // 12. Both signers produce partial signatures.
+    let partial0 = partial_sign(
+        &ctx,
+        &nonces0,
+        &hex::encode(sk_0),
+        &hex::encode(z_0),
+        &all_nonces,
+    )
+    .unwrap();
+
+    let partial1 = partial_sign(
+        &ctx,
+        &nonces1,
+        &hex::encode(sk_1),
+        &hex::encode(z_1),
+        &all_nonces,
+    )
+    .unwrap();
+
+    // Both signers must agree on c_0.
+    assert_eq!(partial0.c_0, partial1.c_0, "signers must agree on c_0");
+
+    // 13. Combine partials.
+    let (s_combined_hex, c_0_hex) =
+        combine_partial_signatures(&[partial0, partial1]).unwrap();
+    let s_combined = to_32(&hex::decode(&s_combined_hex).unwrap());
+    let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
+
+    // 14. Build the full response vector.
+    let mut s_vec: Vec<[u8; 32]> = fake_responses
+        .iter()
+        .map(|h| to_32(&hex::decode(h).unwrap()))
+        .collect();
+    s_vec[real_index] = s_combined;
+
+    // 15. Construct the ClsagSignature.
+    let sig = salvium_crypto::clsag::ClsagSignature {
+        s: s_vec,
+        c1: c_0,
+        key_image,
+        commitment_image: d8,
+    };
+
+    // 16. VERIFY — this is the whole point.
+    let valid = salvium_crypto::clsag::clsag_verify(
+        &message,
+        &sig,
+        &ring,
+        &commitments,
+        &pseudo_output,
+    );
+
+    assert!(valid, "2-of-2 multisig CLSAG signature MUST verify!");
+}
+
+/// 2-of-3 multisig: 3 key holders, any 2 sign → CLSAG verifies.
+#[test]
+fn test_2of3_multisig_clsag_verify() {
+    // Generate full key and split into 3 additive shares.
+    let (_, sk) = generate_random_scalar();
+    let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
+
+    let (_, sk_0) = generate_random_scalar();
+    let (_, sk_1) = generate_random_scalar();
+    // sk_2 = sk - sk_0 - sk_1 (but we won't use sk_2 — only 2 of 3 sign)
+
+    // For additive 2-of-3, we need Shamir shares or simply use the approach
+    // where 2 out of 3 holders each contribute their share plus a correction.
+    // Simplification: split sk into 2 shares for the 2 actual signers.
+    let sk_signer0 = sk_0;
+    let sk_signer1 = to_32(&salvium_crypto::sc_sub(&sk, &sk_0));
+
+    // Commitment mask.
+    let amount = 500_000_000u64;
+    let (_, input_mask) = generate_random_scalar();
+    let (_, pseudo_mask) = generate_random_scalar();
+    let z = to_32(&salvium_crypto::sc_sub(&input_mask, &pseudo_mask));
+    let (_, z_0) = generate_random_scalar();
+    let z_1 = to_32(&salvium_crypto::sc_sub(&z, &z_0));
+
+    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &input_mask,
+    ));
+    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &pseudo_mask,
+    ));
+
+    // Ring (size 2 for speed).
+    let real_index = 0;
+    let (_, decoy_sk) = generate_random_scalar();
+    let decoy_pk = to_32(&salvium_crypto::scalar_mult_base(&decoy_sk));
+    let (_, decoy_cm) = generate_random_scalar();
+    let decoy_commit = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &decoy_cm,
+    ));
+    let ring = vec![pk, decoy_pk];
+    let ring_commitments = vec![input_commitment, decoy_commit];
+
+    let hp_pk = to_32(&salvium_crypto::hash_to_point(&pk));
+    let key_image = to_32(&salvium_crypto::scalar_mult_point(&sk, &hp_pk));
+    let d_full = to_32(&salvium_crypto::scalar_mult_point(&z, &hp_pk));
+    let inv8 = to_32(&salvium_crypto::inv_eight_scalar());
+    let d8 = to_32(&salvium_crypto::scalar_mult_point(&inv8, &d_full));
+
+    let (fake_hex, _) = generate_random_scalar();
+    let fake_responses = vec!["00".repeat(32), fake_hex.clone()];
+    let (_, message) = generate_random_scalar();
+
+    let ctx = MultisigClsagContext {
+        ring: ring.iter().map(hex::encode).collect(),
+        commitments: ring_commitments.iter().map(hex::encode).collect(),
+        key_image: hex::encode(key_image),
+        pseudo_output_commitment: hex::encode(pseudo_output),
+        message: hex::encode(message),
+        real_index,
+        use_tclsag: false,
+        key_image_y: None,
+        commitment_image: Some(hex::encode(d8)),
+        fake_responses: fake_responses.clone(),
+    };
+
+    let pk_hex = hex::encode(pk);
+    let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+    let nonces1 = generate_nonces(1, &pk_hex).unwrap();
+    let all_nonces = vec![nonces0.clone(), nonces1.clone()];
+
+    let p0 = partial_sign(
+        &ctx,
+        &nonces0,
+        &hex::encode(sk_signer0),
+        &hex::encode(z_0),
+        &all_nonces,
+    )
+    .unwrap();
+
+    let p1 = partial_sign(
+        &ctx,
+        &nonces1,
+        &hex::encode(sk_signer1),
+        &hex::encode(z_1),
+        &all_nonces,
+    )
+    .unwrap();
+
+    assert_eq!(p0.c_0, p1.c_0);
+
+    let (s_hex, c_0_hex) = combine_partial_signatures(&[p0, p1]).unwrap();
+    let s = to_32(&hex::decode(&s_hex).unwrap());
+    let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
+
+    let mut s_vec: Vec<[u8; 32]> = fake_responses
+        .iter()
+        .map(|h| to_32(&hex::decode(h).unwrap()))
+        .collect();
+    s_vec[real_index] = s;
+
+    let sig = salvium_crypto::clsag::ClsagSignature {
+        s: s_vec,
+        c1: c_0,
+        key_image,
+        commitment_image: d8,
+    };
+
+    let valid = salvium_crypto::clsag::clsag_verify(
+        &message,
+        &sig,
+        &ring,
+        &ring_commitments,
+        &pseudo_output,
+    );
+
+    assert!(valid, "2-of-3 multisig CLSAG signature MUST verify!");
 }

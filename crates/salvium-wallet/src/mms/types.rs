@@ -137,8 +137,12 @@ impl ProcessingAction {
         match self {
             Self::PrepareMultisig => "Run 'prepare_multisig' to start multisig wallet setup",
             Self::MakeMultisig => "Run 'make_multisig' with the received key sets",
-            Self::ExchangeMultisigKeys => "Run 'exchange_multisig_keys' with the additional key sets",
-            Self::CreateSyncData => "Run 'export_multisig_info' to create sync data for other signers",
+            Self::ExchangeMultisigKeys => {
+                "Run 'exchange_multisig_keys' with the additional key sets"
+            }
+            Self::CreateSyncData => {
+                "Run 'export_multisig_info' to create sync data for other signers"
+            }
             Self::ProcessSyncData => "Run 'import_multisig_info' with the received sync data",
             Self::SignTx => "Run 'sign_multisig' with the received partially signed tx",
             Self::SubmitTx => "Run 'submit_multisig' with the fully signed tx",

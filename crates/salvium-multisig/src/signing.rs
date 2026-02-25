@@ -3,11 +3,48 @@
 //! Implements the partial signing protocol where each signer produces:
 //! - 2 random nonces per input (`alpha_0`, `alpha_1`)
 //! - Public nonces: `alpha_G_i = alpha_i * G`, `alpha_H_i = alpha_i * H_p(pubkey)`
-//! - Combined nonce: `b = H(domain, ring, commitment, msg, total_alpha_G, total_alpha_H)`
-//!   `alpha = b^0 * alpha_0 + b^1 * alpha_1`
-//! - Partial response: `s_partial = alpha - c * privkey_share`
+//! - Combined nonce via MuSig2 binding: `b = H(context)`, `alpha = alpha_0 + b * alpha_1`
+//! - Ring traversal to compute challenge `c` at the real index
+//! - Partial response: `s_partial = alpha_combined - c * (mu_P * privkey_share + mu_C * z_share)`
 
 use serde::{Deserialize, Serialize};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Convert a byte slice to a fixed 32-byte array.
+fn to_arr32(v: &[u8]) -> [u8; 32] {
+    let mut arr = [0u8; 32];
+    let len = v.len().min(32);
+    arr[..len].copy_from_slice(&v[..len]);
+    arr
+}
+
+/// Pad a domain separator to 32 bytes (matching clsag.rs pad_domain).
+fn pad_domain(s: &[u8]) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    let len = s.len().min(32);
+    buf[..len].copy_from_slice(&s[..len]);
+    buf
+}
+
+/// Hash data to a scalar: keccak256(data) then reduce mod L.
+fn hash_to_scalar_bytes(data: &[u8]) -> [u8; 32] {
+    let hash = salvium_crypto::keccak256(data);
+    to_arr32(&salvium_crypto::sc_reduce32(&hash))
+}
+
+/// Decode a hex string to exactly 32 bytes.
+fn hex_to_32(hex_str: &str, label: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex for {}: {}", label, e))?;
+    if bytes.len() != 32 {
+        return Err(format!("{}: expected 32 bytes, got {}", label, bytes.len()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+// ─── Data Structures ─────────────────────────────────────────────────────────
 
 /// Per-input context for multisig CLSAG signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,12 +62,19 @@ pub struct MultisigClsagContext {
     /// Index of the real input in the ring.
     pub real_index: usize,
     /// Whether to use TCLSAG (for CARROT outputs, rct_type >= 9).
-    /// TCLSAG adds `sy` responses for the second key image dimension.
     #[serde(default)]
     pub use_tclsag: bool,
     /// Second key image (K_y) for TCLSAG, if applicable (hex-encoded).
     #[serde(default)]
     pub key_image_y: Option<String>,
+    /// Commitment key image D/8 (hex-encoded compressed point).
+    /// D = z * H_p(P_l), D/8 = inv(8) * D.
+    #[serde(default)]
+    pub commitment_image: Option<String>,
+    /// Fake responses for non-real ring positions (hex-encoded scalars, `ring_size` entries).
+    /// The entry at `real_index` is ignored.
+    #[serde(default)]
+    pub fake_responses: Vec<String>,
 }
 
 /// A signer's nonce contribution for one input.
@@ -43,7 +87,7 @@ pub struct SignerNonces {
     pub secret_nonces: Vec<[u8; 32]>,
     /// Public nonces on G: `alpha_i * G` (hex-encoded, 2 entries).
     pub pub_nonces_g: Vec<String>,
-    /// Public nonces on H_p: `alpha_i * H_p(key_image)` (hex-encoded, 2 entries).
+    /// Public nonces on H_p: `alpha_i * H_p(pubkey)` (hex-encoded, 2 entries).
     pub pub_nonces_hp: Vec<String>,
     /// TCLSAG: secret nonces for the Y dimension (2 per input).
     #[serde(skip, default)]
@@ -63,48 +107,320 @@ pub struct PartialClsag {
     pub signer_index: usize,
     /// The partial response scalar s (hex-encoded).
     pub s_partial: String,
-    /// The challenge scalar c_0 (hex-encoded, only meaningful from first signer).
+    /// The challenge scalar c_0 at ring position 0 (hex-encoded).
     pub c_0: String,
     /// TCLSAG: partial response scalar for the Y dimension (hex-encoded).
     #[serde(default)]
     pub sy_partial: Option<String>,
 }
 
-/// Decode a hex string to exactly 32 bytes.
-fn hex_to_32(hex_str: &str, label: &str) -> Result<[u8; 32], String> {
-    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex for {}: {}", label, e))?;
-    if bytes.len() != 32 {
-        return Err(format!("{}: expected 32 bytes, got {}", label, bytes.len()));
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(arr)
+// ─── ClsagContext — Ring Traversal Engine ─────────────────────────────────────
+
+/// CLSAG context for multisig ring traversal.
+///
+/// Mirrors the C++ `CLSAG_context_t` from `multisig_clsag_context.cpp`.
+/// Pre-computes aggregation coefficients (mu_P, mu_C), weighted ring members,
+/// and hash-to-point values, then performs the ring traversal to find the
+/// challenge at the real index.
+pub struct ClsagContext {
+    ring: Vec<[u8; 32]>,
+    commitments: Vec<[u8; 32]>,
+    key_image: [u8; 32],
+    commitment_image_d8: [u8; 32],
+    d_full: [u8; 32],
+    pseudo_output: [u8; 32],
+    message: [u8; 32],
+    real_index: usize,
+    n: usize,
+    mu_p: [u8; 32],
+    mu_c: [u8; 32],
+    c_diff: Vec<[u8; 32]>,
+    hp: Vec<[u8; 32]>,
+    fake_responses: Vec<[u8; 32]>,
 }
+
+impl ClsagContext {
+    /// Initialize a CLSAG context with ring data and precomputed values.
+    ///
+    /// # Arguments
+    /// * `ring` — ring member public keys (compressed points)
+    /// * `commitments` — ring member commitments (compressed points)
+    /// * `pseudo_output` — pseudo-output commitment C_offset
+    /// * `message` — signing message (32 bytes)
+    /// * `key_image` — combined key image I
+    /// * `commitment_image_d8` — D/8 = inv(8) * z * H_p(P_l)
+    /// * `real_index` — index of real input in ring
+    /// * `fake_responses` — fake response scalars (n entries, entry at real_index is ignored)
+    #[allow(clippy::too_many_arguments)]
+    pub fn init(
+        ring: &[[u8; 32]],
+        commitments: &[[u8; 32]],
+        pseudo_output: &[u8; 32],
+        message: &[u8; 32],
+        key_image: &[u8; 32],
+        commitment_image_d8: &[u8; 32],
+        real_index: usize,
+        fake_responses: &[[u8; 32]],
+    ) -> Result<Self, String> {
+        let n = ring.len();
+        if n == 0 {
+            return Err("ring is empty".to_string());
+        }
+        if n != commitments.len() {
+            return Err(format!(
+                "ring size {} != commitments size {}",
+                n,
+                commitments.len()
+            ));
+        }
+        if real_index >= n {
+            return Err(format!("real_index {} >= ring size {}", real_index, n));
+        }
+        if fake_responses.len() != n {
+            return Err(format!(
+                "fake_responses size {} != ring size {}",
+                fake_responses.len(),
+                n
+            ));
+        }
+
+        // Compute D_full = 8 * D/8 (three doublings)
+        let d_full = {
+            let t = salvium_crypto::point_add_compressed(commitment_image_d8, commitment_image_d8);
+            let t = to_arr32(&t);
+            let t = salvium_crypto::point_add_compressed(&t, &t);
+            let t = to_arr32(&t);
+            let t = salvium_crypto::point_add_compressed(&t, &t);
+            to_arr32(&t)
+        };
+
+        // Compute mu_P and mu_C (CLSAG aggregation coefficients)
+        // mu_P = H("CLSAG_agg_0" || ring || commitments || I || D/8 || pseudo_output)
+        let agg0 = pad_domain(b"CLSAG_agg_0");
+        let agg1 = pad_domain(b"CLSAG_agg_1");
+        let mut agg_data = Vec::with_capacity(32 + 32 * n * 2 + 32 * 3);
+        agg_data.extend_from_slice(&agg0);
+        for p in ring {
+            agg_data.extend_from_slice(p);
+        }
+        for c in commitments {
+            agg_data.extend_from_slice(c);
+        }
+        agg_data.extend_from_slice(key_image);
+        agg_data.extend_from_slice(commitment_image_d8);
+        agg_data.extend_from_slice(pseudo_output);
+        let mu_p = hash_to_scalar_bytes(&agg_data);
+
+        // mu_C = H("CLSAG_agg_1" || ... same data ...)
+        agg_data[..32].copy_from_slice(&agg1);
+        let mu_c = hash_to_scalar_bytes(&agg_data);
+
+        // Precompute commitment differences: C_diff[i] = C[i] - pseudo_output
+        let c_diff: Vec<[u8; 32]> = commitments
+            .iter()
+            .map(|c| to_arr32(&salvium_crypto::point_sub_compressed(c, pseudo_output)))
+            .collect();
+
+        // Precompute H_p(P[i]) for each ring member
+        let hp: Vec<[u8; 32]> = ring
+            .iter()
+            .map(|p| to_arr32(&salvium_crypto::hash_to_point(p)))
+            .collect();
+
+        Ok(ClsagContext {
+            ring: ring.to_vec(),
+            commitments: commitments.to_vec(),
+            key_image: *key_image,
+            commitment_image_d8: *commitment_image_d8,
+            d_full,
+            pseudo_output: *pseudo_output,
+            message: *message,
+            real_index,
+            n,
+            mu_p,
+            mu_c,
+            c_diff,
+            hp,
+            fake_responses: fake_responses.to_vec(),
+        })
+    }
+
+    /// Combine all signers' nonces and compute the challenge via ring traversal.
+    ///
+    /// # Arguments
+    /// * `total_alpha_g` — aggregate public nonces on G: `sum_i(alpha_k_i * G)` for k=0,1
+    /// * `total_alpha_hp` — aggregate public nonces on H_p: `sum_i(alpha_k_i * H_p(P_l))` for k=0,1
+    /// * `my_alpha` — this signer's secret nonces `[alpha_0, alpha_1]`
+    ///
+    /// # Returns
+    /// `(alpha_combined, c_0, c_at_real_index)` where:
+    /// * `alpha_combined` — this signer's combined secret nonce
+    /// * `c_0` — challenge at ring position 0 (used as `c1` in ClsagSignature)
+    /// * `c_at_real_index` — challenge at the real position (used for partial signing)
+    #[allow(clippy::type_complexity)]
+    pub fn combine_alpha_and_compute_challenge(
+        &self,
+        total_alpha_g: &[[u8; 32]; 2],
+        total_alpha_hp: &[[u8; 32]; 2],
+        my_alpha: &[[u8; 32]; 2],
+    ) -> Result<([u8; 32], [u8; 32], [u8; 32]), String> {
+        // 1. Compute MuSig2 binding factor b
+        let mut b_data = Vec::new();
+        b_data.extend_from_slice(b"CLSAG_round_ms_merge_factor");
+        for p in &self.ring {
+            b_data.extend_from_slice(p);
+        }
+        for c in &self.commitments {
+            b_data.extend_from_slice(c);
+        }
+        b_data.extend_from_slice(&self.pseudo_output);
+        b_data.extend_from_slice(&self.message);
+        for k in 0..2 {
+            b_data.extend_from_slice(&total_alpha_g[k]);
+            b_data.extend_from_slice(&total_alpha_hp[k]);
+        }
+        b_data.extend_from_slice(&self.key_image);
+        b_data.extend_from_slice(&self.commitment_image_d8);
+        for (j, s) in self.fake_responses.iter().enumerate() {
+            if j != self.real_index {
+                b_data.extend_from_slice(s);
+            }
+        }
+        b_data.extend_from_slice(&(self.real_index as u32).to_le_bytes());
+        b_data.extend_from_slice(&2u32.to_le_bytes()); // num_alpha_components
+        b_data.extend_from_slice(&(self.n as u32).to_le_bytes());
+
+        let b = hash_to_scalar_bytes(&b_data);
+
+        // 2. Combine aggregate nonces using binding factor
+        // L_l = total_alpha_g[0] + b * total_alpha_g[1]
+        let b_ag1 = to_arr32(&salvium_crypto::scalar_mult_point(&b, &total_alpha_g[1]));
+        let l_l = to_arr32(&salvium_crypto::point_add_compressed(
+            &total_alpha_g[0],
+            &b_ag1,
+        ));
+
+        // R_l = total_alpha_hp[0] + b * total_alpha_hp[1]
+        let b_ahp1 = to_arr32(&salvium_crypto::scalar_mult_point(&b, &total_alpha_hp[1]));
+        let r_l = to_arr32(&salvium_crypto::point_add_compressed(
+            &total_alpha_hp[0],
+            &b_ahp1,
+        ));
+
+        // 3. Compute this signer's combined secret nonce
+        // alpha_combined = my_alpha[0] + b * my_alpha[1]
+        let b_alpha1 = to_arr32(&salvium_crypto::sc_mul(&b, &my_alpha[1]));
+        let alpha_combined = to_arr32(&salvium_crypto::sc_add(&my_alpha[0], &b_alpha1));
+
+        // 4. Compute initial challenge from nonce commitments at real index
+        let mut c_current = self.hash_round(&l_l, &r_l);
+
+        // 5. Ring traversal: go from (l+1)%n around to l
+        let mut c_0 = [0u8; 32];
+        let mut i = (self.real_index + 1) % self.n;
+
+        if i == 0 {
+            c_0 = c_current;
+        }
+
+        while i != self.real_index {
+            let (l_i, r_i) = self.compute_lr(&self.fake_responses[i], &c_current, i);
+            c_current = self.hash_round(&l_i, &r_i);
+
+            i = (i + 1) % self.n;
+            if i == 0 {
+                c_0 = c_current;
+            }
+        }
+
+        // c_current is now the challenge at the real index
+        Ok((alpha_combined, c_0, c_current))
+    }
+
+    /// Compute the CLSAG round hash: H(round_domain || ring || commitments || pseudo || msg || L || R)
+    fn hash_round(&self, l: &[u8; 32], r: &[u8; 32]) -> [u8; 32] {
+        let round_domain = pad_domain(b"CLSAG_round");
+        let mut data = Vec::with_capacity(32 + 32 * self.n * 2 + 32 * 4);
+        data.extend_from_slice(&round_domain);
+        for p in &self.ring {
+            data.extend_from_slice(p);
+        }
+        for c in &self.commitments {
+            data.extend_from_slice(c);
+        }
+        data.extend_from_slice(&self.pseudo_output);
+        data.extend_from_slice(&self.message);
+        data.extend_from_slice(l);
+        data.extend_from_slice(r);
+        hash_to_scalar_bytes(&data)
+    }
+
+    /// Compute L and R for a ring member at position i.
+    ///
+    /// L = s_i*G + c*(mu_P*P[i] + mu_C*(C[i] - pseudo))
+    /// R = s_i*H_p(P[i]) + c*(mu_P*I + mu_C*D_full)
+    fn compute_lr(&self, s_i: &[u8; 32], c: &[u8; 32], i: usize) -> ([u8; 32], [u8; 32]) {
+        let c_mu_p = to_arr32(&salvium_crypto::sc_mul(c, &self.mu_p));
+        let c_mu_c = to_arr32(&salvium_crypto::sc_mul(c, &self.mu_c));
+
+        // L = s_i*G + c*mu_P*P[i] + c*mu_C*(C[i]-pseudo)
+        let s_g = to_arr32(&salvium_crypto::scalar_mult_base(s_i));
+        let cmp_p = to_arr32(&salvium_crypto::scalar_mult_point(&c_mu_p, &self.ring[i]));
+        let cmc_cd = to_arr32(&salvium_crypto::scalar_mult_point(&c_mu_c, &self.c_diff[i]));
+        let l = to_arr32(&salvium_crypto::point_add_compressed(&s_g, &cmp_p));
+        let l = to_arr32(&salvium_crypto::point_add_compressed(&l, &cmc_cd));
+
+        // R = s_i*H_p(P[i]) + c*mu_P*I + c*mu_C*D_full
+        let s_hp = to_arr32(&salvium_crypto::scalar_mult_point(s_i, &self.hp[i]));
+        let cmp_i = to_arr32(&salvium_crypto::scalar_mult_point(&c_mu_p, &self.key_image));
+        let cmc_d = to_arr32(&salvium_crypto::scalar_mult_point(&c_mu_c, &self.d_full));
+        let r = to_arr32(&salvium_crypto::point_add_compressed(&s_hp, &cmp_i));
+        let r = to_arr32(&salvium_crypto::point_add_compressed(&r, &cmc_d));
+
+        (l, r)
+    }
+
+    /// Get the mu_P aggregation coefficient.
+    pub fn mu_p(&self) -> &[u8; 32] {
+        &self.mu_p
+    }
+
+    /// Get the mu_C aggregation coefficient.
+    pub fn mu_c(&self) -> &[u8; 32] {
+        &self.mu_c
+    }
+
+    /// Get the fake responses.
+    pub fn fake_responses(&self) -> &[[u8; 32]] {
+        &self.fake_responses
+    }
+}
+
+// ─── Nonce Generation ────────────────────────────────────────────────────────
 
 /// Generate nonces for a single input.
 ///
-/// Returns `SignerNonces` with 2 random scalar nonces and their public points.
-/// If `key_image_y_hex` is provided, also generates TCLSAG Y-dimension nonces.
-pub fn generate_nonces(signer_index: usize, key_image_hex: &str) -> Result<SignerNonces, String> {
-    generate_nonces_ext(signer_index, key_image_hex, None)
+/// `pubkey_hex` is the public key at the real ring position (P_l), used to
+/// compute H_p(P_l) for the nonce commitments on the H_p basis.
+pub fn generate_nonces(signer_index: usize, pubkey_hex: &str) -> Result<SignerNonces, String> {
+    generate_nonces_ext(signer_index, pubkey_hex, None)
 }
 
 /// Extended nonce generation with optional TCLSAG Y key image.
 pub fn generate_nonces_ext(
     signer_index: usize,
-    key_image_hex: &str,
+    pubkey_hex: &str,
     key_image_y_hex: Option<&str>,
 ) -> Result<SignerNonces, String> {
     let mut rng = rand::thread_rng();
-    let key_image_bytes =
-        hex::decode(key_image_hex).map_err(|e| format!("invalid key_image hex: {}", e))?;
-    if key_image_bytes.len() != 32 {
+    let pubkey_bytes = hex::decode(pubkey_hex).map_err(|e| format!("invalid pubkey hex: {}", e))?;
+    if pubkey_bytes.len() != 32 {
         return Err(format!(
-            "key_image: expected 32 bytes, got {}",
-            key_image_bytes.len()
+            "pubkey: expected 32 bytes, got {}",
+            pubkey_bytes.len()
         ));
     }
-    let hp = salvium_crypto::hash_to_point(&key_image_bytes);
+    let hp = salvium_crypto::hash_to_point(&pubkey_bytes);
 
     let mut secret_nonces = Vec::with_capacity(2);
     let mut pub_nonces_g = Vec::with_capacity(2);
@@ -174,50 +490,61 @@ pub fn generate_nonces_ext(
     })
 }
 
-/// Compute the nonce combination factor `b` from all signers' public nonces.
+// ─── Nonce Aggregation ───────────────────────────────────────────────────────
+
+/// Aggregate all signers' public nonces into totals.
 ///
-/// b = H("CLSAG_round_nonce" || ring || commitment || message || sum_alpha_G || sum_alpha_H)
-pub fn compute_nonce_binding(
-    ctx: &MultisigClsagContext,
+/// Returns `(total_alpha_G, total_alpha_Hp)` where each is `[sum_component_0, sum_component_1]`.
+#[allow(clippy::type_complexity)]
+pub fn aggregate_nonces(
     all_nonces: &[SignerNonces],
-) -> Result<Vec<u8>, String> {
+) -> Result<([[u8; 32]; 2], [[u8; 32]; 2]), String> {
     if all_nonces.len() < 2 {
         return Err(format!(
             "need at least 2 signers' nonces, got {}",
             all_nonces.len()
         ));
     }
-    for (i, nonces) in all_nonces.iter().enumerate() {
-        if nonces.pub_nonces_g.len() != 2 || nonces.pub_nonces_hp.len() != 2 {
-            return Err(format!(
-                "signer {} nonces must have exactly 2 components",
-                i
-            ));
-        }
-    }
 
-    // Sum all public nonces across signers.
     let mut total_g = [[0u8; 32]; 2];
     let mut total_hp = [[0u8; 32]; 2];
 
-    for nonces in all_nonces {
-        for i in 0..2 {
-            let g_bytes = hex_to_32(&nonces.pub_nonces_g[i], "pub_nonce_g")?;
-            let hp_bytes = hex_to_32(&nonces.pub_nonces_hp[i], "pub_nonce_hp")?;
+    for (idx, nonces) in all_nonces.iter().enumerate() {
+        if nonces.pub_nonces_g.len() != 2 || nonces.pub_nonces_hp.len() != 2 {
+            return Err(format!(
+                "signer {} nonces must have exactly 2 components",
+                idx
+            ));
+        }
+        for k in 0..2 {
+            let g = hex_to_32(&nonces.pub_nonces_g[k], "pub_nonce_g")?;
+            let hp = hex_to_32(&nonces.pub_nonces_hp[k], "pub_nonce_hp")?;
 
-            if total_g[i] == [0u8; 32] {
-                total_g[i] = g_bytes;
-                total_hp[i] = hp_bytes;
+            if idx == 0 {
+                total_g[k] = g;
+                total_hp[k] = hp;
             } else {
-                let sum_g = salvium_crypto::point_add_compressed(&total_g[i], &g_bytes);
-                total_g[i].copy_from_slice(&sum_g[..32]);
-                let sum_hp = salvium_crypto::point_add_compressed(&total_hp[i], &hp_bytes);
-                total_hp[i].copy_from_slice(&sum_hp[..32]);
+                total_g[k] = to_arr32(&salvium_crypto::point_add_compressed(&total_g[k], &g));
+                total_hp[k] = to_arr32(&salvium_crypto::point_add_compressed(&total_hp[k], &hp));
             }
         }
     }
 
-    // Hash everything together.
+    Ok((total_g, total_hp))
+}
+
+/// Compute the nonce combination factor `b` from all signers' public nonces (legacy).
+///
+/// b = H("CLSAG_round_nonce" || ring || commitment || message || sum_alpha_G || sum_alpha_H)
+///
+/// Note: `partial_sign()` now uses `ClsagContext` for binding factor computation.
+/// This function is kept for backward compatibility.
+pub fn compute_nonce_binding(
+    ctx: &MultisigClsagContext,
+    all_nonces: &[SignerNonces],
+) -> Result<Vec<u8>, String> {
+    let (total_g, total_hp) = aggregate_nonces(all_nonces)?;
+
     let mut data = Vec::new();
     data.extend_from_slice(b"CLSAG_round_nonce");
     for ring_member in &ctx.ring {
@@ -230,26 +557,35 @@ pub fn compute_nonce_binding(
     }
     let msg_bytes = hex_to_32(&ctx.message, "message")?;
     data.extend_from_slice(&msg_bytes);
-    for i in 0..2 {
-        data.extend_from_slice(&total_g[i]);
-        data.extend_from_slice(&total_hp[i]);
+    for k in 0..2 {
+        data.extend_from_slice(&total_g[k]);
+        data.extend_from_slice(&total_hp[k]);
     }
 
     Ok(salvium_crypto::keccak256(&data))
 }
 
-/// Produce a partial CLSAG signature for one input.
+// ─── Partial Signing ─────────────────────────────────────────────────────────
+
+/// Produce a partial CLSAG signature for one input using proper ring traversal.
 ///
 /// Each signer computes:
-///   `combined_alpha = b^0 * alpha_0 + b^1 * alpha_1`
-///   s_partial = combined_alpha - c * privkey_share
+///   1. Aggregate all public nonces, compute MuSig2 binding factor
+///   2. Ring traversal → challenge `c` at real index, `c_0` at ring position 0
+///   3. Weighted key: `w = mu_P * privkey_share + mu_C * commitment_mask_share`
+///   4. Partial response: `s_partial = alpha_combined - c * w`
 ///
-/// where `c` is the challenge at the real input index and `privkey_share` is this
-/// signer's share of the private key.
+/// # Arguments
+/// * `ctx` — signing context with ring, commitments, key image, commitment image, fake responses
+/// * `nonces` — this signer's nonces (must have `secret_nonces`)
+/// * `privkey_share_hex` — this signer's private key share (hex)
+/// * `commitment_mask_share_hex` — this signer's commitment mask share z_i (hex)
+/// * `all_nonces` — all signers' public nonces
 pub fn partial_sign(
     ctx: &MultisigClsagContext,
     nonces: &SignerNonces,
     privkey_share_hex: &str,
+    commitment_mask_share_hex: &str,
     all_nonces: &[SignerNonces],
 ) -> Result<PartialClsag, String> {
     // Input validation
@@ -270,62 +606,78 @@ pub fn partial_sign(
         ));
     }
 
-    let b = compute_nonce_binding(ctx, all_nonces)?;
-    let mut b32 = [0u8; 32];
-    b32.copy_from_slice(&b[..32]);
-    let b_reduced = salvium_crypto::sc_reduce32(&b32);
+    let commitment_image_hex = ctx
+        .commitment_image
+        .as_deref()
+        .ok_or("commitment_image is required for CLSAG signing")?;
 
-    // combined_alpha = alpha[0] + b * alpha[1]
-    let alpha0 = nonces.secret_nonces[0];
-    let alpha1 = nonces.secret_nonces[1];
+    if ctx.fake_responses.len() != ctx.ring.len() {
+        return Err(format!(
+            "fake_responses size {} != ring size {}",
+            ctx.fake_responses.len(),
+            ctx.ring.len()
+        ));
+    }
 
-    // Compute: combined_alpha = alpha0 + b * alpha1
-    // Using: neg_b = -b, then sc_mul_sub(neg_b, alpha1, alpha0) = alpha0 - (-b)*alpha1 = alpha0 + b*alpha1
-    let one = {
-        let mut v = [0u8; 32];
-        v[0] = 1;
-        v
-    };
-    let zero = [0u8; 32];
+    // Decode all hex fields
+    let ring: Vec<[u8; 32]> = ctx
+        .ring
+        .iter()
+        .map(|s| hex_to_32(s, "ring member"))
+        .collect::<Result<_, _>>()?;
+    let commitments: Vec<[u8; 32]> = ctx
+        .commitments
+        .iter()
+        .map(|s| hex_to_32(s, "commitment"))
+        .collect::<Result<_, _>>()?;
+    let key_image = hex_to_32(&ctx.key_image, "key_image")?;
+    let pseudo_output = hex_to_32(&ctx.pseudo_output_commitment, "pseudo_output")?;
+    let message = hex_to_32(&ctx.message, "message")?;
+    let commitment_image_d8 = hex_to_32(commitment_image_hex, "commitment_image")?;
+    let fake_responses: Vec<[u8; 32]> = ctx
+        .fake_responses
+        .iter()
+        .map(|s| hex_to_32(s, "fake_response"))
+        .collect::<Result<_, _>>()?;
 
-    let mut b_arr = [0u8; 32];
-    b_arr.copy_from_slice(&b_reduced[..32]);
-    let neg_b_vec = salvium_crypto::sc_mul_sub(&one, &b_arr, &zero);
-    let mut neg_b = [0u8; 32];
-    neg_b.copy_from_slice(&neg_b_vec[..32]);
+    // Create ClsagContext and perform ring traversal
+    let clsag_ctx = ClsagContext::init(
+        &ring,
+        &commitments,
+        &pseudo_output,
+        &message,
+        &key_image,
+        &commitment_image_d8,
+        ctx.real_index,
+        &fake_responses,
+    )?;
 
-    let combined_vec = salvium_crypto::sc_mul_sub(&neg_b, &alpha1, &alpha0);
-    let mut combined_alpha = [0u8; 32];
-    combined_alpha.copy_from_slice(&combined_vec[..32]);
+    // Aggregate all signers' public nonces
+    let (total_alpha_g, total_alpha_hp) = aggregate_nonces(all_nonces)?;
 
-    // Compute challenge c at the real index.
-    let combined_g = salvium_crypto::scalar_mult_base(&combined_alpha);
-    let mut c_data = Vec::new();
-    c_data.extend_from_slice(b"CLSAG_c");
-    let ring_real = hex_to_32(&ctx.ring[ctx.real_index], "ring[real_index]")?;
-    c_data.extend_from_slice(&ring_real);
-    let ki_bytes = hex_to_32(&ctx.key_image, "key_image")?;
-    c_data.extend_from_slice(&ki_bytes);
-    let pseudo_bytes = hex_to_32(&ctx.pseudo_output_commitment, "pseudo_output_commitment")?;
-    c_data.extend_from_slice(&pseudo_bytes);
-    let msg_bytes = hex_to_32(&ctx.message, "message")?;
-    c_data.extend_from_slice(&msg_bytes);
-    c_data.extend_from_slice(&combined_g);
-    let c_hash = salvium_crypto::keccak256(&c_data);
-    let c_reduced = salvium_crypto::sc_reduce32(&c_hash);
-    let mut c32 = [0u8; 32];
-    c32.copy_from_slice(&c_reduced[..32]);
+    // Compute combined alpha and challenge via ring traversal
+    let my_alpha = [nonces.secret_nonces[0], nonces.secret_nonces[1]];
+    let (alpha_combined, c_0, c) = clsag_ctx.combine_alpha_and_compute_challenge(
+        &total_alpha_g,
+        &total_alpha_hp,
+        &my_alpha,
+    )?;
 
-    // s_partial = combined_alpha - c * privkey_share
-    let privkey32 = hex_to_32(privkey_share_hex, "privkey_share")?;
+    // Compute weighted signing key: w = mu_P * privkey_share + mu_C * z_share
+    let privkey = hex_to_32(privkey_share_hex, "privkey_share")?;
+    let z_share = hex_to_32(commitment_mask_share_hex, "commitment_mask_share")?;
+    let mu_p_priv = to_arr32(&salvium_crypto::sc_mul(&clsag_ctx.mu_p, &privkey));
+    let mu_c_z = to_arr32(&salvium_crypto::sc_mul(&clsag_ctx.mu_c, &z_share));
+    let w = to_arr32(&salvium_crypto::sc_add(&mu_p_priv, &mu_c_z));
 
-    // sc_mul_sub(c, privkey, combined_alpha) = combined_alpha - c*privkey
-    let s_vec = salvium_crypto::sc_mul_sub(&c32, &privkey32, &combined_alpha);
+    // s_partial = alpha_combined - c * w
+    // sc_mul_sub(c, w, alpha_combined) = alpha_combined - c*w
+    let s_partial = to_arr32(&salvium_crypto::sc_mul_sub(&c, &w, &alpha_combined));
 
     Ok(PartialClsag {
         signer_index: nonces.signer_index,
-        s_partial: hex::encode(&s_vec),
-        c_0: hex::encode(c32),
+        s_partial: hex::encode(s_partial),
+        c_0: hex::encode(c_0),
         sy_partial: None,
     })
 }
@@ -339,65 +691,116 @@ pub fn partial_sign_tclsag(
     nonces: &SignerNonces,
     privkey_share_hex: &str,
     privkey_y_share_hex: &str,
+    commitment_mask_share_hex: &str,
     all_nonces: &[SignerNonces],
 ) -> Result<PartialClsag, String> {
     // Get the standard partial first.
-    let mut partial = partial_sign(ctx, nonces, privkey_share_hex, all_nonces)?;
+    let mut partial = partial_sign(
+        ctx,
+        nonces,
+        privkey_share_hex,
+        commitment_mask_share_hex,
+        all_nonces,
+    )?;
 
-    // TCLSAG: compute sy_partial = combined_alpha_y - c * privkey_y_share
-    if !nonces.secret_nonces_y.is_empty() && nonces.secret_nonces_y.len() >= 2 {
-        let b = compute_nonce_binding(ctx, all_nonces)?;
-        let b_reduced = salvium_crypto::sc_reduce32(&b);
+    // TCLSAG: compute sy_partial = combined_alpha_y - c * mu_P * privkey_y_share
+    if nonces.secret_nonces_y.len() >= 2 {
+        // Recompute binding factor b (same as in partial_sign via ClsagContext)
+        let ring: Vec<[u8; 32]> = ctx
+            .ring
+            .iter()
+            .map(|s| hex_to_32(s, "ring member"))
+            .collect::<Result<_, _>>()?;
+        let commitments: Vec<[u8; 32]> = ctx
+            .commitments
+            .iter()
+            .map(|s| hex_to_32(s, "commitment"))
+            .collect::<Result<_, _>>()?;
+        let key_image = hex_to_32(&ctx.key_image, "key_image")?;
+        let pseudo_output = hex_to_32(&ctx.pseudo_output_commitment, "pseudo_output")?;
+        let message = hex_to_32(&ctx.message, "message")?;
+        let commitment_image_d8 = hex_to_32(
+            ctx.commitment_image.as_deref().unwrap_or(""),
+            "commitment_image",
+        )?;
+        let fake_responses: Vec<[u8; 32]> = ctx
+            .fake_responses
+            .iter()
+            .map(|s| hex_to_32(s, "fake_response"))
+            .collect::<Result<_, _>>()?;
 
-        let one = {
-            let mut v = [0u8; 32];
-            v[0] = 1;
-            v
-        };
-        let zero = [0u8; 32];
+        let clsag_ctx = ClsagContext::init(
+            &ring,
+            &commitments,
+            &pseudo_output,
+            &message,
+            &key_image,
+            &commitment_image_d8,
+            ctx.real_index,
+            &fake_responses,
+        )?;
 
-        let mut b_arr = [0u8; 32];
-        b_arr.copy_from_slice(&b_reduced[..32]);
-        let neg_b_vec = salvium_crypto::sc_mul_sub(&one, &b_arr, &zero);
-        let mut neg_b = [0u8; 32];
-        neg_b.copy_from_slice(&neg_b_vec[..32]);
+        let (total_alpha_g, total_alpha_hp) = aggregate_nonces(all_nonces)?;
 
-        let alpha0_y = nonces.secret_nonces_y[0];
-        let alpha1_y = nonces.secret_nonces_y[1];
+        // Compute binding factor
+        let mut b_data = Vec::new();
+        b_data.extend_from_slice(b"CLSAG_round_ms_merge_factor");
+        for p in &ring {
+            b_data.extend_from_slice(p);
+        }
+        for c in &commitments {
+            b_data.extend_from_slice(c);
+        }
+        b_data.extend_from_slice(&pseudo_output);
+        b_data.extend_from_slice(&message);
+        for k in 0..2 {
+            b_data.extend_from_slice(&total_alpha_g[k]);
+            b_data.extend_from_slice(&total_alpha_hp[k]);
+        }
+        b_data.extend_from_slice(&key_image);
+        b_data.extend_from_slice(&commitment_image_d8);
+        for (j, s) in fake_responses.iter().enumerate() {
+            if j != ctx.real_index {
+                b_data.extend_from_slice(s);
+            }
+        }
+        b_data.extend_from_slice(&(ctx.real_index as u32).to_le_bytes());
+        b_data.extend_from_slice(&2u32.to_le_bytes());
+        b_data.extend_from_slice(&(ring.len() as u32).to_le_bytes());
+        let b = hash_to_scalar_bytes(&b_data);
 
-        // combined_alpha_y = alpha0_y + b * alpha1_y
-        let combined_y_vec = salvium_crypto::sc_mul_sub(&neg_b, &alpha1_y, &alpha0_y);
-        let mut combined_alpha_y = [0u8; 32];
-        combined_alpha_y.copy_from_slice(&combined_y_vec[..32]);
+        // combined_alpha_y = alpha_y[0] + b * alpha_y[1]
+        let b_ay1 = to_arr32(&salvium_crypto::sc_mul(&b, &nonces.secret_nonces_y[1]));
+        let combined_alpha_y =
+            to_arr32(&salvium_crypto::sc_add(&nonces.secret_nonces_y[0], &b_ay1));
 
-        // Use the same challenge c
-        let c32 = hex_to_32(&partial.c_0, "c_0")?;
-        let privkey_y32 = hex_to_32(privkey_y_share_hex, "privkey_y_share")?;
+        // Recompute c at real index (partial.c_0 is at position 0, not at real index).
+        let (_, _, c_real) = clsag_ctx.combine_alpha_and_compute_challenge(
+            &total_alpha_g,
+            &total_alpha_hp,
+            // Use the x-dimension nonces for the ring traversal (same as partial_sign)
+            &[nonces.secret_nonces[0], nonces.secret_nonces[1]],
+        )?;
 
-        // sy_partial = combined_alpha_y - c * privkey_y_share
-        let sy_vec = salvium_crypto::sc_mul_sub(&c32, &privkey_y32, &combined_alpha_y);
-        partial.sy_partial = Some(hex::encode(&sy_vec));
+        // sy_partial = combined_alpha_y - c_real * mu_P * privkey_y_share
+        let privkey_y = hex_to_32(privkey_y_share_hex, "privkey_y_share")?;
+        let mu_p_y = to_arr32(&salvium_crypto::sc_mul(clsag_ctx.mu_p(), &privkey_y));
+        let sy_partial = to_arr32(&salvium_crypto::sc_mul_sub(
+            &c_real,
+            &mu_p_y,
+            &combined_alpha_y,
+        ));
+        partial.sy_partial = Some(hex::encode(sy_partial));
     }
 
     Ok(partial)
 }
 
+// ─── Signature Combination ──────────────────────────────────────────────────
+
 /// Add two scalars: a + b (mod l).
 fn scalar_add(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-    // sc_mul_sub(x, y, c) = c - x*y. We want a + b = b - (-1)*a.
-    let neg_one = {
-        let mut v = [0u8; 32];
-        v[0] = 1;
-        let zero = [0u8; 32];
-        let neg = salvium_crypto::sc_mul_sub(&v, &v, &zero); // 0 - 1*1 = -1
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&neg[..32]);
-        arr
-    };
-    let sum_vec = salvium_crypto::sc_mul_sub(&neg_one, a, b);
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&sum_vec[..32]);
-    result
+    to_arr32(&salvium_crypto::sc_add(a, b))
 }
 
 /// Combined CLSAG result with optional TCLSAG `sy` response.
@@ -405,7 +808,7 @@ fn scalar_add(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
 pub struct CombinedClsag {
     /// Combined `s` response scalar (hex-encoded).
     pub s: String,
-    /// Challenge `c_0` at the real index (hex-encoded).
+    /// Challenge `c_0` at ring position 0 (hex-encoded).
     pub c_0: String,
     /// TCLSAG: combined `sy` response scalar (hex-encoded), if applicable.
     pub sy: Option<String>,
@@ -467,20 +870,104 @@ pub fn combine_partial_signatures_ext(partials: &[PartialClsag]) -> Result<Combi
     })
 }
 
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Generate a random valid scalar. Returns (hex, bytes).
+    fn random_scalar() -> (String, [u8; 32]) {
+        let mut buf = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
+        let reduced = salvium_crypto::sc_reduce32(&buf);
+        let mut s = [0u8; 32];
+        s.copy_from_slice(&reduced[..32]);
+        (hex::encode(s), s)
+    }
+
+    /// Generate a valid public key from a scalar.
+    fn scalar_to_point(s: &[u8; 32]) -> [u8; 32] {
+        to_arr32(&salvium_crypto::scalar_mult_base(s))
+    }
+
+    /// Create a test signing context with valid EC points and commitment image.
+    fn make_test_context(ring_size: usize) -> (MultisigClsagContext, [u8; 32], [u8; 32]) {
+        // Real key
+        let (_, sk) = random_scalar();
+        let pk = scalar_to_point(&sk);
+
+        // Decoy ring members
+        let mut ring = Vec::with_capacity(ring_size);
+        let mut commitments = Vec::with_capacity(ring_size);
+        let real_index = 0;
+
+        for i in 0..ring_size {
+            if i == real_index {
+                ring.push(hex::encode(pk));
+            } else {
+                let (_, dk) = random_scalar();
+                ring.push(hex::encode(scalar_to_point(&dk)));
+            }
+            let (_, ck) = random_scalar();
+            commitments.push(hex::encode(scalar_to_point(&ck)));
+        }
+
+        // Commitment mask
+        let (_, z) = random_scalar();
+        let pseudo_output = scalar_to_point(&{
+            let (_, pm) = random_scalar();
+            pm
+        });
+
+        // Key image I = sk * H_p(pk)
+        let hp_pk = to_arr32(&salvium_crypto::hash_to_point(&pk));
+        let key_image = to_arr32(&salvium_crypto::scalar_mult_point(&sk, &hp_pk));
+
+        // Commitment image D = z * H_p(pk), D/8 = inv(8) * D
+        let d_full = to_arr32(&salvium_crypto::scalar_mult_point(&z, &hp_pk));
+        let inv8 = to_arr32(&salvium_crypto::inv_eight_scalar());
+        let d8 = to_arr32(&salvium_crypto::scalar_mult_point(&inv8, &d_full));
+
+        // Fake responses
+        let mut fake_responses = Vec::with_capacity(ring_size);
+        for i in 0..ring_size {
+            if i == real_index {
+                fake_responses.push("00".repeat(32));
+            } else {
+                let (hex, _) = random_scalar();
+                fake_responses.push(hex);
+            }
+        }
+
+        let (_, message) = random_scalar();
+
+        let ctx = MultisigClsagContext {
+            ring,
+            commitments,
+            key_image: hex::encode(key_image),
+            pseudo_output_commitment: hex::encode(pseudo_output),
+            message: hex::encode(message),
+            real_index,
+            use_tclsag: false,
+            key_image_y: None,
+            commitment_image: Some(hex::encode(d8)),
+            fake_responses,
+        };
+
+        (ctx, sk, z)
+    }
+
     #[test]
     fn test_generate_nonces() {
-        // Use a well-known base point as a stand-in key image.
-        let key_image = "58".repeat(32);
-        let nonces = generate_nonces(0, &key_image).unwrap();
+        // Use a valid point as the public key.
+        let (_, sk) = random_scalar();
+        let pk = hex::encode(scalar_to_point(&sk));
+        let nonces = generate_nonces(0, &pk).unwrap();
         assert_eq!(nonces.signer_index, 0);
         assert_eq!(nonces.secret_nonces.len(), 2);
         assert_eq!(nonces.pub_nonces_g.len(), 2);
         assert_eq!(nonces.pub_nonces_hp.len(), 2);
-        // Public nonces should be valid 32-byte hex.
         for pn in &nonces.pub_nonces_g {
             assert_eq!(pn.len(), 64);
             hex::decode(pn).unwrap();
@@ -501,24 +988,60 @@ mod tests {
     }
 
     #[test]
+    fn test_clsag_context_init() {
+        let (ctx, _, _) = make_test_context(4);
+        let ring: Vec<[u8; 32]> = ctx
+            .ring
+            .iter()
+            .map(|s| hex_to_32(s, "r").unwrap())
+            .collect();
+        let comms: Vec<[u8; 32]> = ctx
+            .commitments
+            .iter()
+            .map(|s| hex_to_32(s, "c").unwrap())
+            .collect();
+        let ki = hex_to_32(&ctx.key_image, "ki").unwrap();
+        let po = hex_to_32(&ctx.pseudo_output_commitment, "po").unwrap();
+        let msg = hex_to_32(&ctx.message, "msg").unwrap();
+        let d8 = hex_to_32(ctx.commitment_image.as_deref().unwrap(), "d8").unwrap();
+        let fakes: Vec<[u8; 32]> = ctx
+            .fake_responses
+            .iter()
+            .map(|s| hex_to_32(s, "f").unwrap())
+            .collect();
+
+        let clsag_ctx = ClsagContext::init(&ring, &comms, &po, &msg, &ki, &d8, 0, &fakes).unwrap();
+        assert_eq!(clsag_ctx.n, 4);
+        // mu_P and mu_C should be non-zero
+        assert_ne!(clsag_ctx.mu_p, [0u8; 32]);
+        assert_ne!(clsag_ctx.mu_c, [0u8; 32]);
+    }
+
+    #[test]
     fn test_partial_sign_produces_valid_output() {
-        let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
-        let ctx = MultisigClsagContext {
-            ring: vec!["aa".repeat(32), "bb".repeat(32)],
-            commitments: vec!["cc".repeat(32), "dd".repeat(32)],
-            key_image: key_image.clone(),
-            pseudo_output_commitment: "ee".repeat(32),
-            message: "ff".repeat(32),
-            real_index: 0,
-            use_tclsag: false,
-            key_image_y: None,
-        };
+        let (ctx, sk, z) = make_test_context(4);
+        let pk_hex = &ctx.ring[ctx.real_index].clone();
 
-        let nonces0 = generate_nonces(0, &key_image).unwrap();
-        let nonces1 = generate_nonces(1, &key_image).unwrap();
-        let privkey = "11".repeat(32);
+        // Split key into two shares
+        let (_, sk_share_0) = random_scalar();
+        let _sk_share_1 = to_arr32(&salvium_crypto::sc_sub(&sk, &sk_share_0));
 
-        let partial = partial_sign(&ctx, &nonces0, &privkey, &[nonces0.clone(), nonces1]).unwrap();
+        // Split commitment mask
+        let (_, z_share_0) = random_scalar();
+        let _z_share_1 = to_arr32(&salvium_crypto::sc_sub(&z, &z_share_0));
+
+        let nonces0 = generate_nonces(0, pk_hex).unwrap();
+        let nonces1 = generate_nonces(1, pk_hex).unwrap();
+        let all_nonces = [nonces0.clone(), nonces1.clone()];
+
+        let partial = partial_sign(
+            &ctx,
+            &nonces0,
+            &hex::encode(sk_share_0),
+            &hex::encode(z_share_0),
+            &all_nonces,
+        )
+        .unwrap();
         assert_eq!(partial.signer_index, 0);
         assert_eq!(partial.s_partial.len(), 64);
         assert_eq!(partial.c_0.len(), 64);
@@ -526,23 +1049,29 @@ mod tests {
 
     #[test]
     fn test_partial_sign_rejects_empty_ring() {
-        let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
+        let (_, sk) = random_scalar();
+        let pk = scalar_to_point(&sk);
+        let pk_hex = hex::encode(pk);
+
         let ctx = MultisigClsagContext {
             ring: vec![],
             commitments: vec![],
-            key_image: key_image.clone(),
-            pseudo_output_commitment: "ee".repeat(32),
+            key_image: pk_hex.clone(),
+            pseudo_output_commitment: pk_hex.clone(),
             message: "ff".repeat(32),
             real_index: 0,
             use_tclsag: false,
             key_image_y: None,
+            commitment_image: Some(pk_hex.clone()),
+            fake_responses: vec![],
         };
-        let nonces0 = generate_nonces(0, &key_image).unwrap();
-        let nonces1 = generate_nonces(1, &key_image).unwrap();
+        let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+        let nonces1 = generate_nonces(1, &pk_hex).unwrap();
         let result = partial_sign(
             &ctx,
             &nonces0,
             &"11".repeat(32),
+            &"22".repeat(32),
             &[nonces0.clone(), nonces1],
         );
         assert!(result.is_err());
@@ -550,23 +1079,29 @@ mod tests {
 
     #[test]
     fn test_partial_sign_rejects_bad_real_index() {
-        let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
+        let (_, sk) = random_scalar();
+        let pk = scalar_to_point(&sk);
+        let pk_hex = hex::encode(pk);
+
         let ctx = MultisigClsagContext {
-            ring: vec!["aa".repeat(32)],
-            commitments: vec!["cc".repeat(32)],
-            key_image: key_image.clone(),
-            pseudo_output_commitment: "ee".repeat(32),
+            ring: vec![pk_hex.clone()],
+            commitments: vec![pk_hex.clone()],
+            key_image: pk_hex.clone(),
+            pseudo_output_commitment: pk_hex.clone(),
             message: "ff".repeat(32),
             real_index: 5,
             use_tclsag: false,
             key_image_y: None,
+            commitment_image: Some(pk_hex.clone()),
+            fake_responses: vec!["00".repeat(32)],
         };
-        let nonces0 = generate_nonces(0, &key_image).unwrap();
-        let nonces1 = generate_nonces(1, &key_image).unwrap();
+        let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+        let nonces1 = generate_nonces(1, &pk_hex).unwrap();
         let result = partial_sign(
             &ctx,
             &nonces0,
             &"11".repeat(32),
+            &"22".repeat(32),
             &[nonces0.clone(), nonces1],
         );
         assert!(result.is_err());
@@ -575,22 +1110,14 @@ mod tests {
 
     #[test]
     fn test_partial_sign_rejects_single_nonce() {
-        let key_image = hex::encode(salvium_crypto::scalar_mult_base(&[1u8; 32]));
-        let ctx = MultisigClsagContext {
-            ring: vec!["aa".repeat(32), "bb".repeat(32)],
-            commitments: vec!["cc".repeat(32), "dd".repeat(32)],
-            key_image: key_image.clone(),
-            pseudo_output_commitment: "ee".repeat(32),
-            message: "ff".repeat(32),
-            real_index: 0,
-            use_tclsag: false,
-            key_image_y: None,
-        };
-        let nonces0 = generate_nonces(0, &key_image).unwrap();
+        let (ctx, _, _) = make_test_context(2);
+        let pk_hex = &ctx.ring[0].clone();
+        let nonces0 = generate_nonces(0, pk_hex).unwrap();
         let result = partial_sign(
             &ctx,
             &nonces0,
             &"11".repeat(32),
+            &"22".repeat(32),
             std::slice::from_ref(&nonces0),
         );
         assert!(result.is_err());
@@ -615,7 +1142,20 @@ mod tests {
         let (s, c) = combine_partial_signatures(&[p1, p2]).unwrap();
         assert_eq!(s.len(), 64);
         assert_eq!(c.len(), 64);
-        // c should be from the first partial.
         assert_eq!(c, "aa".repeat(32));
+    }
+
+    #[test]
+    fn test_aggregate_nonces() {
+        let (_, sk) = random_scalar();
+        let pk_hex = hex::encode(scalar_to_point(&sk));
+        let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+        let nonces1 = generate_nonces(1, &pk_hex).unwrap();
+        let (total_g, total_hp) = aggregate_nonces(&[nonces0, nonces1]).unwrap();
+        // Both components should be non-zero
+        assert_ne!(total_g[0], [0u8; 32]);
+        assert_ne!(total_g[1], [0u8; 32]);
+        assert_ne!(total_hp[0], [0u8; 32]);
+        assert_ne!(total_hp[1], [0u8; 32]);
     }
 }

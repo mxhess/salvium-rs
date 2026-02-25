@@ -1096,14 +1096,10 @@ async fn main() {
         Commands::MarkOutputUnspent { key_image } => {
             commands::mark_output_unspent(&ctx, &key_image).await
         }
-        Commands::IsOutputSpent { key_image } => {
-            commands::is_output_spent(&ctx, &key_image).await
-        }
+        Commands::IsOutputSpent { key_image } => commands::is_output_spent(&ctx, &key_image).await,
 
         // Notes
-        Commands::SetTxNote { tx_hash, note } => {
-            commands::set_tx_note(&ctx, &tx_hash, &note).await
-        }
+        Commands::SetTxNote { tx_hash, note } => commands::set_tx_note(&ctx, &tx_hash, &note).await,
         Commands::GetTxNote { tx_hash } => commands::get_tx_note(&ctx, &tx_hash).await,
         Commands::SetDescription { description } => {
             commands::set_description(&ctx, &description).await

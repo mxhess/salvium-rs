@@ -149,6 +149,11 @@ pub fn sc_is_zero(s: &[u8]) -> bool {
     Scalar::from_bytes_mod_order(to32(s)) == Scalar::ZERO
 }
 
+/// Returns 8^(-1) mod L as a 32-byte scalar.
+pub fn inv_eight_scalar() -> Vec<u8> {
+    clsag::inv_eight().to_bytes().to_vec()
+}
+
 // ─── Point Operations (compressed Edwards) ──────────────────────────────────
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]

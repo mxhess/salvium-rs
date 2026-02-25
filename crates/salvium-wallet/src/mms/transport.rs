@@ -234,7 +234,10 @@ pub fn encrypt_message(plaintext: &[u8], shared_secret: &[u8; 32]) -> Vec<u8> {
 }
 
 /// Decrypt message content using ChaCha20-Poly1305.
-pub fn decrypt_message(ciphertext: &[u8], shared_secret: &[u8; 32]) -> Result<Vec<u8>, WalletError> {
+pub fn decrypt_message(
+    ciphertext: &[u8],
+    shared_secret: &[u8; 32],
+) -> Result<Vec<u8>, WalletError> {
     use chacha20::cipher::{KeyIvInit, StreamCipher};
     use chacha20::ChaCha20;
 
@@ -248,7 +251,9 @@ pub fn decrypt_message(ciphertext: &[u8], shared_secret: &[u8; 32]) -> Result<Ve
     // Verify MAC.
     let computed_mac = salvium_crypto::keccak256(encrypted);
     if &computed_mac[..16] != mac {
-        return Err(WalletError::Other("message MAC verification failed".to_string()));
+        return Err(WalletError::Other(
+            "message MAC verification failed".to_string(),
+        ));
     }
 
     let nonce = salvium_crypto::keccak256(shared_secret);

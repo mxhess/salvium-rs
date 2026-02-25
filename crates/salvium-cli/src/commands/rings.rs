@@ -79,10 +79,7 @@ pub async fn unset_ring(ctx: &AppContext, key_image_or_txid: &str) -> Result {
 
     // Try as key image first.
     if wallet.unset_ring(key_image_or_txid)? {
-        println!(
-            "Removed ring data for key image: {}",
-            key_image_or_txid
-        );
+        println!("Removed ring data for key image: {}", key_image_or_txid);
         return Ok(());
     }
 

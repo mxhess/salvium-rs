@@ -6,7 +6,12 @@
 use super::*;
 use salvium_wallet::mms::types::*;
 
-pub async fn mms_init(ctx: &AppContext, threshold: usize, signer_count: usize, own_label: &str) -> Result {
+pub async fn mms_init(
+    ctx: &AppContext,
+    threshold: usize,
+    signer_count: usize,
+    own_label: &str,
+) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if signer_count < 2 {
@@ -24,7 +29,10 @@ pub async fn mms_init(ctx: &AppContext, threshold: usize, signer_count: usize, o
         wallet.mms_update_signer(0, Some(own_label), None, Some(&addr))?;
     }
 
-    println!("MMS initialized: {}-of-{} multisig", threshold, signer_count);
+    println!(
+        "MMS initialized: {}-of-{} multisig",
+        threshold, signer_count
+    );
     println!("Use 'mms signer' to configure other signers.");
     Ok(())
 }
@@ -43,7 +51,10 @@ pub async fn mms_info(ctx: &AppContext) -> Result {
     println!("  Threshold:    {}", config.threshold);
     println!("  Signers:      {}", config.signer_count);
     println!("  Own index:    {}", config.own_index);
-    println!("  Auto-send:    {}", if config.auto_send { "on" } else { "off" });
+    println!(
+        "  Auto-send:    {}",
+        if config.auto_send { "on" } else { "off" }
+    );
 
     let signers = wallet.mms_get_signers()?;
     if !signers.is_empty() {
@@ -178,12 +189,7 @@ pub async fn mms_sync(ctx: &AppContext) -> Result {
         if signer.is_me {
             continue;
         }
-        wallet.mms_create_message(
-            MessageType::MultisigSyncData,
-            signer.index as i64,
-            &info,
-            0,
-        )?;
+        wallet.mms_create_message(MessageType::MultisigSyncData, signer.index as i64, &info, 0)?;
     }
 
     println!(
@@ -220,7 +226,10 @@ pub async fn mms_transfer(ctx: &AppContext, address: &str, amount: &str) -> Resu
         )?;
     }
 
-    println!("Created transfer messages for {} signers.", signers.len() - 1);
+    println!(
+        "Created transfer messages for {} signers.",
+        signers.len() - 1
+    );
     println!("Use 'mms send' to transmit them.");
 
     Ok(())
@@ -358,7 +367,12 @@ pub async fn mms_export(ctx: &AppContext, id: i64, output: &str) -> Result {
         .ok_or_else(|| format!("message {} not found", id))?;
 
     std::fs::write(output, &msg.content)?;
-    println!("Exported message {} ({} bytes) to {}", id, msg.content.len(), output);
+    println!(
+        "Exported message {} ({} bytes) to {}",
+        id,
+        msg.content.len(),
+        output
+    );
     Ok(())
 }
 
