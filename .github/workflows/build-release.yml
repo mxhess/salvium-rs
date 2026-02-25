@@ -184,7 +184,7 @@ jobs:
             cross: true
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
             name: salvium-miner-macos-x86_64
 
           - target: aarch64-apple-darwin
