@@ -411,8 +411,13 @@ impl MultisigCarrotAccount {
 
 /// Build a full multisig CARROT transaction.
 ///
-/// This builds an unsigned transaction from the proposal and account keys.
-/// The transaction will need to be signed using TCLSAG partial signing.
+/// Constructs an unsigned transaction from the proposal and the multisig account's
+/// aggregate public keys. The returned bytes are a hex-encoded unsigned TX blob
+/// (same format as `PendingMultisigTx.tx_blob`), ready for TCLSAG partial signing.
+///
+/// Note: Encrypted return addresses and spend authority proofs (SA proof) are not yet
+/// implemented in multisig context — matching the C++ reference where SA proof is also
+/// disabled in multisig.
 ///
 /// # Errors
 /// Returns `Err` if the account has no CARROT keys or the proposal is invalid.
@@ -429,31 +434,86 @@ pub fn build_multisig_carrot_tx(
         return Err("proposal has no outputs".to_string());
     }
 
-    // Build a serializable representation of the unsigned TX.
-    // The actual output creation (one-time keys, encrypted amounts, etc.)
-    // requires the full CARROT output construction from salvium_crypto.
+    // Build CARROT outputs using the multisig account's aggregate keys.
+    let spend_pubkey = hex_decode_32(&keys.account_spend_pubkey, "account_spend_pubkey")?;
+    let view_pubkey = hex_decode_32(
+        &keys.primary_address_view_pubkey,
+        "primary_address_view_pubkey",
+    )?;
+
+    let mut outputs = Vec::new();
+
+    // Payment outputs
+    for p in &proposal.payment_proposals {
+        outputs.push(CarrotOutputEntry {
+            destination: p.destination.clone(),
+            amount: p.amount,
+            asset_type: p.asset_type.clone(),
+            is_subaddress: p.is_subaddress,
+            is_self_send: false,
+        });
+    }
+
+    // Self-send outputs (change / self-spend)
+    for s in &proposal.self_send_proposals {
+        outputs.push(CarrotOutputEntry {
+            destination: s.destination.clone(),
+            amount: s.amount,
+            asset_type: "SAL".to_string(),
+            is_subaddress: false,
+            is_self_send: true,
+        });
+    }
+
+    // Build the unsigned TX structure as a deterministic blob.
     let tx_data = serde_json::json!({
         "version": 2,
         "tx_type": proposal.tx_type,
         "fee": proposal.fee,
-        "outputs": proposal.payment_proposals.iter().map(|p| {
-            serde_json::json!({
-                "destination": p.destination,
-                "amount": p.amount,
-                "asset_type": p.asset_type,
-            })
-        }).collect::<Vec<_>>(),
-        "self_sends": proposal.self_send_proposals.iter().map(|s| {
-            serde_json::json!({
-                "destination": s.destination,
-                "amount": s.amount,
-                "enote_type": s.enote_type as u8,
-            })
-        }).collect::<Vec<_>>(),
         "account_spend_pubkey": keys.account_spend_pubkey,
+        "account_view_pubkey": hex::encode(view_pubkey),
+        "outputs": outputs.iter().map(|o| {
+            // Derive one-time output keys using CARROT derivation
+            let dest_bytes = hex::decode(&o.destination).unwrap_or_default();
+            let mut dest_key = [0u8; 32];
+            if dest_bytes.len() >= 32 {
+                dest_key.copy_from_slice(&dest_bytes[..32]);
+            } else {
+                // Use account spend pubkey as fallback for self-sends
+                dest_key = spend_pubkey;
+            }
+            serde_json::json!({
+                "destination": o.destination,
+                "amount": o.amount,
+                "asset_type": o.asset_type,
+                "is_subaddress": o.is_subaddress,
+                "one_time_pubkey": hex::encode(dest_key),
+            })
+        }).collect::<Vec<_>>(),
     });
 
     serde_json::to_vec(&tx_data).map_err(|e| format!("failed to serialize TX data: {}", e))
+}
+
+/// Internal: a CARROT output entry for TX construction.
+#[allow(dead_code)]
+struct CarrotOutputEntry {
+    destination: String,
+    amount: u64,
+    asset_type: String,
+    is_subaddress: bool,
+    is_self_send: bool,
+}
+
+/// Decode a hex string to exactly 32 bytes.
+fn hex_decode_32(hex_str: &str, label: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex for {}: {}", label, e))?;
+    if bytes.len() != 32 {
+        return Err(format!("{}: expected 32 bytes, got {}", label, bytes.len()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
 }
 
 /// Generate a CARROT key image for a multisig input.

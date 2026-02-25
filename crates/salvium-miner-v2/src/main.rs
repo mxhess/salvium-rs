@@ -9,18 +9,31 @@ use engine::{RandomXV2Engine, SharedDataset};
 use salvium_miner::daemon::DaemonClient;
 use salvium_miner::miner::{parse_difficulty, MiningJob};
 use salvium_miner::mining::MiningLoop;
+use salvium_miner::stratum::{CryptoNoteEvent, CryptoNoteStratum};
 
 #[derive(Parser)]
 #[command(name = "salvium-miner-v2")]
 #[command(about = "RandomX v2 CPU miner for Salvium (experimental)")]
 struct Args {
-    /// Daemon RPC URL
+    /// Daemon RPC URL (solo mining mode)
     #[arg(short, long, default_value = "http://127.0.0.1:29081")]
     daemon: String,
 
-    /// Wallet address for mining rewards
+    /// Wallet address for mining rewards (solo mode, or pool login)
     #[arg(short, long, default_value = "")]
     wallet: String,
+
+    /// Stratum pool address (e.g. pool.example.com:3333)
+    #[arg(short, long)]
+    pool: Option<String>,
+
+    /// Worker name for pool mining (usually wallet.worker)
+    #[arg(short = 'u', long, default_value = "")]
+    user: String,
+
+    /// Password for pool mining
+    #[arg(long, default_value = "x")]
+    password: String,
 
     /// Number of mining threads
     #[arg(short, long, default_value_t = default_threads())]
@@ -54,8 +67,274 @@ fn main() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    if args.pool.is_some() {
+        run_stratum(&args);
+    } else {
+        run_daemon(&args);
+    }
+}
+
+/// Initialize a MiningLoop with RandomX v2 engines for the given seed.
+fn init_mining_loop(args: &Args, seed_bytes: &[u8]) -> Result<MiningLoop, String> {
+    let use_large_pages = !args.no_large_pages;
+    let dataset = SharedDataset::new(seed_bytes, args.threads, use_large_pages)?;
+    let dataset_clone = dataset.clone();
+    MiningLoop::new(args.threads, move |_worker_id| {
+        let engine = RandomXV2Engine::new(dataset_clone.clone())?;
+        Ok(Box::new(engine))
+    })
+}
+
+/// Try to reinitialize the mining loop if seed hash changed. Returns true on success.
+fn maybe_reinit_loop(
+    args: &Args,
+    seed_hash: &str,
+    current_seed_hash: &mut String,
+    mining_loop: &mut Option<MiningLoop>,
+    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> bool {
+    if seed_hash == current_seed_hash.as_str() {
+        return true;
+    }
+    let seed_bytes = hex::decode(seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
+    eprintln!(
+        "[stratum] Seed hash: {:.16}... — initializing RandomX v2",
+        seed_hash
+    );
+    if let Some(old) = mining_loop.take() {
+        old.stop();
+    }
+    match init_mining_loop(args, &seed_bytes) {
+        Ok(ml) => {
+            if !running.load(Ordering::Relaxed) {
+                ml.running.store(false, Ordering::Relaxed);
+            }
+            *mining_loop = Some(ml);
+            *current_seed_hash = seed_hash.to_string();
+            true
+        }
+        Err(e) => {
+            log::error!("failed to initialize RandomX v2: {}", e);
+            false
+        }
+    }
+}
+
+/// Send a CryptoNote job to the mining loop.
+fn dispatch_job(
+    job: &salvium_miner::stratum::CryptoNoteJob,
+    job_counter: &mut u64,
+    job_map: &mut std::collections::HashMap<u64, String>,
+    mining_loop: &Option<MiningLoop>,
+) {
+    *job_counter += 1;
+    job_map.insert(*job_counter, job.job_id.clone());
+    if let Some(ref ml) = mining_loop {
+        ml.send_job(MiningJob {
+            job_id: *job_counter,
+            hashing_blob: job.blob.clone(),
+            template_blob: job.blob.clone(),
+            difficulty: job.difficulty,
+            height: job.height,
+            nonce_offset: None,
+            target: None,
+        });
+    }
+    eprintln!(
+        "[stratum] Job {} (height={}, diff={})",
+        job.job_id, job.height, job.difficulty
+    );
+}
+
+/// Stratum pool mining mode (CryptoNote protocol for RandomX v2).
+fn run_stratum(args: &Args) {
+    let pool_url = args.pool.as_deref().unwrap();
+
+    let login = if !args.user.is_empty() {
+        &args.user
+    } else if !args.wallet.is_empty() {
+        &args.wallet
+    } else {
+        log::error!("--user or --wallet is required for pool mining");
+        std::process::exit(1);
+    };
+
+    eprintln!("Salvium RandomX v2 Miner - Pool Mode");
+    eprintln!("=====================================");
+    eprintln!("Pool:    {}", pool_url);
+    eprintln!("User:    {}...", &login[..20.min(login.len())]);
+    eprintln!("Threads: {}", args.threads);
+    eprintln!();
+
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    ctrlc_handler(running.clone());
+
+    let mut shares_accepted = 0u64;
+    let mut shares_rejected = 0u64;
+    let start_time = Instant::now();
+    let mut last_stats = Instant::now();
+    let mut current_seed_hash = String::new();
+    let mut mining_loop: Option<MiningLoop> = None;
+
+    // Outer reconnection loop
+    while running.load(Ordering::Relaxed) {
+        eprintln!("[stratum] Connecting to {}...", pool_url);
+
+        let mut stratum = match CryptoNoteStratum::connect(pool_url) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[stratum] Connection failed: {}", e);
+                if !running.load(Ordering::Relaxed) {
+                    break;
+                }
+                eprintln!("[stratum] Reconnecting in 5s...");
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
+        };
+
+        let initial_job = match stratum.login(login, &args.password, "salvium-miner-v2/0.1") {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("[stratum] Login failed: {}", e);
+                eprintln!("[stratum] Reconnecting in 5s...");
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
+        };
+
+        eprintln!();
+        eprintln!("Mining started (RandomX v2, pool). Press Ctrl+C to stop.");
+        eprintln!();
+
+        let mut job_counter = 0u64;
+        let mut job_map: std::collections::HashMap<u64, String> = std::collections::HashMap::new();
+
+        // Process initial job
+        if let Some(ref job) = initial_job {
+            if maybe_reinit_loop(
+                args,
+                &job.seed_hash,
+                &mut current_seed_hash,
+                &mut mining_loop,
+                &running,
+            ) {
+                dispatch_job(job, &mut job_counter, &mut job_map, &mining_loop);
+            }
+        }
+
+        // Inner mining loop
+        let disconnected = loop {
+            if !running.load(Ordering::Relaxed) {
+                break false;
+            }
+
+            match stratum.poll() {
+                Ok(Some(event)) => match event {
+                    CryptoNoteEvent::Job(job) => {
+                        if maybe_reinit_loop(
+                            args,
+                            &job.seed_hash,
+                            &mut current_seed_hash,
+                            &mut mining_loop,
+                            &running,
+                        ) {
+                            dispatch_job(&job, &mut job_counter, &mut job_map, &mining_loop);
+                        }
+                    }
+                    CryptoNoteEvent::Accepted => {
+                        shares_accepted += 1;
+                        eprintln!(
+                            "[stratum] Share accepted ({}/{})",
+                            shares_accepted,
+                            shares_accepted + shares_rejected
+                        );
+                    }
+                    CryptoNoteEvent::Rejected(msg) => {
+                        shares_rejected += 1;
+                        eprintln!("[stratum] Share rejected: {}", msg);
+                    }
+                },
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("[stratum] Connection error: {}", e);
+                    break true;
+                }
+            }
+
+            // Check for found shares
+            if let Some(ref ml) = mining_loop {
+                while let Some(block) = ml.try_recv_block() {
+                    if let Some(stratum_job_id) = job_map.get(&block.job_id) {
+                        let hash: [u8; 32] = if block.hash.len() == 32 {
+                            let mut h = [0u8; 32];
+                            h.copy_from_slice(&block.hash);
+                            h
+                        } else {
+                            continue;
+                        };
+                        eprintln!("[stratum] Submitting share (nonce={})", block.nonce);
+                        if let Err(e) = stratum.submit_share(stratum_job_id, block.nonce, &hash) {
+                            eprintln!("[stratum] Submit error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Print stats every 10 seconds
+            if last_stats.elapsed() > Duration::from_secs(10) {
+                if let Some(ref ml) = mining_loop {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    let total = ml.hash_count.load(Ordering::Relaxed);
+                    let hr = total as f64 / elapsed;
+
+                    eprint!(
+                        "\r{} | Shares: {}/{} | Hashes: {}   ",
+                        format_hashrate(hr),
+                        shares_accepted,
+                        shares_accepted + shares_rejected,
+                        total
+                    );
+                }
+                last_stats = Instant::now();
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        };
+
+        if disconnected && running.load(Ordering::Relaxed) {
+            eprintln!("[stratum] Reconnecting in 5s...");
+            job_map.clear();
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    }
+
+    // Final stats
+    let elapsed = start_time.elapsed().as_secs_f64();
+    let total = mining_loop
+        .as_ref()
+        .map(|ml| ml.hash_count.load(Ordering::Relaxed))
+        .unwrap_or(0);
+    eprintln!();
+    eprintln!("Shutting down...");
+    eprintln!("Total hashes:    {}", total);
+    eprintln!("Shares accepted: {}", shares_accepted);
+    eprintln!("Shares rejected: {}", shares_rejected);
+    eprintln!(
+        "Avg hashrate:    {}",
+        format_hashrate(total as f64 / elapsed)
+    );
+
+    if let Some(ml) = mining_loop {
+        ml.stop();
+    }
+}
+
+/// Solo daemon mining mode (original behavior).
+fn run_daemon(args: &Args) {
     if args.wallet.is_empty() {
-        log::error!("--wallet is required");
+        log::error!("--wallet is required for solo mining, or use --pool for pool mining");
         std::process::exit(1);
     }
 
@@ -152,28 +431,10 @@ fn main() {
     let template_blob = hex::decode(&template.blocktemplate_blob).expect("Invalid template blob");
 
     // Initialize shared RandomX v2 dataset
-    let use_large_pages = !args.no_large_pages;
-    let dataset = match SharedDataset::new(&seed_bytes, args.threads, use_large_pages) {
-        Ok(d) => d,
+    let mining_loop = match init_mining_loop(args, &seed_bytes) {
+        Ok(ml) => ml,
         Err(e) => {
             log::error!("failed to initialize RandomX v2: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    // Create mining loop with per-thread RandomX v2 engines
-    let mining_loop = {
-        let dataset = dataset.clone();
-        MiningLoop::new(args.threads, move |_worker_id| {
-            let engine = RandomXV2Engine::new(dataset.clone())?;
-            Ok(Box::new(engine))
-        })
-    };
-
-    let mining_loop = match mining_loop {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("failed to create mining loop: {}", e);
             std::process::exit(1);
         }
     };

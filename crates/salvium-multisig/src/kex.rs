@@ -93,6 +93,16 @@ impl KexRoundProcessor {
         }
     }
 
+    /// Get a reference to the accumulated round keys.
+    pub fn round_keys(&self) -> &Vec<Vec<[u8; 32]>> {
+        &self.round_keys
+    }
+
+    /// Restore round keys from persistent state (for rounds 2+).
+    pub fn restore_round_keys(&mut self, keys: &[Vec<[u8; 32]>]) {
+        self.round_keys = keys.to_vec();
+    }
+
     /// Process round 1: collect base pubkeys and common privkeys from all signers.
     ///
     /// Each message should have `keys = [hex(pub_spend), hex(pub_view)]`.

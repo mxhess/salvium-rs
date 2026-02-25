@@ -450,6 +450,293 @@ pub fn build_header(extranonce1: &[u8], job: &StratumJob, extranonce2: &[u8]) ->
     header
 }
 
+// ---------------------------------------------------------------------------
+// CryptoNote stratum client (for RandomX / CryptoNote-derived coins)
+// ---------------------------------------------------------------------------
+
+/// CryptoNote stratum client for RandomX pool mining.
+///
+/// CryptoNote pools use a different stratum variant than Bitcoin:
+/// - Single `login` call (no subscribe/authorize split)
+/// - Pool sends raw hashing blobs and seed_hash for RandomX
+/// - Share submission includes the computed hash result
+///
+/// ## Protocol flow
+/// 1. `login` → pool returns worker_id and initial job
+/// 2. `job` ← pool sends new jobs (with blob, target, seed_hash)
+/// 3. `submit` → miner submits shares (with nonce and hash result)
+pub struct CryptoNoteStratum {
+    stream: TcpStream,
+    reader: BufReader<TcpStream>,
+    worker_id: String,
+    next_id: u64,
+}
+
+/// A CryptoNote mining job received from the pool.
+#[derive(Clone, Debug)]
+pub struct CryptoNoteJob {
+    pub job_id: String,
+    pub blob: Vec<u8>,
+    pub difficulty: u128,
+    pub seed_hash: String,
+    pub height: u64,
+}
+
+/// Events produced by polling the CryptoNote stratum connection.
+pub enum CryptoNoteEvent {
+    Job(CryptoNoteJob),
+    Accepted,
+    Rejected(String),
+}
+
+/// Parse a CryptoNote compact target hex into a CryptoNote-style difficulty.
+///
+/// The pool sends a compact target (4 or 8 bytes LE). We convert it to a
+/// difficulty value compatible with `check_hash()`.
+pub fn target_to_difficulty(target_hex: &str) -> u128 {
+    let bytes = hex_decode(target_hex);
+    match bytes.len() {
+        4 => {
+            let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            if val == 0 {
+                return 1;
+            }
+            (u64::from(u32::MAX) / u64::from(val)) as u128
+        }
+        8 => {
+            let val = u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]);
+            if val == 0 {
+                return 1;
+            }
+            u64::MAX as u128 / val as u128
+        }
+        _ => 1,
+    }
+}
+
+impl CryptoNoteStratum {
+    /// Connect to a CryptoNote stratum pool. URL should be `host:port` or
+    /// `stratum+tcp://host:port`.
+    pub fn connect(url: &str) -> io::Result<Self> {
+        let addr = url
+            .trim_start_matches("stratum+tcp://")
+            .trim_start_matches("stratum://")
+            .trim_end_matches('/');
+
+        let stream = TcpStream::connect(addr)?;
+        stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_nodelay(true)?;
+
+        let reader = BufReader::new(stream.try_clone()?);
+
+        Ok(Self {
+            stream,
+            reader,
+            worker_id: String::new(),
+            next_id: 1,
+        })
+    }
+
+    /// Send a JSON-RPC request and return the assigned ID.
+    fn send_request(&mut self, method: &str, params: serde_json::Value) -> io::Result<u64> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let req = serde_json::json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        let mut line = serde_json::to_string(&req).map_err(io::Error::other)?;
+        line.push('\n');
+        self.stream.write_all(line.as_bytes())?;
+        self.stream.flush()?;
+
+        Ok(id)
+    }
+
+    /// Read a single line from the connection (non-blocking, with socket timeout).
+    fn read_line(&mut self) -> io::Result<Option<String>> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "connection closed",
+            )),
+            Ok(_) => {
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(trimmed))
+                }
+            }
+            Err(ref e)
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Read a line, blocking until one arrives.
+    fn read_line_blocking(&mut self) -> io::Result<String> {
+        self.stream
+            .set_read_timeout(Some(Duration::from_secs(30)))?;
+        let result = loop {
+            match self.read_line()? {
+                Some(line) => break Ok(line),
+                None => continue,
+            }
+        };
+        self.stream
+            .set_read_timeout(Some(Duration::from_millis(100)))?;
+        result
+    }
+
+    /// Log in to the pool. Returns the initial job if the pool provides one.
+    pub fn login(
+        &mut self,
+        address: &str,
+        password: &str,
+        agent: &str,
+    ) -> io::Result<Option<CryptoNoteJob>> {
+        self.send_request(
+            "login",
+            serde_json::json!({
+                "login": address,
+                "pass": password,
+                "agent": agent,
+            }),
+        )?;
+
+        // Read response — may need to skip notifications
+        loop {
+            let line = self.read_line_blocking()?;
+            let msg: serde_json::Value = serde_json::from_str(&line)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            if msg.get("result").is_some() && msg.get("id").is_some() {
+                // Check for error
+                if let Some(err) = msg.get("error") {
+                    if !err.is_null() {
+                        return Err(io::Error::other(format!("login error: {}", err)));
+                    }
+                }
+
+                let result = msg.get("result").unwrap();
+
+                // Extract worker_id
+                if let Some(id) = result.get("id").and_then(|v| v.as_str()) {
+                    self.worker_id = id.to_string();
+                }
+
+                let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if status != "OK" {
+                    return Err(io::Error::other(format!("login failed: status={}", status)));
+                }
+
+                eprintln!("[stratum] Logged in (worker_id={})", self.worker_id);
+
+                // Parse initial job if present
+                let initial_job = result.get("job").and_then(Self::parse_job);
+                return Ok(initial_job);
+            }
+            // Skip notifications that arrive before the login response
+        }
+    }
+
+    /// Non-blocking poll for CryptoNote stratum events.
+    pub fn poll(&mut self) -> io::Result<Option<CryptoNoteEvent>> {
+        let line = match self.read_line()? {
+            Some(l) => l,
+            None => return Ok(None),
+        };
+
+        let msg: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        // Notification: new job
+        if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
+            if method == "job" {
+                if let Some(params) = msg.get("params") {
+                    if let Some(job) = Self::parse_job(params) {
+                        return Ok(Some(CryptoNoteEvent::Job(job)));
+                    }
+                }
+            }
+        }
+
+        // Response to a submit
+        if msg.get("id").is_some() && msg.get("result").is_some() {
+            let result = msg.get("result").unwrap();
+            let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status == "OK" {
+                return Ok(Some(CryptoNoteEvent::Accepted));
+            } else {
+                let err = msg
+                    .get("error")
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| format!("rejected: status={}", status));
+                return Ok(Some(CryptoNoteEvent::Rejected(err)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Parse a job object from the pool.
+    fn parse_job(value: &serde_json::Value) -> Option<CryptoNoteJob> {
+        let job_id = value.get("job_id").and_then(|v| v.as_str())?.to_string();
+        let blob_hex = value.get("blob").and_then(|v| v.as_str())?;
+        let target_hex = value.get("target").and_then(|v| v.as_str())?;
+        let seed_hash = value
+            .get("seed_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let height = value.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        let blob = hex_decode(blob_hex);
+        if blob.is_empty() {
+            return None;
+        }
+
+        let difficulty = target_to_difficulty(target_hex);
+
+        Some(CryptoNoteJob {
+            job_id,
+            blob,
+            difficulty,
+            seed_hash,
+            height,
+        })
+    }
+
+    /// Submit a share to the pool.
+    pub fn submit_share(&mut self, job_id: &str, nonce: u32, hash: &[u8; 32]) -> io::Result<()> {
+        let nonce_hex = format!("{:08x}", nonce);
+        let result_hex = hex::encode(hash);
+
+        self.send_request(
+            "submit",
+            serde_json::json!({
+                "id": self.worker_id,
+                "job_id": job_id,
+                "nonce": nonce_hex,
+                "result": result_hex,
+            }),
+        )?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,5 +878,62 @@ mod tests {
         assert_eq!(job.merkle_branches.len(), 1);
         assert_eq!(job.coinb1, vec![0x01, 0x02, 0x03, 0x04]);
         assert_eq!(job.coinb2, vec![0x05, 0x06, 0x07, 0x08]);
+    }
+
+    // --- CryptoNote stratum tests ---
+
+    #[test]
+    fn test_target_to_difficulty_4byte() {
+        // Target "ffffffff" (LE) = 0xFFFFFFFF → difficulty = 1
+        assert_eq!(target_to_difficulty("ffffffff"), 1);
+
+        // Target "00000080" (LE) = 0x80000000 → difficulty ≈ 1
+        assert_eq!(target_to_difficulty("00000080"), 1);
+
+        // Target "ffffff7f" (LE) = 0x7FFFFFFF → difficulty = 2
+        assert_eq!(target_to_difficulty("ffffff7f"), 2);
+
+        // Target "ffff3f00" (LE) = 0x003FFFFF → difficulty ≈ 1024
+        let d = target_to_difficulty("ffff3f00");
+        assert!((1023..=1025).contains(&d));
+    }
+
+    #[test]
+    fn test_target_to_difficulty_8byte() {
+        // Target "ffffffffffffffff" = u64::MAX → difficulty = 1
+        assert_eq!(target_to_difficulty("ffffffffffffffff"), 1);
+
+        // Target "ffffffffffffff7f" = i64::MAX → difficulty = 2
+        assert_eq!(target_to_difficulty("ffffffffffffff7f"), 2);
+    }
+
+    #[test]
+    fn test_target_to_difficulty_zero() {
+        // Zero target → difficulty = 1 (clamped)
+        assert_eq!(target_to_difficulty("00000000"), 1);
+    }
+
+    #[test]
+    fn test_parse_cryptonote_job() {
+        let job_json: serde_json::Value = serde_json::from_str(
+            r#"{
+                "job_id": "cn_job_42",
+                "blob": "0606e2e3cedb0504deadbeef",
+                "target": "ffffff7f",
+                "seed_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                "height": 12345
+            }"#,
+        )
+        .unwrap();
+
+        let job = CryptoNoteStratum::parse_job(&job_json).unwrap();
+        assert_eq!(job.job_id, "cn_job_42");
+        assert_eq!(job.blob, hex::decode("0606e2e3cedb0504deadbeef").unwrap());
+        assert_eq!(job.difficulty, 2); // 0x7FFFFFFF → diff=2
+        assert_eq!(
+            job.seed_hash,
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(job.height, 12345);
     }
 }

@@ -1085,13 +1085,55 @@ impl Wallet {
         Ok(tx_set)
     }
 
-    /// Sign a multisig transaction set with this signer's partial key.
+    /// Phase 1: Generate and add nonces for each input. Call once per signer.
     ///
-    /// For each pending TX that has signing contexts:
-    ///   1. Generates nonces for each input and adds them to the TX.
-    ///   2. If enough signers' nonces are collected (threshold), computes
-    ///      partial CLSAG/TCLSAG signatures via proper ring traversal.
-    ///   3. Adds partial signatures to the TX.
+    /// Each signer calls this before signing. Once all threshold signers have
+    /// contributed nonces, call `sign_multisig_tx()` to produce partial signatures.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn add_multisig_nonces(
+        &self,
+        tx_set: &mut salvium_multisig::tx_set::MultisigTxSet,
+    ) -> Result<(), WalletError> {
+        let account = self
+            .multisig
+            .as_ref()
+            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+
+        if !account.kex_complete {
+            return Err(WalletError::Other("KEX not complete".into()));
+        }
+
+        for pending in &mut tx_set.pending_txs {
+            let num_inputs = pending.signing_contexts.len();
+            if num_inputs == 0 {
+                continue;
+            }
+
+            // Ensure input_nonces has the right structure (one Vec per input).
+            while pending.input_nonces.len() < num_inputs {
+                pending.input_nonces.push(Vec::new());
+            }
+
+            for (i, ctx) in pending.signing_contexts.iter().enumerate() {
+                let pk_hex = &ctx.ring[ctx.real_index];
+                let ki_y = ctx.key_image_y.as_deref();
+                let nonces = salvium_multisig::signing::generate_nonces_ext(
+                    account.signer_index,
+                    pk_hex,
+                    ki_y,
+                )
+                .map_err(|e| WalletError::Other(format!("nonce generation failed: {}", e)))?;
+                pending.input_nonces[i].push(nonces);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Phase 2: Sign a multisig transaction set with this signer's partial key.
+    ///
+    /// All threshold signers must have contributed nonces (via `add_multisig_nonces()`)
+    /// before calling this. Each signer calls this exactly once.
     ///
     /// **Proposer-owns-offsets pattern:**
     /// - The first signer (proposer, `!pending.proposer_signed`) adds per-input
@@ -1127,101 +1169,102 @@ impl Wallet {
                 continue;
             }
 
-            // 1. Generate nonces for each input and add to the TX.
-            let mut our_nonces = Vec::with_capacity(num_inputs);
-            for ctx in &pending.signing_contexts {
-                let pk_hex = &ctx.ring[ctx.real_index];
-                let ki_y = ctx.key_image_y.as_deref();
-                let nonces = salvium_multisig::signing::generate_nonces_ext(
-                    account.signer_index,
-                    pk_hex,
-                    ki_y,
-                )
-                .map_err(|e| WalletError::Other(format!("nonce generation failed: {}", e)))?;
-                our_nonces.push(nonces);
-            }
-
-            // Ensure input_nonces has the right structure (one Vec per input).
-            while pending.input_nonces.len() < num_inputs {
-                pending.input_nonces.push(Vec::new());
-            }
-            for (i, nonces) in our_nonces.iter().enumerate() {
-                pending.input_nonces[i].push(nonces.clone());
-            }
-
-            // 2. Check if we have enough nonces to sign.
+            // Check if we have enough nonces to sign.
             let have_enough_nonces = pending
                 .input_nonces
                 .iter()
                 .all(|n| n.len() >= account.threshold);
 
-            if have_enough_nonces {
-                // 3. Compute partial signatures for each input.
-                while pending.input_partials.len() < num_inputs {
-                    pending.input_partials.push(Vec::new());
-                }
+            if !have_enough_nonces {
+                return Err(WalletError::Other(format!(
+                    "not enough nonces: need {} signers, have {}",
+                    account.threshold,
+                    pending
+                        .input_nonces
+                        .first()
+                        .map_or(0, |n| n.len())
+                )));
+            }
 
-                let is_proposer = !pending.proposer_signed;
-                let zero_hex = "00".repeat(32);
+            // Compute partial signatures for each input.
+            while pending.input_partials.len() < num_inputs {
+                pending.input_partials.push(Vec::new());
+            }
 
-                for (i, ctx) in pending.signing_contexts.iter().enumerate() {
-                    let all_nonces = &pending.input_nonces[i];
+            let is_proposer = !pending.proposer_signed;
+            let zero_hex = "00".repeat(32);
 
-                    // Proposer: add key_offset to weighted share; co-signer: bare share.
-                    let privkey_hex = if is_proposer && i < pending.input_key_offsets.len() {
-                        let offset_bytes =
-                            hex::decode(&pending.input_key_offsets[i]).map_err(|e| {
-                                WalletError::Other(format!("bad key offset hex: {}", e))
-                            })?;
-                        let mut offset = [0u8; 32];
-                        offset[..offset_bytes.len().min(32)]
-                            .copy_from_slice(&offset_bytes[..offset_bytes.len().min(32)]);
-                        hex::encode(to_32(&salvium_crypto::sc_add(&weighted_share, &offset)))
-                    } else {
-                        hex::encode(weighted_share)
-                    };
+            // We need our own nonces for signing. Find them by signer_index.
+            let our_signer_idx = account.signer_index;
 
-                    // Proposer: use full z; co-signer: zero.
-                    let z_share_hex = if is_proposer && i < pending.input_z_values.len() {
-                        pending.input_z_values[i].clone()
+            for (i, ctx) in pending.signing_contexts.iter().enumerate() {
+                let all_nonces = &pending.input_nonces[i];
+
+                // Find our nonces in the collected set.
+                let our_nonces = all_nonces
+                    .iter()
+                    .find(|n| n.signer_index == our_signer_idx)
+                    .ok_or_else(|| {
+                        WalletError::Other(format!(
+                            "input {}: no nonces found for signer {}",
+                            i, our_signer_idx
+                        ))
+                    })?;
+
+                // Proposer: add key_offset to weighted share; co-signer: bare share.
+                let privkey_hex = if is_proposer && i < pending.input_key_offsets.len() {
+                    let offset_bytes =
+                        hex::decode(&pending.input_key_offsets[i]).map_err(|e| {
+                            WalletError::Other(format!("bad key offset hex: {}", e))
+                        })?;
+                    let mut offset = [0u8; 32];
+                    offset[..offset_bytes.len().min(32)]
+                        .copy_from_slice(&offset_bytes[..offset_bytes.len().min(32)]);
+                    hex::encode(to_32(&salvium_crypto::sc_add(&weighted_share, &offset)))
+                } else {
+                    hex::encode(weighted_share)
+                };
+
+                // Proposer: use full z; co-signer: zero.
+                let z_share_hex = if is_proposer && i < pending.input_z_values.len() {
+                    pending.input_z_values[i].clone()
+                } else {
+                    zero_hex.clone()
+                };
+
+                let partial = if ctx.use_tclsag {
+                    // Proposer: use full y; co-signer: zero.
+                    let y_share_hex = if is_proposer && i < pending.input_y_keys.len() {
+                        pending.input_y_keys[i].clone()
                     } else {
                         zero_hex.clone()
                     };
+                    salvium_multisig::signing::partial_sign_tclsag(
+                        ctx,
+                        our_nonces,
+                        &privkey_hex,
+                        &y_share_hex,
+                        &z_share_hex,
+                        all_nonces,
+                    )
+                    .map_err(|e| WalletError::Other(format!("TCLSAG sign failed: {}", e)))?
+                } else {
+                    salvium_multisig::signing::partial_sign(
+                        ctx,
+                        our_nonces,
+                        &privkey_hex,
+                        &z_share_hex,
+                        all_nonces,
+                    )
+                    .map_err(|e| WalletError::Other(format!("CLSAG sign failed: {}", e)))?
+                };
 
-                    let partial = if ctx.use_tclsag {
-                        // Proposer: use full y; co-signer: zero.
-                        let y_share_hex = if is_proposer && i < pending.input_y_keys.len() {
-                            pending.input_y_keys[i].clone()
-                        } else {
-                            zero_hex.clone()
-                        };
-                        salvium_multisig::signing::partial_sign_tclsag(
-                            ctx,
-                            &our_nonces[i],
-                            &privkey_hex,
-                            &y_share_hex,
-                            &z_share_hex,
-                            all_nonces,
-                        )
-                        .map_err(|e| WalletError::Other(format!("TCLSAG sign failed: {}", e)))?
-                    } else {
-                        salvium_multisig::signing::partial_sign(
-                            ctx,
-                            &our_nonces[i],
-                            &privkey_hex,
-                            &z_share_hex,
-                            all_nonces,
-                        )
-                        .map_err(|e| WalletError::Other(format!("CLSAG sign failed: {}", e)))?
-                    };
+                pending.input_partials[i].push(partial);
+            }
 
-                    pending.input_partials[i].push(partial);
-                }
-
-                // Mark that the proposer has signed — subsequent signers are co-signers.
-                if is_proposer {
-                    pending.proposer_signed = true;
-                }
+            // Mark that the proposer has signed — subsequent signers are co-signers.
+            if is_proposer {
+                pending.proposer_signed = true;
             }
         }
 

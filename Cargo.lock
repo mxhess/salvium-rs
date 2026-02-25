@@ -2173,6 +2173,7 @@ dependencies = [
  "hex",
  "rand 0.8.5",
  "salvium-crypto",
+ "salvium-tx",
  "serde",
  "serde_json",
 ]

@@ -39,6 +39,10 @@ pub struct MultisigAccount {
     /// DH key → signer index mapping from KEX (hex key → indices).
     #[serde(default)]
     pub kex_keys_to_origins: HashMap<String, Vec<usize>>,
+    /// Round keys from each completed KEX round (hex-encoded [u8; 32]).
+    /// Persisted so that rounds 2+ can restore `KexRoundProcessor.round_keys`.
+    #[serde(default)]
+    pub round_keys: Vec<Vec<String>>,
 }
 
 impl MultisigAccount {
@@ -83,6 +87,7 @@ impl MultisigAccount {
             multisig_pubkey: None,
             common_pubkey: None,
             kex_keys_to_origins: HashMap::new(),
+            round_keys: Vec::new(),
         })
     }
 
@@ -198,6 +203,13 @@ impl MultisigAccount {
                     .insert(hex::encode(key), origins.clone());
             }
 
+            // Persist round_keys from processor
+            self.round_keys = processor
+                .round_keys()
+                .iter()
+                .map(|round| round.iter().map(hex::encode).collect())
+                .collect();
+
             if next_msg.is_none() {
                 // All main rounds done (N-of-N with 1 round)
                 let (agg, view) = processor.finalize()?;
@@ -205,6 +217,9 @@ impl MultisigAccount {
                 let view_pub = salvium_crypto::scalar_mult_base(&view);
                 self.common_privkey = Some(hex::encode(view));
                 self.common_pubkey = Some(hex::encode(view_pub));
+
+                // Populate multisig_privkeys: the weighted spend key share.
+                self.populate_multisig_privkeys();
 
                 // Generate verification message
                 let verify = processor.verification_message(&agg, &view);
@@ -240,6 +255,27 @@ impl MultisigAccount {
                 processor.base_common_privkeys.push(vk32);
             }
 
+            // Restore round_keys from persistent state
+            processor.restore_round_keys(
+                &self
+                    .round_keys
+                    .iter()
+                    .map(|round| {
+                        round
+                            .iter()
+                            .map(|hex_str| {
+                                let bytes = hex::decode(hex_str).unwrap_or_default();
+                                let mut arr = [0u8; 32];
+                                if bytes.len() >= 32 {
+                                    arr.copy_from_slice(&bytes[..32]);
+                                }
+                                arr
+                            })
+                            .collect::<Vec<[u8; 32]>>()
+                    })
+                    .collect::<Vec<Vec<[u8; 32]>>>(),
+            );
+
             let next_msg = processor.process_round_n(self.kex_round, messages)?;
 
             // Merge kex_keys_to_origins
@@ -248,6 +284,13 @@ impl MultisigAccount {
                     .insert(hex::encode(key), origins.clone());
             }
 
+            // Persist updated round_keys
+            self.round_keys = processor
+                .round_keys()
+                .iter()
+                .map(|round| round.iter().map(hex::encode).collect())
+                .collect();
+
             if next_msg.is_none() {
                 // Main rounds complete, finalize
                 let (agg, view) = processor.finalize()?;
@@ -255,6 +298,9 @@ impl MultisigAccount {
                 let view_pub = salvium_crypto::scalar_mult_base(&view);
                 self.common_privkey = Some(hex::encode(view));
                 self.common_pubkey = Some(hex::encode(view_pub));
+
+                // Populate multisig_privkeys: the weighted spend key share.
+                self.populate_multisig_privkeys();
 
                 let verify = processor.verification_message(&agg, &view);
                 self.kex_round = main_rounds + 1;
@@ -326,6 +372,16 @@ impl MultisigAccount {
             ));
         }
         Ok(())
+    }
+
+    /// Populate `multisig_privkeys` with the weighted spend key share.
+    ///
+    /// Called after KEX finalization. The weighted share is used during
+    /// partial signing so that all signers' contributions sum correctly.
+    fn populate_multisig_privkeys(&mut self) {
+        if let Ok(weighted) = self.get_weighted_spend_key_share() {
+            self.multisig_privkeys = vec![hex::encode(weighted)];
+        }
     }
 
     /// Compute the aggregation coefficient for this signer.

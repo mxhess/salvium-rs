@@ -74,6 +74,61 @@ pub struct FinalizedInputSig {
     pub real_index: usize,
 }
 
+/// Decode a hex string to exactly 32 bytes.
+fn hex_to_32(hex_str: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex: {}", e))?;
+    if bytes.len() != 32 {
+        return Err(format!("expected 32 bytes, got {}", bytes.len()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+impl FinalizedTx {
+    /// Inject combined signatures into the unsigned TX blob and return
+    /// a broadcast-ready signed transaction.
+    pub fn to_broadcast_blob(&self) -> Result<Vec<u8>, String> {
+        let mut tx = salvium_tx::types::Transaction::from_bytes(&self.tx_blob)
+            .map_err(|e| format!("failed to parse TX: {}", e))?;
+
+        let rct = tx.rct.as_mut().ok_or("TX has no RCT data")?;
+
+        for (i, sig) in self.signatures.iter().enumerate() {
+            let c_0 = hex_to_32(&sig.c_0)?;
+            let responses: Vec<[u8; 32]> = sig
+                .responses
+                .iter()
+                .map(|r| hex_to_32(r))
+                .collect::<Result<_, _>>()?;
+
+            if i < rct.tclsags.len() {
+                // TCLSAG input
+                rct.tclsags[i].c1 = c_0;
+                rct.tclsags[i].sx = responses.clone();
+                if let Some(ref sy_hex) = sig.sy {
+                    // Build sy vector: zeros everywhere except real_index
+                    let mut sy = vec![[0u8; 32]; responses.len()];
+                    if sig.real_index < sy.len() {
+                        sy[sig.real_index] = hex_to_32(sy_hex)?;
+                    }
+                    rct.tclsags[i].sy = sy;
+                }
+            } else {
+                // CLSAG input (index offset by tclsag count)
+                let clsag_idx = i - rct.tclsags.len();
+                if clsag_idx < rct.clsags.len() {
+                    rct.clsags[clsag_idx].c1 = c_0;
+                    rct.clsags[clsag_idx].s = responses;
+                }
+            }
+        }
+
+        tx.to_bytes()
+            .map_err(|e| format!("failed to serialize TX: {}", e))
+    }
+}
+
 impl PendingMultisigTx {
     /// Combine partial signatures from all contributing signers and produce
     /// a finalized transaction.

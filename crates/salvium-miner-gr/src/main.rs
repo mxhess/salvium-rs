@@ -24,7 +24,7 @@ struct Args {
     #[arg(short, long, default_value = "")]
     wallet: String,
 
-    /// Stratum pool URL (e.g. stratum+tcp://pool.example.com:3333)
+    /// Stratum pool address (e.g. pool.example.com:3333)
     #[arg(short, long)]
     pool: Option<String>,
 

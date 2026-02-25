@@ -92,7 +92,11 @@ pub fn build_multisig_contexts(
     // 3. Compute the signing message.
     let p_r = ed25519_identity();
     let salvium_data_bytes = if rct_type >= 7 {
-        Some(build_salvium_data_bytes(rct_type))
+        // Compute commitment difference: sum(output_masks) - sum(pseudo_masks)
+        let output_mask_sum = sum_scalars(output_masks);
+        let pseudo_mask_sum = sum_scalars(&pseudo_masks);
+        let commitment_diff = to_32(&salvium_crypto::sc_sub(&output_mask_sum, &pseudo_mask_sum));
+        Some(build_salvium_data_bytes(rct_type, Some(&commitment_diff)))
     } else {
         None
     };
@@ -340,7 +344,11 @@ fn serialize_bp_components(bp: &BpComponents) -> Vec<u8> {
 }
 
 /// Build salvium_data pre-serialized bytes (pr_proof + sa_proof).
-fn build_salvium_data_bytes(rct_type: u8) -> Vec<u8> {
+///
+/// If `commitment_diff` is `Some(diff)` and non-zero, compute a real Schnorr proof:
+///   R = r * G, c = H(R), z1 = r + c * diff, z2 = 0.
+/// Otherwise use the trivial proof: R = r * G, z1 = r, z2 = 0.
+fn build_salvium_data_bytes(rct_type: u8, commitment_diff: Option<&[u8; 32]>) -> Vec<u8> {
     let mut buf = Vec::new();
 
     if rct_type == 7 {
@@ -351,14 +359,28 @@ fn build_salvium_data_bytes(rct_type: u8) -> Vec<u8> {
         write_varint(&mut buf, sd_type);
     }
 
-    // pr_proof (R, z1, z2): Schnorr proof with zero difference → random R, z1=r, z2=0
     let r_scalar = random_scalar();
     let r_point = to_32(&salvium_crypto::scalar_mult_base(&r_scalar));
     buf.extend_from_slice(&r_point);
-    buf.extend_from_slice(&r_scalar); // z1 = r (since difference = 0, c*0 = 0)
+
+    let has_diff = commitment_diff.is_some_and(|d| *d != [0u8; 32]);
+    if has_diff {
+        let diff = commitment_diff.unwrap();
+        // c = H(R)
+        let c = to_32(&salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(
+            &r_point,
+        )));
+        // z1 = r + c * diff
+        let c_diff = to_32(&salvium_crypto::sc_mul(&c, diff));
+        let z1 = to_32(&salvium_crypto::sc_add(&r_scalar, &c_diff));
+        buf.extend_from_slice(&z1);
+    } else {
+        // z1 = r (trivial proof: difference = 0)
+        buf.extend_from_slice(&r_scalar);
+    }
     buf.extend_from_slice(&[0u8; 32]); // z2 = 0
 
-    // sa_proof (zeroed)
+    // sa_proof (zeroed — C++ also disables sa_proof in multisig)
     buf.extend_from_slice(&[0u8; 96]);
 
     buf

@@ -7,10 +7,11 @@ use salvium_multisig::account::MultisigAccount;
 use salvium_multisig::carrot::MultisigCarrotAccount;
 use salvium_multisig::constants::MULTISIG_MAX_SIGNERS;
 use salvium_multisig::kex::{kex_rounds_required, KexMessage};
+#[allow(deprecated)]
+use salvium_multisig::signing::compute_nonce_binding;
 use salvium_multisig::signing::{
-    combine_partial_signatures, combine_partial_signatures_ext, compute_nonce_binding,
-    generate_nonces, generate_nonces_ext, partial_sign, partial_sign_tclsag, MultisigClsagContext,
-    SignerNonces,
+    combine_partial_signatures, combine_partial_signatures_ext, generate_nonces,
+    generate_nonces_ext, partial_sign, partial_sign_tclsag, MultisigClsagContext, SignerNonces,
 };
 use salvium_multisig::tx_set::{MultisigTxSet, PendingMultisigTx};
 use salvium_multisig::wallet::{
@@ -759,6 +760,7 @@ fn test_tclsag_combine_includes_sy() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_nonce_binding_deterministic() {
     let ctx = make_signing_context(2);
     let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
@@ -771,6 +773,7 @@ fn test_nonce_binding_deterministic() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_nonce_binding_varies_with_message() {
     let ctx1 = make_signing_context(2);
     let mut ctx2 = make_signing_context(2);

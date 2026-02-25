@@ -3,7 +3,6 @@ pub mod carrot;
 pub mod constants;
 pub mod kex;
 pub mod key_image;
-pub mod partial_sig;
 pub mod signer;
 pub mod signing;
 pub mod tx_builder;
