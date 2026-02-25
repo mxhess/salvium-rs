@@ -159,9 +159,7 @@ impl Coordinator {
     /// Accept connections from `expected_signers - 1` clients.
     ///
     /// Returns the listener and the connected streams.
-    pub async fn accept_signers(
-        &self,
-    ) -> Result<(TcpListener, Vec<TcpStream>), String> {
+    pub async fn accept_signers(&self) -> Result<(TcpListener, Vec<TcpStream>), String> {
         let listener = TcpListener::bind(&self.config.bind_addr)
             .await
             .map_err(|e| format!("bind failed: {}", e))?;
@@ -210,10 +208,7 @@ impl Coordinator {
             for stream in streams.iter_mut() {
                 let wire_msg = recv_message(stream).await?;
                 if wire_msg.msg_type != MsgType::Kex {
-                    return Err(format!(
-                        "expected Kex message, got {:?}",
-                        wire_msg.msg_type
-                    ));
+                    return Err(format!("expected Kex message, got {:?}", wire_msg.msg_type));
                 }
                 messages.push(wire_msg.payload);
             }
@@ -356,27 +351,24 @@ impl SignerClient {
         // First receive the Ready message with count
         let ready = recv_message(&mut self.stream).await?;
         if ready.msg_type != MsgType::Ready {
-            return Err(format!(
-                "expected Ready message, got {:?}",
-                ready.msg_type
-            ));
+            return Err(format!("expected Ready message, got {:?}", ready.msg_type));
         }
         if ready.payload.len() < 4 {
             return Err("Ready message payload too short".to_string());
         }
-        let count =
-            u32::from_le_bytes([ready.payload[0], ready.payload[1], ready.payload[2], ready.payload[3]])
-                as usize;
+        let count = u32::from_le_bytes([
+            ready.payload[0],
+            ready.payload[1],
+            ready.payload[2],
+            ready.payload[3],
+        ]) as usize;
 
         // Receive each KEX message
         let mut messages = Vec::with_capacity(count);
         for _ in 0..count {
             let wire_msg = recv_message(&mut self.stream).await?;
             if wire_msg.msg_type != MsgType::Kex {
-                return Err(format!(
-                    "expected Kex message, got {:?}",
-                    wire_msg.msg_type
-                ));
+                return Err(format!("expected Kex message, got {:?}", wire_msg.msg_type));
             }
             messages.push(wire_msg.payload);
         }
@@ -482,13 +474,10 @@ mod tests {
 
             // Coordinator's own message
             let local = b"coordinator_kex_data".to_vec();
-            let messages = Coordinator::collect_kex_round(
-                &mut streams,
-                Some(&local),
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
+            let messages =
+                Coordinator::collect_kex_round(&mut streams, Some(&local), Duration::from_secs(5))
+                    .await
+                    .unwrap();
 
             assert_eq!(messages.len(), 3); // 1 local + 2 clients
             messages
@@ -543,13 +532,9 @@ mod tests {
             let mut streams = vec![stream1, stream2];
 
             // Client 0 (index 0) is the proposer
-            let tx_data = Coordinator::exchange_tx_set(
-                &mut streams,
-                0,
-                Duration::from_secs(5),
-            )
-            .await
-            .unwrap();
+            let tx_data = Coordinator::exchange_tx_set(&mut streams, 0, Duration::from_secs(5))
+                .await
+                .unwrap();
 
             assert_eq!(tx_data, b"test_tx_set_binary_data");
             tx_data

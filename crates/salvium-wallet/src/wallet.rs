@@ -1179,10 +1179,7 @@ impl Wallet {
                 return Err(WalletError::Other(format!(
                     "not enough nonces: need {} signers, have {}",
                     account.threshold,
-                    pending
-                        .input_nonces
-                        .first()
-                        .map_or(0, |n| n.len())
+                    pending.input_nonces.first().map_or(0, |n| n.len())
                 )));
             }
 
@@ -1213,10 +1210,8 @@ impl Wallet {
 
                 // Proposer: add key_offset to weighted share; co-signer: bare share.
                 let privkey_hex = if is_proposer && i < pending.input_key_offsets.len() {
-                    let offset_bytes =
-                        hex::decode(&pending.input_key_offsets[i]).map_err(|e| {
-                            WalletError::Other(format!("bad key offset hex: {}", e))
-                        })?;
+                    let offset_bytes = hex::decode(&pending.input_key_offsets[i])
+                        .map_err(|e| WalletError::Other(format!("bad key offset hex: {}", e)))?;
                     let mut offset = [0u8; 32];
                     offset[..offset_bytes.len().min(32)]
                         .copy_from_slice(&offset_bytes[..offset_bytes.len().min(32)]);

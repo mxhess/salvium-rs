@@ -73,7 +73,12 @@ fn main() {
     let args = Args::parse();
 
     if args.ipc {
-        salvium_miner::ipc::run_ipc(args.threads, args.light, !args.no_large_pages, args.no_affinity);
+        salvium_miner::ipc::run_ipc(
+            args.threads,
+            args.light,
+            !args.no_large_pages,
+            args.no_affinity,
+        );
         return;
     }
 
@@ -110,7 +115,7 @@ fn run_benchmark(args: &Args) {
     blob[0] = 10; // major version
     blob[1] = 10; // minor version
     blob[2] = 1; // timestamp (varint = 1)
-    // bytes 3..35 = prev_hash (zeros), bytes 35..39 = nonce, rest = zeros
+                 // bytes 3..35 = prev_hash (zeros), bytes 35..39 = nonce, rest = zeros
 
     engine.send_job(MiningJob {
         job_id: 0,
@@ -714,7 +719,6 @@ fn run_daemon(args: &Args) {
                 est_block
             );
             last_stats = Instant::now();
-
         }
 
         std::thread::sleep(Duration::from_millis(50));

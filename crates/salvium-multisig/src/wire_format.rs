@@ -224,10 +224,7 @@ pub fn decode_tx_set(data: &[u8]) -> Result<MultisigTxSet, String> {
         .as_object()
         .ok_or_else(|| "expected object".to_string())?;
 
-    let threshold = obj
-        .get("threshold")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let threshold = obj.get("threshold").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let signer_count = obj
         .get("signer_count")
         .and_then(|v| v.as_u64())
@@ -298,16 +295,12 @@ fn encode_pending_tx(tx: &PendingMultisigTx) -> PsValue {
         PsValue::String(contexts_json),
     );
 
-    let nonces_json =
-        serde_json::to_vec(&tx.input_nonces).expect("input_nonces serialization");
+    let nonces_json = serde_json::to_vec(&tx.input_nonces).expect("input_nonces serialization");
     map.insert("input_nonces".to_string(), PsValue::String(nonces_json));
 
     let partials_json =
         serde_json::to_vec(&tx.input_partials).expect("input_partials serialization");
-    map.insert(
-        "input_partials".to_string(),
-        PsValue::String(partials_json),
-    );
+    map.insert("input_partials".to_string(), PsValue::String(partials_json));
 
     PsValue::Object(map)
 }

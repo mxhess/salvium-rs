@@ -85,17 +85,19 @@ jobs:
         run: cargo test -p salvium-crypto --test '*' -- --nocapture
 
   test-wallet:
-    name: "Test: wallet + transactions"
+    name: "Test: wallet + transactions + CLI"
     needs: [compile]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: salvium-wallet
-        run: cargo test -p salvium-wallet --lib -- --nocapture
+      - name: salvium-wallet (unit + integration compile)
+        run: cargo test -p salvium-wallet -- --nocapture
       - name: salvium-tx
         run: cargo test -p salvium-tx -- --nocapture
+      - name: salvium-cli (compile check)
+        run: cargo test -p salvium-cli -- --nocapture
 
   test-infra:
     name: "Test: miner + multisig + RPC"
