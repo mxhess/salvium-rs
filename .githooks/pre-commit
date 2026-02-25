@@ -1,6 +1,33 @@
 #!/bin/bash
-# Pre-commit hook to prevent accidental secret commits
+# Pre-commit hook:
+#   1. cargo fmt --check  (matches CI)
+#   2. cargo clippy -Dwarnings  (matches CI RUSTFLAGS)
+#   3. Secret detection (mnemonic phrases, hex keys)
+#
+# Skip with: git commit --no-verify
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+# ── Rust CI checks ──────────────────────────────────────────────────
+echo -e "${YELLOW}pre-commit: checking formatting...${NC}"
+if ! cargo fmt --all -- --check 2>/dev/null; then
+    echo -e "${RED}FAILED:${NC} cargo fmt --all -- --check"
+    echo -e "Run ${GREEN}cargo fmt --all${NC} to fix, then re-stage and commit."
+    exit 1
+fi
+
+echo -e "${YELLOW}pre-commit: running clippy (-Dwarnings)...${NC}"
+if ! RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets 2>&1; then
+    echo -e "${RED}FAILED:${NC} cargo clippy --workspace --all-targets"
+    exit 1
+fi
+
+echo -e "${GREEN}pre-commit: fmt + clippy passed${NC}"
+
+# ── Secret detection ────────────────────────────────────────────────
 echo "Checking for potential secrets..."
 
 # Patterns to detect
