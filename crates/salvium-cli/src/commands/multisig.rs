@@ -256,3 +256,212 @@ pub async fn export_raw_multisig_tx(ctx: &AppContext, input_file: &str) -> Resul
 
     Ok(())
 }
+
+/// Build a multisig transaction: select UTXOs, derive key offsets, fetch
+/// ring members, create signing contexts, and sign with the proposer's share.
+///
+/// Writes the resulting `MultisigTxSet` to `multisig_tx_set.json` for
+/// co-signers to sign with `sign_multisig`.
+pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str) -> Result {
+    use crate::tx_common::{self, hex_to_32, TxPipeline};
+
+    let wallet = open_wallet(ctx)?;
+
+    if !wallet.can_spend() {
+        return Err("cannot send from a view-only wallet".into());
+    }
+
+    let status = wallet.get_multisig_status();
+    if !status.is_multisig || !status.kex_complete {
+        return Err("wallet is not a fully-configured multisig wallet".into());
+    }
+
+    let amount = parse_sal_amount(amount_str)?;
+    let parsed_addr = salvium_types::address::parse_address(address)
+        .map_err(|e| format!("invalid destination address: {}", e))?;
+
+    println!("Multisig Transfer:");
+    println!("  To:     {}", address);
+    println!("  Amount: {} SAL", format_sal_u64(amount));
+    println!();
+
+    let fee_priority = salvium_tx::fee::FeePriority::Normal;
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
+    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+
+    let balance = wallet.get_balance("SAL", 0)?;
+    let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
+    if unlocked < amount + est_fee {
+        return Err(format!(
+            "insufficient unlocked balance: have {} SAL, need {} SAL",
+            format_sal_u64(unlocked),
+            format_sal_u64(amount + est_fee)
+        )
+        .into());
+    }
+
+    if !tx_common::confirm("Confirm multisig transfer? [y/N] ")? {
+        println!("Transfer cancelled.");
+        return Ok(());
+    }
+
+    // 1. Select UTXOs and derive per-output secret keys.
+    let pipeline = TxPipeline::new(&wallet, ctx, fee_priority);
+    let (input_data, actual_fee) = pipeline.select_and_prepare_inputs(
+        amount,
+        est_fee,
+        "SAL",
+        salvium_wallet::utxo::SelectionStrategy::Default,
+    )?;
+
+    // 2. Fetch decoys from the daemon and build rings.
+    let prepared = pipeline.fetch_decoys(&input_data).await?;
+    println!(
+        "Built rings for {} input(s), fee = {} SAL",
+        prepared.len(),
+        format_sal_u64(actual_fee)
+    );
+
+    // 3. Compute per-input key offsets, key images, and y keys.
+    //    key_offset = full_secret_key - weighted_share
+    //    The weighted_share is obtained from the multisig account.
+    let multisig_account = wallet
+        .multisig_account()
+        .ok_or("multisig account not found")?;
+    let weighted_share = multisig_account
+        .get_weighted_spend_key_share()
+        .map_err(|e| format!("weighted key share: {}", e))?;
+
+    let mut multisig_inputs = Vec::new();
+    let mut input_key_offsets = Vec::new();
+    let mut input_y_keys = Vec::new();
+    let mut key_images_hex = Vec::new();
+
+    for (idx, prep) in prepared.iter().enumerate() {
+        let inp = &input_data[idx];
+
+        // Compute key image: I = secret_key * H_p(public_key)
+        let hp = salvium_crypto::hash_to_point(&inp.public_key);
+        let ki = salvium_crypto::scalar_mult_point(&inp.secret_key, &hp);
+        let mut ki_arr = [0u8; 32];
+        ki_arr.copy_from_slice(&ki[..32]);
+        key_images_hex.push(hex::encode(ki_arr));
+
+        // Key offset = full_secret_key - weighted_share (mod L)
+        let offset = salvium_crypto::sc_sub(&inp.secret_key, &weighted_share);
+        let mut offset_arr = [0u8; 32];
+        offset_arr.copy_from_slice(&offset[..32]);
+        input_key_offsets.push(hex::encode(offset_arr));
+
+        // TCLSAG: y key; CLSAG: empty
+        let use_tclsag = inp.secret_key_y.is_some();
+        let ki_y = if let Some(sky) = &inp.secret_key_y {
+            let hp_y = salvium_crypto::hash_to_point(&inp.public_key);
+            let ki_y_bytes = salvium_crypto::scalar_mult_point(sky, &hp_y);
+            let mut ki_y_arr = [0u8; 32];
+            ki_y_arr.copy_from_slice(&ki_y_bytes[..32]);
+            input_y_keys.push(hex::encode(sky));
+            Some(ki_y_arr)
+        } else {
+            input_y_keys.push(String::new());
+            None
+        };
+
+        multisig_inputs.push(salvium_multisig::tx_builder::MultisigInput {
+            ring: prep.ring.clone(),
+            ring_commitments: prep.ring_commitments.clone(),
+            real_index: prep.real_index,
+            key_image: ki_arr,
+            amount: inp.amount,
+            input_mask: inp.mask,
+            use_tclsag,
+            key_image_y: ki_y,
+        });
+    }
+
+    // 4. Build an unsigned TX via TransactionBuilder to get prefix, outputs, etc.
+    let keys = wallet.keys();
+    let is_subaddress =
+        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
+
+    let builder = salvium_tx::TransactionBuilder::new()
+        .add_inputs(prepared)
+        .add_destination(salvium_tx::builder::Destination {
+            spend_pubkey: parsed_addr.spend_public_key,
+            view_pubkey: parsed_addr.view_public_key,
+            amount,
+            asset_type: "SAL".to_string(),
+            payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
+            is_subaddress,
+        })
+        .set_change_address(
+            keys.carrot.account_spend_pubkey,
+            keys.carrot.account_view_pubkey,
+        )
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
+        .set_fee(actual_fee);
+
+    println!("Building unsigned transaction...");
+    let unsigned = builder.build().map_err(|e| format!("tx build: {}", e))?;
+
+    // 5. Compute the prefix hash.
+    let prefix_json = unsigned.prefix.to_json();
+    let prefix_str =
+        serde_json::to_string(&prefix_json).map_err(|e| format!("prefix serialize: {}", e))?;
+    let prefix_bytes = salvium_crypto::tx_serialize::serialize_tx_prefix(&prefix_str)
+        .map_err(|e| format!("prefix binary serialize: {}", e))?;
+    let prefix_hash = hex_to_32(&hex::encode(salvium_crypto::keccak256(&prefix_bytes)))?;
+
+    // Serialize the unsigned TX as the blob for co-signers.
+    let tx_blob_json =
+        serde_json::to_string(&unsigned.prefix.to_json()).map_err(|e| format!("tx blob: {}", e))?;
+    let tx_blob_hex = hex::encode(tx_blob_json.as_bytes());
+
+    // 6. Call build_multisig_contexts with all the data.
+    println!("Building multisig signing contexts...");
+    let pending = salvium_multisig::tx_builder::build_multisig_contexts(
+        &multisig_inputs,
+        &unsigned.output_amounts,
+        &unsigned.output_masks,
+        &unsigned.output_commitments,
+        &unsigned.encrypted_amounts,
+        actual_fee,
+        unsigned.rct_type,
+        &prefix_hash,
+        &tx_blob_hex,
+        &key_images_hex,
+        &[format!("{}:{}", address, amount)],
+        &input_key_offsets,
+        &input_y_keys,
+    )
+    .map_err(|e| format!("build_multisig_contexts: {}", e))?;
+
+    // 7. Wrap in MultisigTxSet and sign with proposer's share.
+    let mut tx_set =
+        salvium_multisig::tx_set::MultisigTxSet::with_config(status.threshold, status.signer_count);
+    tx_set.add_pending_tx(pending);
+
+    println!("Signing with proposer's key share...");
+    let complete = wallet
+        .sign_multisig_tx(&mut tx_set)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+    // 8. Write to file.
+    let output_file = "multisig_tx_set.json";
+    let set_json =
+        serde_json::to_string_pretty(&tx_set).map_err(|e| format!("serialization: {}", e))?;
+    std::fs::write(output_file, &set_json)?;
+
+    println!();
+    println!("Multisig TX set written to {}", output_file);
+    if complete {
+        println!("Threshold met! Transaction is ready to submit.");
+    } else {
+        println!(
+            "Signed 1/{} — share '{}' with co-signers for signing.",
+            status.threshold, output_file
+        );
+    }
+
+    Ok(())
+}

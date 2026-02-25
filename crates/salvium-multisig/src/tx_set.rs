@@ -34,6 +34,18 @@ pub struct PendingMultisigTx {
     /// Shared across all inputs; also stored in each signing context's `message` field.
     #[serde(default)]
     pub signing_message: String,
+    /// Per-input derivation scalar (hex). Proposer adds this to their weighted key share.
+    #[serde(default)]
+    pub input_key_offsets: Vec<String>,
+    /// Per-input z = input_mask - pseudo_mask (hex). Proposer uses full z; co-signers use zero.
+    #[serde(default)]
+    pub input_z_values: Vec<String>,
+    /// Per-input TCLSAG y key (hex). Empty string for CLSAG inputs.
+    #[serde(default)]
+    pub input_y_keys: Vec<String>,
+    /// True after the proposer has signed (consumed the offsets/z/y values).
+    #[serde(default)]
+    pub proposer_signed: bool,
 }
 
 /// Result of finalizing a single pending multisig TX.
@@ -340,6 +352,10 @@ mod tests {
             destinations: vec![],
             signing_contexts: Vec::new(),
             signing_message: String::new(),
+            input_key_offsets: Vec::new(),
+            input_z_values: Vec::new(),
+            input_y_keys: Vec::new(),
+            proposer_signed: false,
         };
 
         let result = pending.finalize(2).unwrap();
@@ -365,6 +381,10 @@ mod tests {
             destinations: vec![],
             signing_contexts: Vec::new(),
             signing_message: String::new(),
+            input_key_offsets: Vec::new(),
+            input_z_values: Vec::new(),
+            input_y_keys: Vec::new(),
+            proposer_signed: false,
         };
 
         let result = pending.finalize(2);
@@ -401,6 +421,10 @@ mod tests {
             destinations: vec![],
             signing_contexts: Vec::new(),
             signing_message: String::new(),
+            input_key_offsets: Vec::new(),
+            input_z_values: Vec::new(),
+            input_y_keys: Vec::new(),
+            proposer_signed: false,
         });
 
         let finalized = set.finalize_all().unwrap();

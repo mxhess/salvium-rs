@@ -715,6 +715,13 @@ enum Commands {
         #[arg(long)]
         input: String,
     },
+    /// Create and sign a multisig transfer (proposer role).
+    TransferMultisig {
+        #[arg(long)]
+        address: String,
+        #[arg(long)]
+        amount: String,
+    },
 
     // ── MMS (Multisig Messaging System) ──────────────────────────────────────
     /// MMS subcommands for multisig message coordination.
@@ -1174,6 +1181,9 @@ async fn main() {
         Commands::SubmitMultisig { input } => commands::submit_multisig(&ctx, &input).await,
         Commands::ExportRawMultisigTx { input } => {
             commands::export_raw_multisig_tx(&ctx, &input).await
+        }
+        Commands::TransferMultisig { address, amount } => {
+            commands::transfer_multisig(&ctx, &address, &amount).await
         }
 
         // MMS

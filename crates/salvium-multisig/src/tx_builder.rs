@@ -56,6 +56,8 @@ pub struct MultisigInput {
 /// * `tx_blob` — hex-encoded unsigned transaction data
 /// * `key_images_hex` — hex-encoded key images for the TX inputs
 /// * `destinations` — destination addresses (for display)
+/// * `input_key_offsets` — per-input derivation scalar (hex); proposer adds to key share
+/// * `input_y_keys` — per-input TCLSAG y key (hex); empty string for CLSAG inputs
 #[allow(clippy::too_many_arguments)]
 pub fn build_multisig_contexts(
     inputs: &[MultisigInput],
@@ -69,6 +71,8 @@ pub fn build_multisig_contexts(
     tx_blob: &str,
     key_images_hex: &[String],
     destinations: &[String],
+    input_key_offsets: &[String],
+    input_y_keys: &[String],
 ) -> Result<PendingMultisigTx, String> {
     if inputs.is_empty() {
         return Err("no inputs".into());
@@ -112,6 +116,7 @@ pub fn build_multisig_contexts(
 
     // 4. Build per-input CLSAG signing contexts.
     let mut signing_contexts = Vec::with_capacity(num_inputs);
+    let mut z_values_hex = Vec::with_capacity(num_inputs);
 
     for (i, input) in inputs.iter().enumerate() {
         let n = input.ring.len();
@@ -124,6 +129,7 @@ pub fn build_multisig_contexts(
 
         // Commitment mask for signing: z = input_mask - pseudo_mask (mod L).
         let z = to_32(&salvium_crypto::sc_sub(&input.input_mask, &pseudo_masks[i]));
+        z_values_hex.push(hex::encode(z));
 
         // Commitment image: D = z * H_p(P_l).
         let pk = &input.ring[input.real_index];
@@ -170,6 +176,10 @@ pub fn build_multisig_contexts(
         destinations: destinations.to_vec(),
         signing_contexts,
         signing_message: signing_message_hex,
+        input_key_offsets: input_key_offsets.to_vec(),
+        input_z_values: z_values_hex,
+        input_y_keys: input_y_keys.to_vec(),
+        proposer_signed: false,
     })
 }
 
@@ -439,6 +449,8 @@ mod tests {
             "deadbeef",
             &[hex::encode(ki)],
             &["test_dest".to_string()],
+            &[],
+            &[],
         )
         .unwrap();
 
@@ -524,6 +536,8 @@ mod tests {
             "deadbeef",
             &[hex::encode(ki)],
             &[],
+            &[],
+            &[],
         )
         .unwrap();
 
@@ -549,6 +563,8 @@ mod tests {
             5,
             &[0u8; 32],
             "",
+            &[],
+            &[],
             &[],
             &[],
         );

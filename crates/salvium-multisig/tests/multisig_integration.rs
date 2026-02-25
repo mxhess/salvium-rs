@@ -899,6 +899,10 @@ fn test_tx_set_add_pending_tx() {
         destinations: vec!["SC1test".to_string()],
         signing_contexts: Vec::new(),
         signing_message: String::new(),
+        input_key_offsets: Vec::new(),
+        input_z_values: Vec::new(),
+        input_y_keys: Vec::new(),
+        proposer_signed: false,
     });
     assert_eq!(set.pending_txs.len(), 1);
     assert_eq!(set.pending_txs[0].fee, 10_000_000);
@@ -962,6 +966,10 @@ fn test_tx_set_serde_roundtrip() {
         destinations: vec!["dest".to_string()],
         signing_contexts: Vec::new(),
         signing_message: String::new(),
+        input_key_offsets: Vec::new(),
+        input_z_values: Vec::new(),
+        input_y_keys: Vec::new(),
+        proposer_signed: false,
     });
 
     let data = set.serialize();
@@ -990,6 +998,10 @@ fn test_tx_set_multiple_pending_txs() {
             destinations: vec![],
             signing_contexts: Vec::new(),
             signing_message: String::new(),
+            input_key_offsets: Vec::new(),
+            input_z_values: Vec::new(),
+            input_y_keys: Vec::new(),
+            proposer_signed: false,
         });
     }
     assert_eq!(set.pending_txs.len(), 5);
@@ -1560,4 +1572,201 @@ fn test_2of3_multisig_clsag_verify() {
     );
 
     assert!(valid, "2-of-3 multisig CLSAG signature MUST verify!");
+}
+
+// ===========================================================================
+// Proposer-Owns-Offsets Pattern Tests
+// ===========================================================================
+
+/// Simulates the proposer-owns-offsets pattern used by `sign_multisig_tx()`:
+/// - Proposer: adds key_offset to weighted share, uses full z
+/// - Co-signer: uses bare weighted share, z = 0
+/// - Combined signature verifies.
+#[test]
+fn test_proposer_cosigner_offset_pattern() {
+    // 1. Generate the full secret key and a per-output key_offset.
+    let (_, sk) = generate_random_scalar();
+    let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
+
+    // Split sk into weighted_share_0, weighted_share_1, and key_offset.
+    // The relationship: sk = weighted_share_0 + key_offset + weighted_share_1
+    // Proposer (signer 0) signs with: weighted_share_0 + key_offset
+    // Co-signer (signer 1) signs with: weighted_share_1
+    let (_, weighted_share_0) = generate_random_scalar();
+    let (_, key_offset) = generate_random_scalar();
+    // weighted_share_1 = sk - weighted_share_0 - key_offset
+    let tmp = to_32(&salvium_crypto::sc_add(&weighted_share_0, &key_offset));
+    let weighted_share_1 = to_32(&salvium_crypto::sc_sub(&sk, &tmp));
+
+    // Proposer's effective key = weighted_share_0 + key_offset
+    let proposer_key = to_32(&salvium_crypto::sc_add(&weighted_share_0, &key_offset));
+
+    // 2. Commitment mask: z. Proposer uses full z; co-signer uses zero.
+    let amount = 1_000_000_000u64;
+    let (_, input_mask) = generate_random_scalar();
+    let (_, pseudo_mask) = generate_random_scalar();
+    let z = to_32(&salvium_crypto::sc_sub(&input_mask, &pseudo_mask));
+    let zero = [0u8; 32];
+
+    // 3. Compute commitments and key images.
+    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &input_mask,
+    ));
+    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
+        &amount.to_le_bytes(),
+        &pseudo_mask,
+    ));
+
+    let hp_pk = to_32(&salvium_crypto::hash_to_point(&pk));
+    let key_image = to_32(&salvium_crypto::scalar_mult_point(&sk, &hp_pk));
+    let d_full = to_32(&salvium_crypto::scalar_mult_point(&z, &hp_pk));
+    let inv8 = to_32(&salvium_crypto::inv_eight_scalar());
+    let d8 = to_32(&salvium_crypto::scalar_mult_point(&inv8, &d_full));
+
+    // 4. Build ring (size 4, real at index 2).
+    let real_index = 2;
+    let ring_size = 4;
+    let mut ring = Vec::with_capacity(ring_size);
+    let mut ring_commitments = Vec::with_capacity(ring_size);
+    let mut fake_responses = Vec::with_capacity(ring_size);
+    for i in 0..ring_size {
+        if i == real_index {
+            ring.push(pk);
+            ring_commitments.push(input_commitment);
+            fake_responses.push("00".repeat(32));
+        } else {
+            let (_, dk) = generate_random_scalar();
+            ring.push(to_32(&salvium_crypto::scalar_mult_base(&dk)));
+            let (_, cm) = generate_random_scalar();
+            ring_commitments.push(to_32(&salvium_crypto::pedersen_commit(
+                &amount.to_le_bytes(),
+                &cm,
+            )));
+            let (fr, _) = generate_random_scalar();
+            fake_responses.push(fr);
+        }
+    }
+
+    let (_, message) = generate_random_scalar();
+
+    // 5. Set up context.
+    let ctx = MultisigClsagContext {
+        ring: ring.iter().map(hex::encode).collect(),
+        commitments: ring_commitments.iter().map(hex::encode).collect(),
+        key_image: hex::encode(key_image),
+        pseudo_output_commitment: hex::encode(pseudo_output),
+        message: hex::encode(message),
+        real_index,
+        use_tclsag: false,
+        key_image_y: None,
+        commitment_image: Some(hex::encode(d8)),
+        fake_responses: fake_responses.clone(),
+    };
+
+    // 6. Both signers generate nonces.
+    let pk_hex = hex::encode(pk);
+    let nonces0 = generate_nonces(0, &pk_hex).unwrap();
+    let nonces1 = generate_nonces(1, &pk_hex).unwrap();
+    let all_nonces = vec![nonces0.clone(), nonces1.clone()];
+
+    // 7. Proposer signs with (weighted_share + key_offset) and full z.
+    let p0 = partial_sign(
+        &ctx,
+        &nonces0,
+        &hex::encode(proposer_key),
+        &hex::encode(z),
+        &all_nonces,
+    )
+    .unwrap();
+
+    // 8. Co-signer signs with bare weighted_share and z = 0.
+    let p1 = partial_sign(
+        &ctx,
+        &nonces1,
+        &hex::encode(weighted_share_1),
+        &hex::encode(zero),
+        &all_nonces,
+    )
+    .unwrap();
+
+    assert_eq!(p0.c_0, p1.c_0, "both signers must agree on c_0");
+
+    // 9. Combine and verify.
+    let (s_hex, c_0_hex) = combine_partial_signatures(&[p0, p1]).unwrap();
+    let s = to_32(&hex::decode(&s_hex).unwrap());
+    let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
+
+    let mut s_vec: Vec<[u8; 32]> = fake_responses
+        .iter()
+        .map(|h| to_32(&hex::decode(h).unwrap()))
+        .collect();
+    s_vec[real_index] = s;
+
+    let sig = salvium_crypto::clsag::ClsagSignature {
+        s: s_vec,
+        c1: c_0,
+        key_image,
+        commitment_image: d8,
+    };
+
+    let valid = salvium_crypto::clsag::clsag_verify(
+        &message,
+        &sig,
+        &ring,
+        &ring_commitments,
+        &pseudo_output,
+    );
+
+    assert!(
+        valid,
+        "proposer-owns-offsets pattern CLSAG signature MUST verify!"
+    );
+}
+
+/// Verify that PendingMultisigTx with the new fields serializes and deserializes correctly.
+#[test]
+fn test_pending_tx_new_fields_serde_roundtrip() {
+    let pending = PendingMultisigTx {
+        tx_blob: "deadbeef".to_string(),
+        key_images: vec!["aa".repeat(32)],
+        tx_prefix_hash: "bb".repeat(32),
+        input_nonces: Vec::new(),
+        input_partials: Vec::new(),
+        fee: 10_000_000,
+        destinations: vec!["addr".to_string()],
+        signing_contexts: Vec::new(),
+        signing_message: String::new(),
+        input_key_offsets: vec!["cc".repeat(32)],
+        input_z_values: vec!["dd".repeat(32)],
+        input_y_keys: vec!["ee".repeat(32)],
+        proposer_signed: true,
+    };
+
+    let json = serde_json::to_string(&pending).unwrap();
+    let restored: PendingMultisigTx = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored.input_key_offsets, vec!["cc".repeat(32)]);
+    assert_eq!(restored.input_z_values, vec!["dd".repeat(32)]);
+    assert_eq!(restored.input_y_keys, vec!["ee".repeat(32)]);
+    assert!(restored.proposer_signed);
+}
+
+/// Verify that old JSON without the new fields deserializes with defaults.
+#[test]
+fn test_pending_tx_backward_compatible_deser() {
+    let json = r#"{
+        "tx_blob": "ff",
+        "key_images": [],
+        "tx_prefix_hash": "",
+        "fee": 0,
+        "destinations": [],
+        "signing_contexts": [],
+        "signing_message": ""
+    }"#;
+    let pending: PendingMultisigTx = serde_json::from_str(json).unwrap();
+    assert!(pending.input_key_offsets.is_empty());
+    assert!(pending.input_z_values.is_empty());
+    assert!(pending.input_y_keys.is_empty());
+    assert!(!pending.proposer_signed);
 }

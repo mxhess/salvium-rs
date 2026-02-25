@@ -852,6 +852,12 @@ impl Wallet {
         self.keys.is_multisig()
     }
 
+    /// Get a reference to the multisig account, if this is a multisig wallet.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn multisig_account(&self) -> Option<&salvium_multisig::account::MultisigAccount> {
+        self.multisig.as_ref()
+    }
+
     /// Get the current multisig status.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_multisig_status(&self) -> MultisigStatus {
@@ -875,7 +881,12 @@ impl Wallet {
         }
     }
 
-    /// Export multisig info (nonces and partial key images) for co-signers.
+    /// Export multisig info (metadata and partial key images) for co-signers.
+    ///
+    /// For each unspent output, computes a partial key image:
+    ///   `partial_ki = weighted_share * H_p(output_pubkey)`
+    /// Co-signers collect all partial key images and combine them (plus the
+    /// key-offset component) to derive full key images via `import_multisig_info`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn export_multisig_info(&self) -> Result<Vec<u8>, WalletError> {
         let account = self
@@ -887,31 +898,139 @@ impl Wallet {
             return Err(WalletError::Other("KEX not complete".into()));
         }
 
+        let weighted_share = account
+            .get_weighted_spend_key_share()
+            .map_err(|e| WalletError::Other(format!("weighted key share: {}", e)))?;
+
+        // Query all unspent outputs.
+        let query = salvium_crypto::storage::OutputQuery {
+            is_spent: Some(false),
+            ..Default::default()
+        };
+        let outputs = self.get_outputs(&query)?;
+
+        // Compute partial key images for each output that has a public key.
+        let mut partial_key_images: Vec<serde_json::Value> = Vec::new();
+        for output in &outputs {
+            if let Some(ref pk_hex) = output.public_key {
+                let pk_bytes = hex::decode(pk_hex).unwrap_or_default();
+                if pk_bytes.len() == 32 {
+                    let hp = salvium_crypto::hash_to_point(&pk_bytes);
+                    let partial_ki = salvium_crypto::scalar_mult_point(&weighted_share, &hp);
+                    partial_key_images.push(serde_json::json!({
+                        "output_public_key": pk_hex,
+                        "key_image": output.key_image,
+                        "partial_key_image": hex::encode(&partial_ki),
+                    }));
+                }
+            }
+        }
+
         let info = serde_json::json!({
             "threshold": account.threshold,
             "signer_count": account.signer_count,
             "signer_index": account.signer_index,
             "multisig_pubkey": account.multisig_pubkey,
+            "partial_key_images": partial_key_images,
         });
 
         serde_json::to_vec(&info).map_err(|e| WalletError::Other(e.to_string()))
     }
 
-    /// Import multisig info from co-signers. Returns the number of imported entries.
+    /// Import multisig info from co-signers. Returns the number of outputs
+    /// for which full key images were computed.
+    ///
+    /// Each info blob is JSON containing `partial_key_images` from one signer.
+    /// This method sums all signers' partial key images (including our own)
+    /// to produce the full key image for each output and stores the result
+    /// as a wallet attribute `multisig_ki:<output_public_key>`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn import_multisig_info(&mut self, infos: &[Vec<u8>]) -> Result<usize, WalletError> {
-        let _account = self
+        let account = self
             .multisig
             .as_ref()
             .ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
-        // Store each signer's info as a wallet attribute for later use during signing.
+        if !account.kex_complete {
+            return Err(WalletError::Other("KEX not complete".into()));
+        }
+
+        // Also compute our own partial key images.
+        let our_info_bytes = self.export_multisig_info()?;
+        let our_info: serde_json::Value = serde_json::from_slice(&our_info_bytes)
+            .map_err(|e| WalletError::Other(format!("parse own info: {}", e)))?;
+
+        // Collect all infos (ours + theirs).
+        let mut all_infos = vec![our_info];
+        for info_bytes in infos {
+            let parsed: serde_json::Value = serde_json::from_slice(info_bytes)
+                .map_err(|e| WalletError::Other(format!("parse signer info: {}", e)))?;
+            all_infos.push(parsed);
+        }
+
+        // Build a map: output_public_key -> Vec<partial_ki_hex>
+        let mut partials_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for info in &all_infos {
+            if let Some(pkis) = info.get("partial_key_images").and_then(|v| v.as_array()) {
+                for pki in pkis {
+                    let opk = pki
+                        .get("output_public_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let partial = pki
+                        .get("partial_key_image")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    if !opk.is_empty() && !partial.is_empty() {
+                        partials_map.entry(opk).or_default().push(partial);
+                    }
+                }
+            }
+        }
+
+        // For each output, sum partial key images to get the full key image.
+        let mut count = 0usize;
+        for (output_pk_hex, partials) in &partials_map {
+            if partials.is_empty() {
+                continue;
+            }
+
+            // Sum the partial key images (point addition).
+            let mut sum = [0u8; 32];
+            let mut first = true;
+            for partial_hex in partials {
+                let partial_bytes = hex::decode(partial_hex).unwrap_or_default();
+                if partial_bytes.len() < 32 {
+                    continue;
+                }
+                if first {
+                    sum.copy_from_slice(&partial_bytes[..32]);
+                    first = false;
+                } else {
+                    sum = to_32(&salvium_crypto::point_add_compressed(
+                        &sum,
+                        &partial_bytes[..32],
+                    ));
+                }
+            }
+
+            if !first {
+                let full_ki_hex = hex::encode(sum);
+                self.set_attribute(&format!("multisig_ki:{}", output_pk_hex), &full_ki_hex)?;
+                count += 1;
+            }
+        }
+
+        // Also store raw signer info for reference.
         for (i, info) in infos.iter().enumerate() {
             let info_hex = hex::encode(info);
             self.set_attribute(&format!("multisig_info:{}", i), &info_hex)?;
         }
 
-        Ok(infos.len())
+        Ok(count)
     }
 
     /// Prepare an unsigned multisig transaction set.
@@ -956,6 +1075,10 @@ impl Wallet {
                 .collect(),
             signing_contexts: Vec::new(),
             signing_message: String::new(),
+            input_key_offsets: Vec::new(),
+            input_z_values: Vec::new(),
+            input_y_keys: Vec::new(),
+            proposer_signed: false,
         };
         tx_set.add_pending_tx(pending);
 
@@ -969,6 +1092,11 @@ impl Wallet {
     ///   2. If enough signers' nonces are collected (threshold), computes
     ///      partial CLSAG/TCLSAG signatures via proper ring traversal.
     ///   3. Adds partial signatures to the TX.
+    ///
+    /// **Proposer-owns-offsets pattern:**
+    /// - The first signer (proposer, `!pending.proposer_signed`) adds per-input
+    ///   key derivation offsets to their weighted key share, uses full `z` and `y`.
+    /// - Co-signers use the bare weighted key share with `z=0` and `y=0`.
     ///
     /// Returns `true` if enough signatures have been collected (threshold met).
     #[cfg(not(target_arch = "wasm32"))]
@@ -985,11 +1113,10 @@ impl Wallet {
             return Err(WalletError::Other("KEX not complete".into()));
         }
 
-        let spend_secret = self
-            .keys
-            .cn
-            .spend_secret_key
-            .ok_or(WalletError::Other("no spend key".into()))?;
+        // Use the weighted multisig key share instead of the raw spend secret.
+        let weighted_share = account
+            .get_weighted_spend_key_share()
+            .map_err(|e| WalletError::Other(format!("weighted key share: {}", e)))?;
 
         let signer_pub = hex::encode(self.keys.cn.spend_public_key);
         tx_set.mark_signer_contributed(&signer_pub);
@@ -997,8 +1124,6 @@ impl Wallet {
         for pending in &mut tx_set.pending_txs {
             let num_inputs = pending.signing_contexts.len();
             if num_inputs == 0 {
-                // No signing contexts — legacy fallback (no-op, contexts must be populated
-                // by the caller via build_multisig_contexts).
                 continue;
             }
 
@@ -1036,24 +1161,44 @@ impl Wallet {
                     pending.input_partials.push(Vec::new());
                 }
 
-                let spend_hex = hex::encode(spend_secret);
-                // Commitment mask share — in a full implementation, each signer has
-                // their share of the commitment mask from the multisig key exchange.
-                // For now, use the spend secret as the mask share (single-signer equivalent).
-                let z_share_hex = hex::encode(spend_secret);
+                let is_proposer = !pending.proposer_signed;
+                let zero_hex = "00".repeat(32);
 
                 for (i, ctx) in pending.signing_contexts.iter().enumerate() {
                     let all_nonces = &pending.input_nonces[i];
 
+                    // Proposer: add key_offset to weighted share; co-signer: bare share.
+                    let privkey_hex = if is_proposer && i < pending.input_key_offsets.len() {
+                        let offset_bytes =
+                            hex::decode(&pending.input_key_offsets[i]).map_err(|e| {
+                                WalletError::Other(format!("bad key offset hex: {}", e))
+                            })?;
+                        let mut offset = [0u8; 32];
+                        offset[..offset_bytes.len().min(32)]
+                            .copy_from_slice(&offset_bytes[..offset_bytes.len().min(32)]);
+                        hex::encode(to_32(&salvium_crypto::sc_add(&weighted_share, &offset)))
+                    } else {
+                        hex::encode(weighted_share)
+                    };
+
+                    // Proposer: use full z; co-signer: zero.
+                    let z_share_hex = if is_proposer && i < pending.input_z_values.len() {
+                        pending.input_z_values[i].clone()
+                    } else {
+                        zero_hex.clone()
+                    };
+
                     let partial = if ctx.use_tclsag {
-                        // TCLSAG: need Y key share (not available in basic wallet keys).
-                        // Use zero Y share as placeholder — full TCLSAG multisig requires
-                        // extended key exchange to distribute y key shares.
-                        let y_share_hex = "00".repeat(32);
+                        // Proposer: use full y; co-signer: zero.
+                        let y_share_hex = if is_proposer && i < pending.input_y_keys.len() {
+                            pending.input_y_keys[i].clone()
+                        } else {
+                            zero_hex.clone()
+                        };
                         salvium_multisig::signing::partial_sign_tclsag(
                             ctx,
                             &our_nonces[i],
-                            &spend_hex,
+                            &privkey_hex,
                             &y_share_hex,
                             &z_share_hex,
                             all_nonces,
@@ -1063,7 +1208,7 @@ impl Wallet {
                         salvium_multisig::signing::partial_sign(
                             ctx,
                             &our_nonces[i],
-                            &spend_hex,
+                            &privkey_hex,
                             &z_share_hex,
                             all_nonces,
                         )
@@ -1071,6 +1216,11 @@ impl Wallet {
                     };
 
                     pending.input_partials[i].push(partial);
+                }
+
+                // Mark that the proposer has signed — subsequent signers are co-signers.
+                if is_proposer {
+                    pending.proposer_signed = true;
                 }
             }
         }
@@ -1320,6 +1470,14 @@ impl Wallet {
 /// Delegates to `salvium_crypto::storage::is_unlocked` which exactly matches
 /// C++ wallet2::is_transfer_unlocked + is_tx_spendtime_unlocked.
 #[cfg(not(target_arch = "wasm32"))]
+/// Convert a byte slice (up to 32 bytes) into a `[u8; 32]`.
+fn to_32(v: &[u8]) -> [u8; 32] {
+    let mut arr = [0u8; 32];
+    let len = v.len().min(32);
+    arr[..len].copy_from_slice(&v[..len]);
+    arr
+}
+
 fn is_output_unlocked(output: &salvium_crypto::storage::OutputRow, current_height: i64) -> bool {
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
