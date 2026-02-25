@@ -1,4 +1,4 @@
-name: Build & Publish Libraries
+name: Build & Publish Release
 
 on:
   push:
@@ -13,8 +13,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Pre-release verification ─────────────────────────────────────────────
+  test:
+    name: Pre-release tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run all workspace tests
+        run: cargo test --workspace
+      - name: Clippy (release mode)
+        run: cargo clippy --workspace --release -- -Dwarnings
+
   # ── Android (arm64-v8a, armeabi-v7a, x86_64) ─────────────────────────────
   android:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +58,7 @@ jobs:
 
   # ── Linux x86_64 ──────────────────────────────────────────────────────────
   linux:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +77,7 @@ jobs:
 
   # ── macOS (universal arm64 + x86_64) ──────────────────────────────────────
   macos:
+    needs: [test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +98,7 @@ jobs:
 
   # ── iOS (device + simulator xcframework) ──────────────────────────────────
   ios:
+    needs: [test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +119,7 @@ jobs:
 
   # ── Windows x86_64 (cross-compiled from Linux) ───────────────────────────
   windows:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -123,6 +143,7 @@ jobs:
 
   # ── WASM (Cloudflare Workers / Browser) ────────────────────────────────
   wasm:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -144,9 +165,94 @@ jobs:
           name: wasm
           path: prebuilt/wasm/
 
+  # ── Native miner binaries ──────────────────────────────────────────────
+  miner:
+    name: "Build miner (${{ matrix.name }})"
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: salvium-miner-linux-x86_64
+            cross: true
+
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: salvium-miner-linux-aarch64
+            cross: true
+
+          - target: x86_64-apple-darwin
+            os: macos-13
+            name: salvium-miner-macos-x86_64
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: salvium-miner-macos-aarch64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: salvium-miner-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross (Linux)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install cmake (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - name: Install cmake (Windows)
+        if: runner.os == 'Windows'
+        run: choco install cmake --installargs '"ADD_CMAKE_TO_PATH=System"' -y
+
+      - name: Build with cross (Linux)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p salvium-miner
+
+      - name: Build native (macOS/Windows)
+        if: ${{ !matrix.cross }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export RUSTFLAGS="-C target-feature=+crt-static"
+          fi
+          cargo build --release --target ${{ matrix.target }} -p salvium-miner
+
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.target }}/release/salvium-miner \
+             ${{ matrix.name }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          copy target\${{ matrix.target }}\release\salvium-miner.exe ^
+               ${{ matrix.name }}
+        shell: cmd
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
   # ── Publish to salvium-rs-releases ────────────────────────────────────────
   publish:
-    needs: [android, linux, macos, ios, windows, wasm]
+    needs: [android, linux, macos, ios, windows, wasm, miner]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -199,21 +305,34 @@ jobs:
           tar czf "../../release/salvium-libs-wasm-${TAG}.tar.gz" .
           cd ../..
 
+          # Miner binaries
+          for dir in artifacts/salvium-miner-*; do
+            name=$(basename "$dir")
+            cp "$dir/$name" "release/$name"
+            chmod +x "release/$name" 2>/dev/null || true
+          done
+
+          # Generate checksums
+          cd release
+          sha256sum * > checksums.sha256
+          cat checksums.sha256
+          cd ..
+
           ls -lh release/
 
-      - name: Push to salvium-rs-release
+      - name: Push to salvium-rs-releases
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           REPO="salvium-project/salvium-rs-releases"
 
-          # Create release via GitHub API
+          # Create release via GitHub API (draft for review before publishing)
           RELEASE_ID=$(curl -s -X POST \
             -H "Authorization: token $RELEASE_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/releases" \
-            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Pre-built Salvium Rust libraries for all platforms.\n\nBuilt from salvium-rs ${TAG}.\",\"draft\":false}" \
+            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Pre-built Salvium Rust libraries and miner binaries for all platforms.\n\nBuilt from salvium-rs ${TAG}.\",\"draft\":true}" \
             | jq -r '.id')
 
           echo "Release ID: $RELEASE_ID"
@@ -229,4 +348,4 @@ jobs:
               --data-binary "@$file"
           done
 
-          echo "==> Published to https://github.com/${REPO}/releases/tag/${TAG}"
+          echo "==> Published draft to https://github.com/${REPO}/releases/tag/${TAG}"
