@@ -1415,8 +1415,7 @@ fn test_2of2_multisig_clsag_verify() {
     assert_eq!(partial0.c_0, partial1.c_0, "signers must agree on c_0");
 
     // 13. Combine partials.
-    let (s_combined_hex, c_0_hex) =
-        combine_partial_signatures(&[partial0, partial1]).unwrap();
+    let (s_combined_hex, c_0_hex) = combine_partial_signatures(&[partial0, partial1]).unwrap();
     let s_combined = to_32(&hex::decode(&s_combined_hex).unwrap());
     let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
 
@@ -1436,13 +1435,8 @@ fn test_2of2_multisig_clsag_verify() {
     };
 
     // 16. VERIFY — this is the whole point.
-    let valid = salvium_crypto::clsag::clsag_verify(
-        &message,
-        &sig,
-        &ring,
-        &commitments,
-        &pseudo_output,
-    );
+    let valid =
+        salvium_crypto::clsag::clsag_verify(&message, &sig, &ring, &commitments, &pseudo_output);
 
     assert!(valid, "2-of-2 multisig CLSAG signature MUST verify!");
 }
@@ -1455,7 +1449,6 @@ fn test_2of3_multisig_clsag_verify() {
     let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
 
     let (_, sk_0) = generate_random_scalar();
-    let (_, sk_1) = generate_random_scalar();
     // sk_2 = sk - sk_0 - sk_1 (but we won't use sk_2 — only 2 of 3 sign)
 
     // For additive 2-of-3, we need Shamir shares or simply use the approach
