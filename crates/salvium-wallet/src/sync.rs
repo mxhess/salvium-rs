@@ -1668,9 +1668,7 @@ fn store_found_outputs(
                 let ko_hex = hex::encode(output.output_public_key);
                 let tx_hash_hex = hex::encode(tx.tx_hash);
                 if let Ok(stakes) = db.get_stakes(Some("locked"), None) {
-                    if let Some(stake) =
-                        stakes.iter().find(|s| s.stake_tx_hash == tx_hash_hex)
-                    {
+                    if let Some(stake) = stakes.iter().find(|s| s.stake_tx_hash == tx_hash_hex) {
                         let _ = db.update_stake_change_key(&stake.stake_tx_hash, &ko_hex);
                     }
                 }
@@ -1683,18 +1681,19 @@ fn store_found_outputs(
         // must use two-step derivation through the origin STAKE/AUDIT/CONVERT TX.
         if tx.tx_type == 2 && !output.is_carrot {
             if let Some(ref spend_secret) = scan_ctx.cn_spend_secret {
-                let derivation =
-                    salvium_crypto::generate_key_derivation(&tx.tx_pub_key, &scan_ctx.cn_view_secret);
+                let derivation = salvium_crypto::generate_key_derivation(
+                    &tx.tx_pub_key,
+                    &scan_ctx.cn_view_secret,
+                );
                 if derivation.len() == 32 {
                     let mut d = [0u8; 32];
                     d.copy_from_slice(&derivation);
                     // P_change = Ko_return - Hs(D || 0) * G
-                    let p_change =
-                        salvium_crypto::cn_scan::derive_subaddress_pubkey_bytes(
-                            &output.output_public_key,
-                            &d,
-                            0,
-                        );
+                    let p_change = salvium_crypto::cn_scan::derive_subaddress_pubkey_bytes(
+                        &output.output_public_key,
+                        &d,
+                        0,
+                    );
                     let p_change_hex = hex::encode(p_change);
 
                     if let Ok(Some(origin)) = db.get_salvium_tx(&p_change_hex) {
@@ -1705,25 +1704,23 @@ fn store_found_outputs(
 
                                 // Two-step derivation (faithful to C++ generate_key_image_helper_precomp)
                                 // Step 1: sk_change = derive_output_spend_key(view, spend, origin_pub, origin_idx, major, minor)
-                                let sk_change =
-                                    salvium_crypto::cn_scan::derive_output_spend_key(
-                                        &scan_ctx.cn_view_secret,
-                                        spend_secret,
-                                        &origin_pub_arr,
-                                        origin.origin_out_idx as u32,
-                                        origin.subaddr_major as u32,
-                                        origin.subaddr_minor as u32,
-                                    );
+                                let sk_change = salvium_crypto::cn_scan::derive_output_spend_key(
+                                    &scan_ctx.cn_view_secret,
+                                    spend_secret,
+                                    &origin_pub_arr,
+                                    origin.origin_out_idx as u32,
+                                    origin.subaddr_major as u32,
+                                    origin.subaddr_minor as u32,
+                                );
                                 // Step 2: x_return = derive_output_spend_key(view, &sk_change, protocol_pub, 0, 0, 0)
-                                let x_return =
-                                    salvium_crypto::cn_scan::derive_output_spend_key(
-                                        &scan_ctx.cn_view_secret,
-                                        &sk_change,
-                                        &tx.tx_pub_key,
-                                        0,
-                                        0,
-                                        0,
-                                    );
+                                let x_return = salvium_crypto::cn_scan::derive_output_spend_key(
+                                    &scan_ctx.cn_view_secret,
+                                    &sk_change,
+                                    &tx.tx_pub_key,
+                                    0,
+                                    0,
+                                    0,
+                                );
                                 // Step 3: KI = generate_key_image(Ko_return, x_return)
                                 let ki = salvium_crypto::generate_key_image(
                                     &output.output_public_key,
@@ -1731,8 +1728,7 @@ fn store_found_outputs(
                                 );
                                 if ki.len() == 32 {
                                     let new_ki = hex::encode(&ki);
-                                    let old_ki =
-                                        row.key_image.as_deref().unwrap_or("");
+                                    let old_ki = row.key_image.as_deref().unwrap_or("");
                                     if old_ki != new_ki {
                                         log::info!(
                                             "key image override: height={} old={:.16} new={:.16}",

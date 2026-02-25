@@ -1473,9 +1473,9 @@ impl WalletDb {
     /// Get all salvium_txs entries as (Ko bytes, major, minor) for CN
     /// subaddress map population. Returns decoded 32-byte Kos.
     pub fn get_all_salvium_tx_keys(&self) -> Result<Vec<([u8; 32], u32, u32)>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare(
-            "SELECT change_ko, subaddr_major, subaddr_minor FROM salvium_txs",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT change_ko, subaddr_major, subaddr_minor FROM salvium_txs")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,

@@ -1684,7 +1684,9 @@ async fn run_full_tests(
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 5: Stake 10 {} SAL", fork.asset);
-        let result = TestTransactor::new(daemon, &fixture.wallet_a).stake(sal(10.0), fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a)
+            .stake(sal(10.0), fork)
+            .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
@@ -1743,7 +1745,9 @@ async fn run_full_tests(
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 6: Burn 0.1 {} SAL", fork.asset);
-        let result = TestTransactor::new(daemon, &fixture.wallet_a).burn(sal(0.1), fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a)
+            .burn(sal(0.1), fork)
+            .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
@@ -1762,7 +1766,9 @@ async fn run_full_tests(
         sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
         println!("\n  TX 7: Sweep B->B");
-        let result = TestTransactor::new(daemon, &fixture.wallet_b).sweep(dest_b_spend, dest_b_view, fork).await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_b)
+            .sweep(dest_b_spend, dest_b_view, fork)
+            .await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 

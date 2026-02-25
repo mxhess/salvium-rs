@@ -228,7 +228,14 @@ impl Wallet {
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
-        SyncEngine::sync(daemon, &self.db, &mut self.scan_context, lock_period, event_tx).await
+        SyncEngine::sync(
+            daemon,
+            &self.db,
+            &mut self.scan_context,
+            lock_period,
+            event_tx,
+        )
+        .await
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────

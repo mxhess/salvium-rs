@@ -402,8 +402,8 @@ mod tests {
         let target = difficulty_to_target(2).unwrap();
         // In LE, the last byte should be 0x7F, all others 0xFF
         assert_eq!(target[31], 0x7F);
-        for i in 0..31 {
-            assert_eq!(target[i], 0xFF, "byte {} should be 0xFF", i);
+        for (i, byte) in target[..31].iter().enumerate() {
+            assert_eq!(*byte, 0xFF, "byte {} should be 0xFF", i);
         }
     }
 
