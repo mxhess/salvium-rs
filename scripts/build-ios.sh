@@ -28,6 +28,22 @@ FRAMEWORK_NAMES=( "SalviumCrypto"    "SalviumFfi"     )
 
 echo "==> Building Salvium libraries for iOS targets..."
 
+# Minimum iOS version — must be consistent across Rust and C compilation.
+# Prevents ___chkstk_darwin linker errors from vendored C code (OpenSSL/SQLCipher)
+# being compiled with macOS settings instead of iOS.
+export IPHONEOS_DEPLOYMENT_TARGET="14.0"
+
+# Set cross-compilation C compiler per target so vendored C builds (openssl-sys,
+# libsqlite3-sys) use the correct iOS SDK instead of the macOS host SDK.
+export CC_aarch64_apple_ios="$(xcrun --sdk iphoneos --find clang)"
+export CFLAGS_aarch64_apple_ios="-isysroot $(xcrun --sdk iphoneos --show-sdk-path) -mios-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
+
+export CC_aarch64_apple_ios_sim="$(xcrun --sdk iphonesimulator --find clang)"
+export CFLAGS_aarch64_apple_ios_sim="-isysroot $(xcrun --sdk iphonesimulator --show-sdk-path) -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
+
+export CC_x86_64_apple_ios="$(xcrun --sdk iphonesimulator --find clang)"
+export CFLAGS_x86_64_apple_ios="-isysroot $(xcrun --sdk iphonesimulator --show-sdk-path) -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"
+
 for target in "${TARGETS[@]}"; do
   echo "  -> $target"
   for crate in "${CRATES[@]}"; do
