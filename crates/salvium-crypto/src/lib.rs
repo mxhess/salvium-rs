@@ -154,6 +154,17 @@ pub fn inv_eight_scalar() -> Vec<u8> {
     clsag::inv_eight().to_bytes().to_vec()
 }
 
+/// Check if a compressed Ed25519 point is in the prime-order subgroup.
+/// Matches C++ `rct::isInMainSubgroup()` / `toPointCheckOrder`.
+/// Decompresses the point and checks `self * L == identity`.
+pub fn is_in_main_subgroup(point: &[u8]) -> bool {
+    let compressed = CompressedEdwardsY(to32(point));
+    match compressed.decompress() {
+        Some(pt) => pt.is_torsion_free(),
+        None => false,
+    }
+}
+
 // ─── Point Operations (compressed Edwards) ──────────────────────────────────
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -975,6 +986,37 @@ mod tests {
     /// Helper: derive the public key from a secret key via scalar_mult_base.
     fn test_public_key(sec: &[u8]) -> Vec<u8> {
         scalar_mult_base(sec)
+    }
+
+    #[test]
+    fn test_is_in_main_subgroup() {
+        // The basepoint is in the main subgroup
+        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT
+            .compress()
+            .to_bytes();
+        assert!(is_in_main_subgroup(&basepoint));
+
+        // A random valid pubkey (scalar * G) is in the main subgroup
+        let pk = scalar_mult_base(&[42u8; 32]);
+        assert!(is_in_main_subgroup(&pk));
+
+        // All zeros (not a valid point) is NOT in the main subgroup
+        assert!(!is_in_main_subgroup(&[0u8; 32]));
+
+        // Known small-order torsion point (order 8): (0, -1) in Edwards form
+        // The identity point compressed is (1, 0, 0, ..., 0) but [0;32] fails decompress.
+        // A known 8-torsion point: this is the point with only byte[0] = 0x26...
+        // Use the canonical small-order points from the curve25519 spec:
+        // Point of order 2: (0, -1) -> compressed y = p-1 = 2^255-20
+        let mut torsion_order2 = [0xecu8; 32]; // p - 1 in LE
+        torsion_order2[0] = 0xec;
+        torsion_order2[31] = 0x7f;
+        // This is y = p-1 = 2^255 - 20. Check if it decompresses:
+        let t2 = CompressedEdwardsY(torsion_order2);
+        if t2.decompress().is_some() {
+            // If it decompresses, it should NOT be in the main subgroup
+            assert!(!is_in_main_subgroup(&torsion_order2));
+        }
     }
 
     #[test]

@@ -73,7 +73,16 @@ pub fn encode_kex_message(msg: &SignedKexMessage) -> String {
 ///
 /// Format: `magic + base58(epee_blob)`.
 /// The signature is verified as part of decoding — tampered messages are rejected.
+///
+/// Rejects deprecated V1 messages (C++ `multisig_kex_msg.cpp:216-219`).
 pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
+    // Reject deprecated V1 messages (C++ multisig_kex_msg.cpp:216-219)
+    const MAGIC_V1: &str = "MultisigV1";
+    const MAGIC_V1X: &str = "MultisigxV1";
+    if wire.starts_with(MAGIC_V1) || wire.starts_with(MAGIC_V1X) {
+        return Err("V1 multisig messages are deprecated and not supported".to_string());
+    }
+
     let magic_r1 = std::str::from_utf8(MAGIC_ROUND1).unwrap();
     let magic_rn = std::str::from_utf8(MAGIC_ROUND_N).unwrap();
 
@@ -153,6 +162,11 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
             .and_then(|v| v.as_u64())
             .ok_or_else(|| "missing kex_round".to_string())? as usize;
 
+        // C++ multisig_kex_msg.cpp:260 — round-N messages must have round > 1
+        if round <= 1 {
+            return Err("Round-N message must have round > 1".to_string());
+        }
+
         let pubkeys = obj
             .get("msg_pubkeys")
             .and_then(|v| v.as_array())
@@ -173,6 +187,40 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
         (kex_msg, msg_privkey)
     };
 
+    // ── Field validation (matches C++ multisig_kex_msg constructor) ──
+
+    // Null signing pubkey check
+    if signing_pubkey == [0u8; 32] {
+        return Err("signing_pubkey must not be the identity element".to_string());
+    }
+
+    // Signature scalar validation: sc_check on both c and s
+    if !salvium_crypto::sc_check(&signature.c) {
+        return Err("signature.c is not a canonical scalar".to_string());
+    }
+    if !salvium_crypto::sc_check(&signature.s) {
+        return Err("signature.s is not a canonical scalar".to_string());
+    }
+
+    // Pubkey must be in the prime-order subgroup
+    if !salvium_crypto::is_in_main_subgroup(&signing_pubkey) {
+        return Err("signing_pubkey is not in the prime-order subgroup".to_string());
+    }
+
+    // Round-N: validate each pubkey in inner.keys
+    if !is_round1 {
+        for (i, key_hex) in inner.keys.iter().enumerate() {
+            let key_bytes =
+                hex::decode(key_hex).map_err(|e| format!("key[{}] hex decode failed: {}", i, e))?;
+            if key_bytes == [0u8; 32] {
+                return Err(format!("key[{}] must not be the identity element", i));
+            }
+            if !salvium_crypto::is_in_main_subgroup(&key_bytes) {
+                return Err(format!("key[{}] is not in the prime-order subgroup", i));
+            }
+        }
+    }
+
     let signed = SignedKexMessage {
         inner,
         msg_privkey,
@@ -180,7 +228,7 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
         signature,
     };
 
-    // Verify the signature
+    // Verify the Schnorr signature (redundant safety net after field validation)
     signed.verify()?;
 
     Ok(signed)
@@ -397,7 +445,7 @@ mod tests {
             keys: vec![hex::encode(&pk), hex::encode(&pk)],
             msg_type: MultisigMsgType::KexInit,
         };
-        let signed = SignedKexMessage::create(msg, &privkey);
+        let signed = SignedKexMessage::create(msg, &privkey).unwrap();
         let wire = encode_kex_message(&signed);
 
         assert!(wire.starts_with("MultisigxV2R1"));
@@ -419,7 +467,7 @@ mod tests {
             keys: vec![hex::encode(&pk1), hex::encode(&pk2)],
             msg_type: MultisigMsgType::KexRound,
         };
-        let signed = SignedKexMessage::create(msg, &privkey);
+        let signed = SignedKexMessage::create(msg, &privkey).unwrap();
         let wire = encode_kex_message(&signed);
 
         assert!(wire.starts_with("MultisigxV2Rn"));
@@ -534,5 +582,95 @@ mod tests {
     fn tx_set_reject_malformed() {
         let result = decode_tx_set(&[0xFF, 0x00, 0x01]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_v1_magic() {
+        let result = decode_kex_message("MultisigV1somedata");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("V1"));
+
+        let result = decode_kex_message("MultisigxV1somedata");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("V1"));
+    }
+
+    #[test]
+    fn reject_round_n_with_round_1() {
+        // Create a valid round-N wire message but manually set round = 1
+        let privkey = make_signing_key();
+        let pk1 = salvium_crypto::scalar_mult_base(&[2u8; 32]);
+        let pk2 = salvium_crypto::scalar_mult_base(&[3u8; 32]);
+        let msg = KexMessage {
+            round: 3,
+            signer_index: 0,
+            keys: vec![hex::encode(&pk1), hex::encode(&pk2)],
+            msg_type: MultisigMsgType::KexRound,
+        };
+        let signed = SignedKexMessage::create(msg, &privkey).unwrap();
+
+        // Encode normally, then tamper with the round in the Epee blob
+        // Instead, we build a message that has round-N magic but round=1 in the body
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "signing_pubkey".to_string(),
+            PsValue::String(signed.signing_pubkey.to_vec()),
+        );
+        map.insert(
+            "signature".to_string(),
+            PsValue::String(signed.signature.to_bytes().to_vec()),
+        );
+        map.insert("kex_round".to_string(), PsValue::Uint32(1)); // invalid: round=1 with round-N magic
+        let pubkeys: Vec<PsValue> = signed
+            .inner
+            .keys
+            .iter()
+            .filter_map(|hex_str| hex::decode(hex_str).ok())
+            .map(PsValue::String)
+            .collect();
+        map.insert("msg_pubkeys".to_string(), PsValue::Array(pubkeys));
+
+        let blob = salvium_rpc::portable_storage::serialize(&map);
+        let encoded = salvium_types::base58::encode(&blob);
+        let wire = format!("MultisigxV2Rn{}", encoded);
+
+        let result = decode_kex_message(&wire);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("round > 1"));
+    }
+
+    #[test]
+    fn reject_null_signing_pubkey() {
+        // Build a wire message with all-zeros signing_pubkey
+        let privkey = make_signing_key();
+        let msg = KexMessage {
+            round: 1,
+            signer_index: 0,
+            keys: Vec::new(),
+            msg_type: MultisigMsgType::KexInit,
+        };
+        let signed = SignedKexMessage::create(msg, &privkey).unwrap();
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "signing_pubkey".to_string(),
+            PsValue::String(vec![0u8; 32]), // null pubkey
+        );
+        map.insert(
+            "signature".to_string(),
+            PsValue::String(signed.signature.to_bytes().to_vec()),
+        );
+        map.insert(
+            "msg_privkey".to_string(),
+            PsValue::String(signed.msg_privkey.to_vec()),
+        );
+
+        let blob = salvium_rpc::portable_storage::serialize(&map);
+        let encoded = salvium_types::base58::encode(&blob);
+        let wire = format!("MultisigxV2R1{}", encoded);
+
+        let result = decode_kex_message(&wire);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("identity"));
     }
 }
