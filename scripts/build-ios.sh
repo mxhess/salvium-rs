@@ -21,22 +21,16 @@ TARGETS=(
   x86_64-apple-ios          # Simulator (Intel)
 )
 
-# Libraries to build and package
-declare -A LIB_NAMES=(
-  ["salvium-crypto"]="libsalvium_crypto"
-  ["salvium-ffi"]="libsalvium_ffi"
-)
-
-declare -A FRAMEWORK_NAMES=(
-  ["salvium-crypto"]="SalviumCrypto"
-  ["salvium-ffi"]="SalviumFfi"
-)
+# Libraries to build and package (parallel arrays — bash 3.2 compatible)
+CRATES=(       "salvium-crypto"      "salvium-ffi"    )
+LIB_NAMES=(    "libsalvium_crypto"   "libsalvium_ffi" )
+FRAMEWORK_NAMES=( "SalviumCrypto"    "SalviumFfi"     )
 
 echo "==> Building Salvium libraries for iOS targets..."
 
 for target in "${TARGETS[@]}"; do
   echo "  -> $target"
-  for crate in "${!LIB_NAMES[@]}"; do
+  for crate in "${CRATES[@]}"; do
     cargo build --release \
       --target "$target" \
       -p "$crate" \
@@ -47,9 +41,9 @@ done
 echo "==> Creating xcframeworks..."
 mkdir -p "$WORK_DIR"
 
-for crate in "${!LIB_NAMES[@]}"; do
-  lib="${LIB_NAMES["$crate"]}"
-  framework="${FRAMEWORK_NAMES["$crate"]}"
+for i in "${!CRATES[@]}"; do
+  lib="${LIB_NAMES[$i]}"
+  framework="${FRAMEWORK_NAMES[$i]}"
 
   echo "  -> $framework.xcframework"
 

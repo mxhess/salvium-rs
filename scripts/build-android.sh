@@ -26,18 +26,10 @@ if [ -z "${ANDROID_NDK_HOME:-}" ]; then
   exit 1
 fi
 
-# Map Rust target -> Android ABI -> NDK toolchain target
-declare -A TARGET_ABI=(
-  ["aarch64-linux-android"]="arm64-v8a"
-  ["armv7-linux-androideabi"]="armeabi-v7a"
-  ["x86_64-linux-android"]="x86_64"
-)
-
-declare -A TARGET_CC=(
-  ["aarch64-linux-android"]="aarch64-linux-android21-clang"
-  ["armv7-linux-androideabi"]="armv7a-linux-androideabi21-clang"
-  ["x86_64-linux-android"]="x86_64-linux-android21-clang"
-)
+# Parallel arrays — bash 3.2 compatible (no declare -A)
+TARGETS=(        "aarch64-linux-android"             "armv7-linux-androideabi"             "x86_64-linux-android" )
+TARGET_ABIS=(    "arm64-v8a"                         "armeabi-v7a"                         "x86_64"              )
+TARGET_CCS=(     "aarch64-linux-android21-clang"     "armv7a-linux-androideabi21-clang"    "x86_64-linux-android21-clang" )
 
 # Find the NDK toolchain bin directory
 TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -60,9 +52,10 @@ echo "    NDK: $ANDROID_NDK_HOME"
 echo "    Crates: ${CRATES[*]}"
 echo ""
 
-for target in "${!TARGET_ABI[@]}"; do
-  abi="${TARGET_ABI["$target"]}"
-  cc="${TARGET_CC["$target"]}"
+for i in "${!TARGETS[@]}"; do
+  target="${TARGETS[$i]}"
+  abi="${TARGET_ABIS[$i]}"
+  cc="${TARGET_CCS[$i]}"
   echo "  ── $target ($abi) ──"
 
   # Set linker/compiler for this target via CARGO_TARGET env vars
@@ -96,8 +89,8 @@ for target in "${!TARGET_ABI[@]}"; do
 done
 
 echo "==> Done. Libraries:"
-for target in "${!TARGET_ABI[@]}"; do
-  abi="${TARGET_ABI["$target"]}"
+for i in "${!TARGETS[@]}"; do
+  abi="${TARGET_ABIS[$i]}"
   echo "  $abi:"
   ls -lh "$OUT_DIR/$abi/"*.so
 done
