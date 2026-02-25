@@ -2,6 +2,7 @@ use clap::Parser;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use salvium_miner::background::{BackgroundConfig, BackgroundMonitor};
 use salvium_miner::daemon::DaemonClient;
 use salvium_miner::miner::{MiningEngine, MiningJob};
 use salvium_miner::stratum::{CryptoNoteEvent, CryptoNoteStratum};
@@ -53,6 +54,18 @@ struct Args {
     /// IPC mode: read jobs from stdin, write results to stdout (JSON lines)
     #[arg(long)]
     ipc: bool,
+
+    /// Background mining: only mine when system is idle and on AC power
+    #[arg(long)]
+    background: bool,
+
+    /// System idle % threshold to start background mining (0-99)
+    #[arg(long, default_value_t = 90)]
+    idle_threshold: u8,
+
+    /// Target CPU usage % for the miner when background mining (1-100)
+    #[arg(long, default_value_t = 40)]
+    mining_target: u8,
 }
 
 fn default_threads() -> usize {
@@ -167,6 +180,27 @@ fn run_benchmark(args: &Args) {
     );
 }
 
+fn maybe_start_background(args: &Args, engine: &MiningEngine) -> Option<BackgroundMonitor> {
+    if args.background {
+        let config = BackgroundConfig {
+            idle_threshold: args.idle_threshold,
+            min_idle_interval_secs: 10,
+            mining_target_pct: args.mining_target,
+        };
+        eprintln!(
+            "[bg-monitor] Background mining enabled (idle_threshold={}%, target={}%)",
+            config.idle_threshold, config.mining_target_pct
+        );
+        Some(BackgroundMonitor::start(
+            engine.throttle.clone(),
+            engine.running.clone(),
+            config,
+        ))
+    } else {
+        None
+    }
+}
+
 /// Initialize a MiningEngine for the given seed hash.
 fn init_engine(args: &Args, seed_bytes: &[u8]) -> MiningEngine {
     let use_large_pages = !args.no_large_pages;
@@ -225,6 +259,7 @@ fn run_stratum(args: &Args) {
     let mut last_stats = Instant::now();
     let mut current_seed_hash = String::new();
     let mut engine: Option<MiningEngine> = None;
+    let mut _bg_monitor: Option<BackgroundMonitor> = None;
 
     // Outer reconnection loop
     while running.load(Ordering::Relaxed) {
@@ -270,13 +305,15 @@ fn run_stratum(args: &Args) {
                     "[stratum] Seed hash: {:.16}... — initializing RandomX",
                     job.seed_hash
                 );
-                // Drop old engine first to free memory
+                // Drop old engine and monitor first to free memory
+                _bg_monitor = None;
                 drop(engine.take());
                 let new_engine = init_engine(args, &seed_bytes);
                 // Propagate our running flag
                 if !running.load(Ordering::Relaxed) {
                     new_engine.running.store(false, Ordering::Relaxed);
                 }
+                _bg_monitor = maybe_start_background(args, &new_engine);
                 engine = Some(new_engine);
                 current_seed_hash = job.seed_hash.clone();
             }
@@ -320,11 +357,13 @@ fn run_stratum(args: &Args) {
                                 "[stratum] Seed hash changed: {:.16}... — reinitializing RandomX",
                                 job.seed_hash
                             );
+                            _bg_monitor = None;
                             drop(engine.take());
                             let new_engine = init_engine(args, &seed_bytes);
                             if !running.load(Ordering::Relaxed) {
                                 new_engine.running.store(false, Ordering::Relaxed);
                             }
+                            _bg_monitor = maybe_start_background(args, &new_engine);
                             engine = Some(new_engine);
                             current_seed_hash = job.seed_hash.clone();
                             job_map.clear();
@@ -553,6 +592,9 @@ fn run_daemon(args: &Args) {
     // Set up SIGINT handler
     let running = engine.running.clone();
     ctrlc_handler(running.clone());
+
+    // Start background monitor if requested
+    let _bg_monitor = maybe_start_background(args, &engine);
 
     eprintln!();
     eprintln!("Mining started. Press Ctrl+C to stop.");

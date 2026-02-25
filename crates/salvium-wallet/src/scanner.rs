@@ -126,6 +126,11 @@ pub struct FoundOutput {
     pub asset_type: String,
     /// True if matched via the internal (self-send) CARROT scan path.
     pub is_carrot_internal: bool,
+    /// The public key whose derivation was used to detect this CN output.
+    /// For shared derivation this is tx_pub_key; for per-output derivation
+    /// this is the additional_pubkey. Needed for correct key image override
+    /// on PROTOCOL_TX returns.
+    pub cn_derivation_pubkey: Option<[u8; 32]>,
 }
 
 /// Scan a transaction's outputs for owned ones.
@@ -159,24 +164,6 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
         vec![]
     };
 
-    // Pre-compute per-output CN derivations from additional_pubkeys (tag 0x04).
-    // C++ ref: wallet2.cpp uses per-output derivation when additional_pubkeys
-    // are present (common for protocol_tx and multi-output pre-CARROT TXs).
-    let per_output_derivations: Vec<Option<[u8; 32]>> = tx
-        .additional_pubkeys
-        .iter()
-        .map(|pk| {
-            let d = salvium_crypto::generate_key_derivation(pk, &ctx.cn_view_secret);
-            if d.len() == 32 {
-                let mut arr = [0u8; 32];
-                arr.copy_from_slice(&d);
-                Some(arr)
-            } else {
-                None
-            }
-        })
-        .collect();
-
     for (out_idx, output) in tx.outputs.iter().enumerate() {
         let is_carrot_output = output.carrot_view_tag.is_some();
 
@@ -192,9 +179,14 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // Non-CARROT output: try CN scan with shared derivation first.
             let mut cn_found = false;
             if let Some(ref derivation) = cn_derivation {
-                if let Some(result) =
-                    try_cn_scan(ctx, derivation, output, tx.is_coinbase, tx.tx_type)
-                {
+                if let Some(result) = try_cn_scan(
+                    ctx,
+                    derivation,
+                    &tx.tx_pub_key,
+                    output,
+                    tx.is_coinbase,
+                    tx.tx_type,
+                ) {
                     found.push(result);
                     cn_found = true;
                 }
@@ -205,12 +197,23 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // keys (tag 0x04) for derivation instead of the shared tx_pub_key.
             // C++ ref: wallet2.cpp tries both shared and per-output derivations.
             if !cn_found {
-                if let Some(Some(ref per_output_deriv)) = per_output_derivations.get(out_idx) {
-                    if let Some(result) =
-                        try_cn_scan(ctx, per_output_deriv, output, tx.is_coinbase, tx.tx_type)
-                    {
-                        found.push(result);
-                        cn_found = true;
+                if let Some(per_output_pk) = tx.additional_pubkeys.get(out_idx) {
+                    let d =
+                        salvium_crypto::generate_key_derivation(per_output_pk, &ctx.cn_view_secret);
+                    if d.len() == 32 {
+                        let mut darr = [0u8; 32];
+                        darr.copy_from_slice(&d);
+                        if let Some(result) = try_cn_scan(
+                            ctx,
+                            &darr,
+                            per_output_pk,
+                            output,
+                            tx.is_coinbase,
+                            tx.tx_type,
+                        ) {
+                            found.push(result);
+                            cn_found = true;
+                        }
                     }
                 }
             }
@@ -231,6 +234,7 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
 fn try_cn_scan(
     ctx: &ScanContext,
     derivation: &[u8; 32],
+    derivation_pubkey: &[u8; 32],
     output: &TxOutput,
     is_coinbase: bool,
     tx_type: u8,
@@ -294,6 +298,7 @@ fn try_cn_scan(
         output_public_key: output.public_key,
         asset_type: output.asset_type.clone(),
         is_carrot_internal: false,
+        cn_derivation_pubkey: Some(*derivation_pubkey),
     })
 }
 
@@ -360,6 +365,7 @@ fn try_carrot_scan(
                     output_public_key: output.public_key,
                     asset_type: output.asset_type.clone(),
                     is_carrot_internal: false,
+                    cn_derivation_pubkey: None,
                 });
             }
         } else {
@@ -379,6 +385,7 @@ fn try_carrot_scan(
                 output_public_key: output.public_key,
                 asset_type: output.asset_type.clone(),
                 is_carrot_internal: false,
+                cn_derivation_pubkey: None,
             });
         }
     }
@@ -410,6 +417,7 @@ fn try_carrot_scan(
             output_public_key: output.public_key,
             asset_type: output.asset_type.clone(),
             is_carrot_internal: true,
+            cn_derivation_pubkey: None,
         });
     }
 

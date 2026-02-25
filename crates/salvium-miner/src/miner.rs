@@ -3,7 +3,7 @@
 //! Full mode: 2GB dataset shared across workers via Arc (randomx-rs).
 //! Light mode: 256MB cache shared across workers via Arc (randomx-rs).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -21,6 +21,42 @@ unsafe impl Sync for SharedCache {}
 struct SharedDataset(RandomXDataset);
 unsafe impl Send for SharedDataset {}
 unsafe impl Sync for SharedDataset {}
+
+/// Shared throttle state for background mining control.
+///
+/// Zero overhead when unused: defaults are 0/false, workers do two `Relaxed`
+/// loads that short-circuit immediately.
+#[derive(Clone)]
+pub struct ThrottleState {
+    /// Per-batch worker sleep in microseconds (0 = no throttle).
+    pub extra_sleep_us: Arc<AtomicU64>,
+    /// When true, workers are paused (background mining not yet active).
+    pub paused: Arc<AtomicBool>,
+    /// Independent pause/resume counter — paused when > 0.
+    pub pausers_count: Arc<AtomicU32>,
+}
+
+impl Default for ThrottleState {
+    fn default() -> Self {
+        Self {
+            extra_sleep_us: Arc::new(AtomicU64::new(0)),
+            paused: Arc::new(AtomicBool::new(false)),
+            pausers_count: Arc::new(AtomicU32::new(0)),
+        }
+    }
+}
+
+impl ThrottleState {
+    /// Increment the pausers counter (request workers to pause).
+    pub fn pause(&self) {
+        self.pausers_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Decrement the pausers counter (allow workers to resume if no other pausers).
+    pub fn resume(&self) {
+        self.pausers_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 /// A found block ready for submission
 pub struct FoundBlock {
@@ -50,6 +86,7 @@ pub struct MiningJob {
 pub struct MiningEngine {
     pub hash_count: Arc<AtomicU64>,
     pub running: Arc<AtomicBool>,
+    pub throttle: ThrottleState,
     result_rx: mpsc::Receiver<FoundBlock>,
     job_senders: Vec<mpsc::Sender<MiningJob>>,
     _handles: Vec<thread::JoinHandle<()>>,
@@ -92,6 +129,7 @@ impl MiningEngine {
 
         let hash_count = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
+        let throttle = ThrottleState::default();
         let (result_tx, result_rx) = mpsc::channel();
         let mut job_senders = Vec::new();
         let mut handles = Vec::new();
@@ -102,6 +140,7 @@ impl MiningEngine {
 
             let hash_count = Arc::clone(&hash_count);
             let running = Arc::clone(&running);
+            let throttle = throttle.clone();
             let result_tx = result_tx.clone();
             let ds = Arc::clone(&shared_ds);
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
@@ -119,7 +158,15 @@ impl MiningEngine {
                     }
                 };
                 eprintln!("Worker {worker_id} ready");
-                worker_loop(&vm, &job_rx, &running, &hash_count, &result_tx, nonce_start);
+                worker_loop(
+                    &vm,
+                    &job_rx,
+                    &running,
+                    &hash_count,
+                    &result_tx,
+                    nonce_start,
+                    &throttle,
+                );
             });
 
             handles.push(handle);
@@ -128,6 +175,7 @@ impl MiningEngine {
         Ok(Self {
             hash_count,
             running,
+            throttle,
             result_rx,
             job_senders,
             _handles: handles,
@@ -161,6 +209,7 @@ impl MiningEngine {
 
         let hash_count = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
+        let throttle = ThrottleState::default();
         let (result_tx, result_rx) = mpsc::channel();
         let mut job_senders = Vec::new();
         let mut handles = Vec::new();
@@ -171,6 +220,7 @@ impl MiningEngine {
 
             let hash_count = Arc::clone(&hash_count);
             let running = Arc::clone(&running);
+            let throttle = throttle.clone();
             let result_tx = result_tx.clone();
             let ca = Arc::clone(&shared_ca);
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
@@ -188,7 +238,15 @@ impl MiningEngine {
                     }
                 };
                 eprintln!("Worker {worker_id} ready (light mode)");
-                worker_loop(&vm, &job_rx, &running, &hash_count, &result_tx, nonce_start);
+                worker_loop(
+                    &vm,
+                    &job_rx,
+                    &running,
+                    &hash_count,
+                    &result_tx,
+                    nonce_start,
+                    &throttle,
+                );
             });
 
             handles.push(handle);
@@ -197,6 +255,7 @@ impl MiningEngine {
         Ok(Self {
             hash_count,
             running,
+            throttle,
             result_rx,
             job_senders,
             _handles: handles,
@@ -259,11 +318,18 @@ fn worker_loop(
     hash_count: &AtomicU64,
     result_tx: &mpsc::Sender<FoundBlock>,
     nonce_start: u32,
+    throttle: &ThrottleState,
 ) {
     let mut blobs: Vec<Vec<u8>> = vec![Vec::new(); BATCH_SIZE];
     let mut local_count: u64 = 0;
 
     while running.load(Ordering::Relaxed) {
+        // Background mining pause check
+        if throttle.paused.load(Ordering::Relaxed) {
+            thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+
         // Wait for a job
         let mut job = match job_rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(j) => j,
@@ -330,6 +396,16 @@ fn worker_loop(
             if local_count >= COUNTER_FLUSH_INTERVAL {
                 hash_count.fetch_add(local_count, Ordering::Relaxed);
                 local_count = 0;
+            }
+
+            // Throttle checks (zero overhead when defaults: two Relaxed loads)
+            if throttle.pausers_count.load(Ordering::Relaxed) > 0 {
+                thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+            let sleep_us = throttle.extra_sleep_us.load(Ordering::Relaxed);
+            if sleep_us > 0 {
+                thread::sleep(std::time::Duration::from_micros(sleep_us));
             }
 
             nonce = nonce.wrapping_add(BATCH_SIZE as u32);

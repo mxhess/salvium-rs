@@ -6,6 +6,7 @@
 
 use crate::miner::{
     check_hash, check_hash_target, find_nonce_offset, set_nonce, FoundBlock, MiningJob,
+    ThrottleState,
 };
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -34,6 +35,7 @@ pub trait HashAlgorithm: Send {
 pub struct MiningLoop {
     pub hash_count: Arc<AtomicU64>,
     pub running: Arc<AtomicBool>,
+    pub throttle: ThrottleState,
     result_rx: mpsc::Receiver<FoundBlock>,
     job_senders: Vec<mpsc::Sender<MiningJob>>,
     _handles: Vec<thread::JoinHandle<()>>,
@@ -51,6 +53,7 @@ impl MiningLoop {
     {
         let hash_count = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
+        let throttle = ThrottleState::default();
         let (result_tx, result_rx) = mpsc::channel();
         let mut job_senders = Vec::new();
         let mut handles = Vec::new();
@@ -63,6 +66,7 @@ impl MiningLoop {
 
             let hash_count = Arc::clone(&hash_count);
             let running = Arc::clone(&running);
+            let throttle = throttle.clone();
             let result_tx = result_tx.clone();
             let create_hasher = Arc::clone(&create_hasher);
             let nonce_start = (worker_id as u64 * (u32::MAX as u64 / num_threads as u64)) as u32;
@@ -85,6 +89,7 @@ impl MiningLoop {
                     &hash_count,
                     &result_tx,
                     nonce_start,
+                    &throttle,
                 );
             });
 
@@ -94,6 +99,7 @@ impl MiningLoop {
         Ok(Self {
             hash_count,
             running,
+            throttle,
             result_rx,
             job_senders,
             _handles: handles,
@@ -123,8 +129,15 @@ fn generic_worker_loop(
     hash_count: &AtomicU64,
     result_tx: &mpsc::Sender<FoundBlock>,
     nonce_start: u32,
+    throttle: &ThrottleState,
 ) {
     while running.load(Ordering::Relaxed) {
+        // Background mining pause check
+        if throttle.paused.load(Ordering::Relaxed) {
+            thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+
         let job = match job_rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(j) => j,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
@@ -152,6 +165,7 @@ fn generic_worker_loop(
                     result_tx,
                     nonce_start,
                     job_rx,
+                    throttle,
                 );
                 return;
             }
@@ -180,6 +194,16 @@ fn generic_worker_loop(
                 });
             }
 
+            // Throttle checks
+            if throttle.pausers_count.load(Ordering::Relaxed) > 0 {
+                thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+            let sleep_us = throttle.extra_sleep_us.load(Ordering::Relaxed);
+            if sleep_us > 0 {
+                thread::sleep(std::time::Duration::from_micros(sleep_us));
+            }
+
             nonce = nonce.wrapping_add(1);
             if nonce == nonce_start {
                 break; // Exhausted nonce space
@@ -189,6 +213,7 @@ fn generic_worker_loop(
 }
 
 /// Mine a single job until interrupted by stop or a new job.
+#[allow(clippy::too_many_arguments)]
 fn mine_single_job(
     hasher: &mut dyn HashAlgorithm,
     job: &MiningJob,
@@ -197,6 +222,7 @@ fn mine_single_job(
     result_tx: &mpsc::Sender<FoundBlock>,
     nonce_start: u32,
     job_rx: &mpsc::Receiver<MiningJob>,
+    throttle: &ThrottleState,
 ) {
     let nonce_offset = job
         .nonce_offset
@@ -218,6 +244,7 @@ fn mine_single_job(
                 result_tx,
                 nonce_start,
                 job_rx,
+                throttle,
             );
             return;
         }
@@ -244,6 +271,16 @@ fn mine_single_job(
                 blob_hex: hex::encode(&template),
                 job_id: job.job_id,
             });
+        }
+
+        // Throttle checks
+        if throttle.pausers_count.load(Ordering::Relaxed) > 0 {
+            thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+        let sleep_us = throttle.extra_sleep_us.load(Ordering::Relaxed);
+        if sleep_us > 0 {
+            thread::sleep(std::time::Duration::from_micros(sleep_us));
         }
 
         nonce = nonce.wrapping_add(1);

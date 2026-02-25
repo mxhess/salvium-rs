@@ -1675,16 +1675,26 @@ fn store_found_outputs(
             }
         }
 
-        // Pre-CARROT PROTOCOL return key image override.
+        // Pre-CARROT PROTOCOL return key image override + origin-based stake matching.
         // C++ ref: wallet2.cpp:2684-2719, generate_key_image_helper_precomp use_origin_data
         // For non-CARROT outputs in PROTOCOL_TX (tx_type=2), the key image
         // must use two-step derivation through the origin STAKE/AUDIT/CONVERT TX.
+        //
+        // CRITICAL: Protocol TXs often use per-output keys (additional_pubkeys)
+        // instead of the shared tx_pub_key. We must use the same pubkey that
+        // was used to detect the output, otherwise the P_change recovery and
+        // step-2 derivation will be wrong and the key image override won't fire.
+        let mut origin_stake_tx_hash: Option<String> = None;
         if tx.tx_type == 2 && !output.is_carrot {
             if let Some(ref spend_secret) = scan_ctx.cn_spend_secret {
-                let derivation = salvium_crypto::generate_key_derivation(
-                    &tx.tx_pub_key,
-                    &scan_ctx.cn_view_secret,
-                );
+                // Use the derivation pubkey that actually matched this output
+                // (shared tx_pub_key or per-output additional_pubkey).
+                let deriv_pubkey = output
+                    .cn_derivation_pubkey
+                    .as_ref()
+                    .unwrap_or(&tx.tx_pub_key);
+                let derivation =
+                    salvium_crypto::generate_key_derivation(deriv_pubkey, &scan_ctx.cn_view_secret);
                 if derivation.len() == 32 {
                     let mut d = [0u8; 32];
                     d.copy_from_slice(&derivation);
@@ -1697,6 +1707,13 @@ fn store_found_outputs(
                     let p_change_hex = hex::encode(p_change);
 
                     if let Ok(Some(origin)) = db.get_salvium_tx(&p_change_hex) {
+                        // Look up the origin output to get the stake TX hash.
+                        // This links the return directly to its origin stake.
+                        if let Ok(Some(origin_output)) = db.get_output_by_public_key(&p_change_hex)
+                        {
+                            origin_stake_tx_hash = Some(origin_output.tx_hash.clone());
+                        }
+
                         if let Ok(origin_pub) = hex::decode(&origin.origin_tx_pub) {
                             if origin_pub.len() == 32 {
                                 let mut origin_pub_arr = [0u8; 32];
@@ -1712,11 +1729,11 @@ fn store_found_outputs(
                                     origin.subaddr_major as u32,
                                     origin.subaddr_minor as u32,
                                 );
-                                // Step 2: x_return = derive_output_spend_key(view, &sk_change, protocol_pub, 0, 0, 0)
+                                // Step 2: x_return = derive_output_spend_key(view, &sk_change, deriv_pubkey, 0, 0, 0)
                                 let x_return = salvium_crypto::cn_scan::derive_output_spend_key(
                                     &scan_ctx.cn_view_secret,
                                     &sk_change,
-                                    &tx.tx_pub_key,
+                                    deriv_pubkey,
                                     0,
                                     0,
                                     0,
@@ -1750,43 +1767,80 @@ fn store_found_outputs(
         // Fix #2: Return output detection for PROTOCOL_TX.
         // C++ ref: wallet2.cpp:2754-2756 (m_locked_coins.erase on return)
         // When we find an output in a PROTOCOL_TX (tx_type=2) that belongs to us,
-        // it may be a return of previously staked funds. Match against locked stakes
-        // by asset type and mark the oldest matching stake as returned, preventing
-        // double-counting (staked amount + returned output).
+        // it may be a return of previously staked funds.
+        //
+        // Primary: match via origin TX hash from salvium_txs (precise, links
+        // return to exact stake). Falls back to asset-type matching (oldest first).
         if tx.tx_type == 2 {
             log::info!(
-                "protocol_tx output found: height={} amount={} asset={} out_idx={}",
+                "protocol_tx output found: height={} amount={} asset={} out_idx={} origin_tx={}",
                 tx.block_height,
                 output.amount,
                 output.asset_type,
-                output.output_index
+                output.output_index,
+                origin_stake_tx_hash
+                    .as_deref()
+                    .map(|h| &h[..h.len().min(16)])
+                    .unwrap_or("none")
             );
-            if let Ok(stakes) = db.get_stakes(Some("locked"), Some(&output.asset_type)) {
-                if let Some(stake) = stakes.first() {
-                    let tx_hash_hex = hex::encode(tx.tx_hash);
-                    if let Err(e) = db.mark_stake_returned(
-                        &stake.stake_tx_hash,
-                        &tx_hash_hex,
-                        tx.block_height as i64,
-                        block_timestamp as i64,
-                        &output.amount.to_string(),
-                    ) {
-                        log::warn!("failed to mark stake as returned: {}", e);
+
+            let tx_hash_hex = hex::encode(tx.tx_hash);
+            let mut matched = false;
+
+            // Primary: match by origin TX hash (precise).
+            if let Some(ref stake_tx_hash) = origin_stake_tx_hash {
+                if let Ok(stakes) = db.get_stakes(Some("locked"), None) {
+                    if let Some(stake) = stakes.iter().find(|s| &s.stake_tx_hash == stake_tx_hash) {
+                        if let Err(e) = db.mark_stake_returned(
+                            &stake.stake_tx_hash,
+                            &tx_hash_hex,
+                            tx.block_height as i64,
+                            block_timestamp as i64,
+                            &output.amount.to_string(),
+                        ) {
+                            log::warn!("failed to mark stake as returned: {}", e);
+                        } else {
+                            log::info!(
+                                "stake return (origin match): stake_tx={} return_tx={} amount={} asset={}",
+                                &stake.stake_tx_hash[..stake.stake_tx_hash.len().min(16)],
+                                &tx_hash_hex[..16],
+                                output.amount,
+                                output.asset_type
+                            );
+                            matched = true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: match by asset type (oldest first).
+            if !matched {
+                if let Ok(stakes) = db.get_stakes(Some("locked"), Some(&output.asset_type)) {
+                    if let Some(stake) = stakes.first() {
+                        if let Err(e) = db.mark_stake_returned(
+                            &stake.stake_tx_hash,
+                            &tx_hash_hex,
+                            tx.block_height as i64,
+                            block_timestamp as i64,
+                            &output.amount.to_string(),
+                        ) {
+                            log::warn!("failed to mark stake as returned: {}", e);
+                        } else {
+                            log::info!(
+                                "stake return (asset fallback): stake_tx={} return_tx={} amount={} asset={}",
+                                &stake.stake_tx_hash[..stake.stake_tx_hash.len().min(16)],
+                                &tx_hash_hex[..16],
+                                output.amount,
+                                output.asset_type
+                            );
+                        }
                     } else {
-                        log::info!(
-                            "stake return detected: stake_tx={} return_tx={} amount={} asset={}",
-                            &stake.stake_tx_hash[..stake.stake_tx_hash.len().min(16)],
-                            &tx_hash_hex[..16],
-                            output.amount,
+                        log::debug!(
+                            "protocol_tx output at height={}: no locked stakes match asset={}",
+                            tx.block_height,
                             output.asset_type
                         );
                     }
-                } else {
-                    log::debug!(
-                        "protocol_tx output at height={}: no locked stakes match asset={}",
-                        tx.block_height,
-                        output.asset_type
-                    );
                 }
             }
         }

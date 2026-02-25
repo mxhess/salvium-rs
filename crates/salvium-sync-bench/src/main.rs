@@ -424,7 +424,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .filter(|s| s.return_output_key.is_some())
             .collect();
-        let height_matched: Vec<_> = returned_stakes
+        let origin_matched: Vec<_> = returned_stakes
             .iter()
             .filter(|s| s.return_output_key.is_none())
             .collect();
@@ -448,7 +448,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if s.return_output_key.is_some() {
                     "tx-id"
                 } else {
-                    "height"
+                    "origin"
                 }
             } else if s.return_output_key.is_some() {
                 "has-key"
@@ -468,9 +468,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("{}", "-".repeat(100));
         println!(
-            "Return tracking: {} via tx-id match, {} via height-based fallback",
+            "Return tracking: {} via tx-id match, {} via origin/scan match",
             txid_matched.len(),
-            height_matched.len()
+            origin_matched.len()
         );
     }
 
