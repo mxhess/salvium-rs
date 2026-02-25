@@ -324,28 +324,64 @@ jobs:
         env:
           RELEASE_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
+          set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
-          REPO="salvium-project/salvium-rs-releases"
+          REPO="mxhess/salvium-rs-releases"
+
+          if [ -z "${RELEASE_TOKEN:-}" ]; then
+            echo "::error::RELEASES_PAT secret is not set. Configure it in repo Settings → Secrets."
+            exit 1
+          fi
 
           # Create release via GitHub API (draft for review before publishing)
-          RELEASE_ID=$(curl -s -X POST \
+          RESPONSE=$(curl -sf -X POST \
             -H "Authorization: token $RELEASE_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPO}/releases" \
             -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"body\":\"Pre-built Salvium Rust libraries and miner binaries for all platforms.\n\nBuilt from salvium-rs ${TAG}.\",\"draft\":true}" \
-            | jq -r '.id')
+          ) || {
+            echo "::error::Failed to create release on ${REPO}. Check that:"
+            echo "  1. The repo ${REPO} exists"
+            echo "  2. RELEASES_PAT has 'repo' scope for ${REPO}"
+            echo "  3. The PAT has not expired"
+            exit 1
+          }
+
+          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "::error::Release creation returned unexpected response:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
 
           echo "Release ID: $RELEASE_ID"
 
           # Upload each archive as a release asset
+          FAILED=0
           for file in release/*; do
             filename=$(basename "$file")
             echo "Uploading $filename..."
-            curl -s -X POST \
+            UPLOAD_RESP=$(curl -sf -X POST \
               -H "Authorization: token $RELEASE_TOKEN" \
               -H "Content-Type: application/octet-stream" \
               "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${filename}" \
-              --data-binary "@$file"
+              --data-binary "@$file") || {
+              echo "::warning::Failed to upload $filename"
+              FAILED=$((FAILED + 1))
+              continue
+            }
+            ASSET_STATE=$(echo "$UPLOAD_RESP" | jq -r '.state // empty')
+            if [ "$ASSET_STATE" = "uploaded" ]; then
+              echo "  ✓ $filename uploaded"
+            else
+              echo "::warning::$filename upload returned unexpected state: $ASSET_STATE"
+              FAILED=$((FAILED + 1))
+            fi
           done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED asset(s) failed to upload"
+            exit 1
+          fi
 
           echo "==> Published draft to https://github.com/${REPO}/releases/tag/${TAG}"
