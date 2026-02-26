@@ -608,6 +608,79 @@ pub unsafe extern "C" fn salvium_wallet_address_book_delete(
 }
 
 // =============================================================================
+// Subaddresses
+// =============================================================================
+
+/// Create a new subaddress in an account.
+///
+/// - `account_index`: major index (0 for default account)
+/// - `label`: null-terminated UTF-8 label (may be empty string)
+///
+/// Returns JSON: `{"major": i64, "minor": i64, "address": "..."}`.
+/// Caller must free with `salvium_string_free()`.
+/// Returns null on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_create_subaddress(
+    handle: *mut c_void,
+    account_index: i64,
+    label: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
+        let lbl = unsafe { c_str_to_str(label) }?;
+        let (major, minor, address) = wallet
+            .create_subaddress(account_index, lbl)
+            .map_err(|e| e.to_string())?;
+        let json = serde_json::json!({
+            "major": major,
+            "minor": minor,
+            "address": address,
+        });
+        serde_json::to_string(&json).map_err(|e| e.to_string())
+    })
+}
+
+/// Get all subaddresses for an account.
+///
+/// - `account_index`: major index (0 for default account)
+///
+/// Returns a JSON array of subaddress objects.
+/// Caller must free with `salvium_string_free()`.
+/// Returns null on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_get_subaddresses(
+    handle: *mut c_void,
+    account_index: i64,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
+        let rows = wallet
+            .get_subaddresses(account_index)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&rows).map_err(|e| e.to_string())
+    })
+}
+
+/// Set a label on a subaddress.
+///
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_label_subaddress(
+    handle: *mut c_void,
+    major: i64,
+    minor: i64,
+    label: *const c_char,
+) -> i32 {
+    ffi_try(|| {
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
+        let lbl = unsafe { c_str_to_str(label) }?;
+        wallet
+            .label_subaddress(major, minor, lbl)
+            .map_err(|e| e.to_string())
+    })
+}
+
+// =============================================================================
 // Transaction Notes
 // =============================================================================
 
