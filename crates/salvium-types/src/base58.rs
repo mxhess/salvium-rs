@@ -162,11 +162,7 @@ pub fn encode(data: &[u8]) -> String {
 
     let mut result = String::with_capacity(
         full_block_count * FULL_ENCODED_BLOCK_SIZE
-            + if last_block_size > 0 {
-                ENCODED_BLOCK_SIZES[last_block_size]
-            } else {
-                0
-            },
+            + if last_block_size > 0 { ENCODED_BLOCK_SIZES[last_block_size] } else { 0 },
     );
 
     for i in 0..full_block_count {

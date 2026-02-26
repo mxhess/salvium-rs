@@ -704,16 +704,12 @@ pub struct DaemonRpc {
 impl DaemonRpc {
     /// Create a daemon RPC client connected to the given URL.
     pub fn new(url: &str) -> Self {
-        Self {
-            client: RpcClient::new(url),
-        }
+        Self { client: RpcClient::new(url) }
     }
 
     /// Create with full configuration.
     pub fn with_config(config: RpcConfig) -> Self {
-        Self {
-            client: RpcClient::with_config(config),
-        }
+        Self { client: RpcClient::with_config(config) }
     }
 
     /// Get the underlying RPC client for custom calls.
@@ -727,24 +723,16 @@ impl DaemonRpc {
 
     /// Get daemon info (height, difficulty, sync status, etc.).
     pub async fn get_info(&self) -> Result<DaemonInfo, RpcError> {
-        let val = self
-            .client
-            .post("/get_info", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_info", &serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Get current blockchain height.
     pub async fn get_height(&self) -> Result<u64, RpcError> {
-        let val = self
-            .client
-            .post("/get_height", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_height", &serde_json::json!({})).await?;
         val.get("height")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult {
-                context: "get_height".into(),
-            })
+            .ok_or(RpcError::NoResult { context: "get_height".into() })
     }
 
     /// Check if daemon is synchronized.
@@ -755,10 +743,7 @@ impl DaemonRpc {
 
     /// Get hard fork info.
     pub async fn hard_fork_info(&self) -> Result<HardForkInfo, RpcError> {
-        let val = self
-            .client
-            .call("hard_fork_info", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("hard_fork_info", serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -770,19 +755,13 @@ impl DaemonRpc {
 
     /// Get daemon version information.
     pub async fn get_version(&self) -> Result<VersionInfo, RpcError> {
-        let val = self
-            .client
-            .call("get_version", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_version", serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Get the current block count (alias for height).
     pub async fn get_block_count(&self) -> Result<BlockCount, RpcError> {
-        let val = self
-            .client
-            .call("get_block_count", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_block_count", serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -792,13 +771,10 @@ impl DaemonRpc {
 
     /// Get the last (most recent) block header.
     pub async fn get_last_block_header(&self) -> Result<BlockHeader, RpcError> {
-        let val = self
-            .client
-            .call("get_last_block_header", serde_json::json!({}))
-            .await?;
-        let header = val.get("block_header").ok_or(RpcError::NoResult {
-            context: "get_last_block_header".into(),
-        })?;
+        let val = self.client.call("get_last_block_header", serde_json::json!({})).await?;
+        let header = val
+            .get("block_header")
+            .ok_or(RpcError::NoResult { context: "get_last_block_header".into() })?;
         Ok(serde_json::from_value(header.clone())?)
     }
 
@@ -806,10 +782,7 @@ impl DaemonRpc {
     pub async fn get_block_header_by_height(&self, height: u64) -> Result<BlockHeader, RpcError> {
         let val = self
             .client
-            .call(
-                "get_block_header_by_height",
-                serde_json::json!({ "height": height }),
-            )
+            .call("get_block_header_by_height", serde_json::json!({ "height": height }))
             .await?;
         let header = val.get("block_header").ok_or(RpcError::NoResult {
             context: format!("get_block_header_by_height({})", height),
@@ -821,10 +794,7 @@ impl DaemonRpc {
     pub async fn get_block_header_by_hash(&self, hash: &str) -> Result<BlockHeader, RpcError> {
         let val = self
             .client
-            .call(
-                "get_block_header_by_hash",
-                serde_json::json!({ "hash": hash }),
-            )
+            .call("get_block_header_by_hash", serde_json::json!({ "hash": hash }))
             .await?;
         let header = val.get("block_header").ok_or(RpcError::NoResult {
             context: format!("get_block_header_by_hash({})", &hash[..8.min(hash.len())]),
@@ -848,9 +818,9 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        let headers = val.get("headers").ok_or(RpcError::NoResult {
-            context: "get_block_headers_range".into(),
-        })?;
+        let headers = val
+            .get("headers")
+            .ok_or(RpcError::NoResult { context: "get_block_headers_range".into() })?;
         Ok(serde_json::from_value(headers.clone())?)
     }
 
@@ -872,10 +842,7 @@ impl DaemonRpc {
         req.insert("heights".to_string(), PsValue::Array(height_vals));
         let body = portable_storage::serialize(&req);
 
-        let resp_bytes = self
-            .client
-            .post_binary("/get_blocks_by_height.bin", body)
-            .await?;
+        let resp_bytes = self.client.post_binary("/get_blocks_by_height.bin", body).await?;
         let root = portable_storage::deserialize(&resp_bytes)?;
 
         // Check status.
@@ -894,12 +861,9 @@ impl DaemonRpc {
         }
 
         // Parse blocks array.
-        let blocks_arr = root
-            .get("blocks")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| RpcError::NoResult {
-                context: "get_blocks_by_height.bin: missing blocks".into(),
-            })?;
+        let blocks_arr = root.get("blocks").and_then(|v| v.as_array()).ok_or_else(|| {
+            RpcError::NoResult { context: "get_blocks_by_height.bin: missing blocks".into() }
+        })?;
 
         let mut entries = Vec::with_capacity(blocks_arr.len());
         for block_obj in blocks_arr {
@@ -907,26 +871,15 @@ impl DaemonRpc {
                 context: "get_blocks_by_height.bin: block entry not an object".into(),
             })?;
 
-            let block_blob = obj
-                .get("block")
-                .and_then(|v| v.as_bytes())
-                .unwrap_or(&[])
-                .to_vec();
+            let block_blob = obj.get("block").and_then(|v| v.as_bytes()).unwrap_or(&[]).to_vec();
 
             let txs = obj
                 .get("txs")
                 .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|t| t.as_bytes().map(|b| b.to_vec()))
-                        .collect()
-                })
+                .map(|arr| arr.iter().filter_map(|t| t.as_bytes().map(|b| b.to_vec())).collect())
                 .unwrap_or_default();
 
-            entries.push(BinBlockEntry {
-                block: block_blob,
-                txs,
-            });
+            entries.push(BinBlockEntry { block: block_blob, txs });
         }
 
         Ok(entries)
@@ -934,24 +887,16 @@ impl DaemonRpc {
 
     /// Get a full block by height (header + miner tx hash + tx hashes).
     pub async fn get_block(&self, height: u64) -> Result<BlockResult, RpcError> {
-        let val = self
-            .client
-            .call("get_block", serde_json::json!({"height": height}))
-            .await?;
+        let val = self.client.call("get_block", serde_json::json!({"height": height})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Get block hash at a given height.
     pub async fn get_block_hash(&self, height: u64) -> Result<String, RpcError> {
-        let val = self
-            .client
-            .call("on_get_block_hash", serde_json::json!([height]))
-            .await?;
+        let val = self.client.call("on_get_block_hash", serde_json::json!([height])).await?;
         val.as_str()
             .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult {
-                context: "get_block_hash".into(),
-            })
+            .ok_or(RpcError::NoResult { context: "get_block_hash".into() })
     }
 
     // =========================================================================
@@ -974,9 +919,8 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        let txs = val.get("txs").ok_or(RpcError::NoResult {
-            context: "get_transactions(txs)".into(),
-        })?;
+        let txs =
+            val.get("txs").ok_or(RpcError::NoResult { context: "get_transactions(txs)".into() })?;
         Ok(serde_json::from_value(txs.clone())?)
     }
 
@@ -986,8 +930,7 @@ impl DaemonRpc {
         tx_as_hex: &str,
         do_not_relay: bool,
     ) -> Result<SendRawTxResult, RpcError> {
-        self.send_raw_transaction_ex(tx_as_hex, do_not_relay, true, "SAL1")
-            .await
+        self.send_raw_transaction_ex(tx_as_hex, do_not_relay, true, "SAL1").await
     }
 
     /// Send a raw transaction with explicit parameters.
@@ -1015,18 +958,11 @@ impl DaemonRpc {
 
     /// Get transaction pool (mempool) hashes.
     pub async fn get_transaction_pool_hashes(&self) -> Result<Vec<String>, RpcError> {
-        let val = self
-            .client
-            .post("/get_transaction_pool_hashes", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_transaction_pool_hashes", &serde_json::json!({})).await?;
         let hashes = val
             .get("tx_hashes")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
             .unwrap_or_default();
         Ok(hashes)
     }
@@ -1040,10 +976,7 @@ impl DaemonRpc {
     ) -> Result<KeyImageSpentStatus, RpcError> {
         let val = self
             .client
-            .post(
-                "/is_key_image_spent",
-                &serde_json::json!({ "key_images": key_images }),
-            )
+            .post("/is_key_image_spent", &serde_json::json!({ "key_images": key_images }))
             .await?;
         Ok(serde_json::from_value(val)?)
     }
@@ -1072,9 +1005,7 @@ impl DaemonRpc {
             req["asset_type"] = serde_json::Value::String(asset_type.to_string());
         }
         let val = self.client.post("/get_outs", &req).await?;
-        let outs = val.get("outs").ok_or(RpcError::NoResult {
-            context: "get_outs".into(),
-        })?;
+        let outs = val.get("outs").ok_or(RpcError::NoResult { context: "get_outs".into() })?;
         Ok(serde_json::from_value(outs.clone())?)
     }
 
@@ -1103,9 +1034,9 @@ impl DaemonRpc {
             params["rct_asset_type"] = serde_json::Value::String(rct_asset_type.to_string());
         }
         let val = self.client.call("get_output_distribution", params).await?;
-        let dists = val.get("distributions").ok_or(RpcError::NoResult {
-            context: "get_output_distribution".into(),
-        })?;
+        let dists = val
+            .get("distributions")
+            .ok_or(RpcError::NoResult { context: "get_output_distribution".into() })?;
         Ok(serde_json::from_value(dists.clone())?)
     }
 
@@ -1134,9 +1065,9 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        let histogram = val.get("histogram").ok_or(RpcError::NoResult {
-            context: "get_output_histogram".into(),
-        })?;
+        let histogram = val
+            .get("histogram")
+            .ok_or(RpcError::NoResult { context: "get_output_histogram".into() })?;
         Ok(serde_json::from_value(histogram.clone())?)
     }
 
@@ -1165,17 +1096,13 @@ impl DaemonRpc {
 
     /// Submit a mined block.
     pub async fn submit_block(&self, block_blob_hex: &str) -> Result<(), RpcError> {
-        self.client
-            .call("submit_block", serde_json::json!([block_blob_hex]))
-            .await?;
+        self.client.call("submit_block", serde_json::json!([block_blob_hex])).await?;
         Ok(())
     }
 
     /// Get miner data (difficulty, height, seed info).
     pub async fn get_miner_data(&self) -> Result<Value, RpcError> {
-        self.client
-            .call("get_miner_data", serde_json::json!({}))
-            .await
+        self.client.call("get_miner_data", serde_json::json!({})).await
     }
 
     /// Start mining on the daemon. (Restricted)
@@ -1204,9 +1131,7 @@ impl DaemonRpc {
 
     /// Stop mining on the daemon. (Restricted)
     pub async fn stop_mining(&self) -> Result<Value, RpcError> {
-        self.client
-            .post("/stop_mining", &serde_json::json!({}))
-            .await
+        self.client.post("/stop_mining", &serde_json::json!({})).await
     }
 
     /// Get mining status. (Restricted)
@@ -1214,10 +1139,7 @@ impl DaemonRpc {
     /// Returns whether the daemon is actively mining, the hashrate, thread
     /// count, and target block information.
     pub async fn mining_status(&self) -> Result<MiningStatus, RpcError> {
-        let val = self
-            .client
-            .post("/mining_status", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/mining_status", &serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1229,10 +1151,7 @@ impl DaemonRpc {
     pub async fn get_fee_estimate(&self, grace_blocks: u64) -> Result<FeeEstimate, RpcError> {
         let val = self
             .client
-            .call(
-                "get_fee_estimate",
-                serde_json::json!({ "grace_blocks": grace_blocks }),
-            )
+            .call("get_fee_estimate", serde_json::json!({ "grace_blocks": grace_blocks }))
             .await?;
         Ok(serde_json::from_value(val)?)
     }
@@ -1243,19 +1162,13 @@ impl DaemonRpc {
 
     /// Get supply info (multi-asset supply tally).
     pub async fn get_supply_info(&self) -> Result<SupplyInfo, RpcError> {
-        let val = self
-            .client
-            .call("get_supply_info", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_supply_info", serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Get yield info (staking economics).
     pub async fn get_yield_info(&self) -> Result<YieldInfo, RpcError> {
-        let val = self
-            .client
-            .call("get_yield_info", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_yield_info", serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1265,22 +1178,16 @@ impl DaemonRpc {
 
     /// Get list of active connections to the daemon. (Restricted)
     pub async fn get_connections(&self) -> Result<Vec<ConnectionInfo>, RpcError> {
-        let val = self
-            .client
-            .call("get_connections", serde_json::json!({}))
-            .await?;
-        let conns = val.get("connections").ok_or(RpcError::NoResult {
-            context: "get_connections".into(),
-        })?;
+        let val = self.client.call("get_connections", serde_json::json!({})).await?;
+        let conns = val
+            .get("connections")
+            .ok_or(RpcError::NoResult { context: "get_connections".into() })?;
         Ok(serde_json::from_value(conns.clone())?)
     }
 
     /// Get the daemon's peer list (white and gray). (Restricted)
     pub async fn get_peer_list(&self) -> Result<(Vec<PeerEntry>, Vec<PeerEntry>), RpcError> {
-        let val = self
-            .client
-            .call("get_peer_list", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_peer_list", serde_json::json!({})).await?;
         let white: Vec<PeerEntry> = val
             .get("white_list")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
@@ -1294,10 +1201,7 @@ impl DaemonRpc {
 
     /// Get list of public nodes known to the daemon.
     pub async fn get_public_nodes(&self) -> Result<(Vec<PublicNode>, Vec<PublicNode>), RpcError> {
-        let val = self
-            .client
-            .call("get_public_nodes", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("get_public_nodes", serde_json::json!({})).await?;
         let white: Vec<PublicNode> = val
             .get("white")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
@@ -1311,10 +1215,7 @@ impl DaemonRpc {
 
     /// Get network statistics. (Restricted)
     pub async fn get_net_stats(&self) -> Result<NetStats, RpcError> {
-        let val = self
-            .client
-            .post("/get_net_stats", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_net_stats", &serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1337,28 +1238,21 @@ impl DaemonRpc {
 
     /// Get current bandwidth limits (kB/s).
     pub async fn get_limit(&self) -> Result<LimitInfo, RpcError> {
-        let val = self
-            .client
-            .post("/get_limit", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_limit", &serde_json::json!({})).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Set the max number of outgoing peers. (Restricted)
     pub async fn out_peers(&self, out_peers: u64) -> Result<OutPeersResult, RpcError> {
-        let val = self
-            .client
-            .post("/out_peers", &serde_json::json!({ "out_peers": out_peers }))
-            .await?;
+        let val =
+            self.client.post("/out_peers", &serde_json::json!({ "out_peers": out_peers })).await?;
         Ok(serde_json::from_value(val)?)
     }
 
     /// Set the max number of incoming peers. (Restricted)
     pub async fn in_peers(&self, in_peers: u64) -> Result<InPeersResult, RpcError> {
-        let val = self
-            .client
-            .post("/in_peers", &serde_json::json!({ "in_peers": in_peers }))
-            .await?;
+        let val =
+            self.client.post("/in_peers", &serde_json::json!({ "in_peers": in_peers })).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1368,26 +1262,19 @@ impl DaemonRpc {
 
     /// Set bans on peers. (Restricted)
     pub async fn set_bans(&self, bans: &[BanEntry]) -> Result<Value, RpcError> {
-        self.client
-            .call("set_bans", serde_json::json!({ "bans": bans }))
-            .await
+        self.client.call("set_bans", serde_json::json!({ "bans": bans })).await
     }
 
     /// Get list of banned peers. (Restricted)
     pub async fn get_bans(&self) -> Result<Vec<BanInfo>, RpcError> {
         let val = self.client.call("get_bans", serde_json::json!({})).await?;
-        let bans = val.get("bans").ok_or(RpcError::NoResult {
-            context: "get_bans".into(),
-        })?;
+        let bans = val.get("bans").ok_or(RpcError::NoResult { context: "get_bans".into() })?;
         Ok(serde_json::from_value(bans.clone())?)
     }
 
     /// Check if a specific address is banned. (Restricted)
     pub async fn banned(&self, address: &str) -> Result<BannedResult, RpcError> {
-        let val = self
-            .client
-            .call("banned", serde_json::json!({ "address": address }))
-            .await?;
+        let val = self.client.call("banned", serde_json::json!({ "address": address })).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1401,10 +1288,7 @@ impl DaemonRpc {
     pub async fn get_transaction_pool(
         &self,
     ) -> Result<(Vec<TxPoolEntry>, Vec<SpentKeyImageInfo>), RpcError> {
-        let val = self
-            .client
-            .post("/get_transaction_pool", &serde_json::json!({}))
-            .await?;
+        let val = self.client.post("/get_transaction_pool", &serde_json::json!({})).await?;
         let txs: Vec<TxPoolEntry> = val
             .get("transactions")
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default())
@@ -1418,28 +1302,21 @@ impl DaemonRpc {
 
     /// Get transaction pool statistics.
     pub async fn get_transaction_pool_stats(&self) -> Result<TxPoolStats, RpcError> {
-        let val = self
-            .client
-            .post("/get_transaction_pool_stats", &serde_json::json!({}))
-            .await?;
-        let stats = val.get("pool_stats").ok_or(RpcError::NoResult {
-            context: "get_transaction_pool_stats".into(),
-        })?;
+        let val = self.client.post("/get_transaction_pool_stats", &serde_json::json!({})).await?;
+        let stats = val
+            .get("pool_stats")
+            .ok_or(RpcError::NoResult { context: "get_transaction_pool_stats".into() })?;
         Ok(serde_json::from_value(stats.clone())?)
     }
 
     /// Get transaction pool backlog.
     pub async fn get_txpool_backlog(&self) -> Result<Value, RpcError> {
-        self.client
-            .post("/get_txpool_backlog", &serde_json::json!({}))
-            .await
+        self.client.post("/get_txpool_backlog", &serde_json::json!({})).await
     }
 
     /// Relay specific transactions by ID. (Restricted)
     pub async fn relay_tx(&self, txids: &[&str]) -> Result<Value, RpcError> {
-        self.client
-            .call("relay_tx", serde_json::json!({ "txids": txids }))
-            .await
+        self.client.call("relay_tx", serde_json::json!({ "txids": txids })).await
     }
 
     /// Flush transactions from the pool. (Restricted)
@@ -1460,9 +1337,7 @@ impl DaemonRpc {
 
     /// Set the daemon log level (0-4). (Restricted)
     pub async fn set_log_level(&self, level: u8) -> Result<Value, RpcError> {
-        self.client
-            .post("/set_log_level", &serde_json::json!({ "level": level }))
-            .await
+        self.client.post("/set_log_level", &serde_json::json!({ "level": level })).await
     }
 
     /// Set log categories. (Restricted)
@@ -1471,16 +1346,9 @@ impl DaemonRpc {
     pub async fn set_log_categories(&self, categories: &str) -> Result<String, RpcError> {
         let val = self
             .client
-            .post(
-                "/set_log_categories",
-                &serde_json::json!({ "categories": categories }),
-            )
+            .post("/set_log_categories", &serde_json::json!({ "categories": categories }))
             .await?;
-        Ok(val
-            .get("categories")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string())
+        Ok(val.get("categories").and_then(|v| v.as_str()).unwrap_or("").to_string())
     }
 
     /// Save the blockchain to disk. (Restricted)
@@ -1490,9 +1358,7 @@ impl DaemonRpc {
 
     /// Stop the daemon. (Restricted)
     pub async fn stop_daemon(&self) -> Result<Value, RpcError> {
-        self.client
-            .post("/stop_daemon", &serde_json::json!({}))
-            .await
+        self.client.post("/stop_daemon", &serde_json::json!({})).await
     }
 
     /// Get coinbase transaction sum for a range of blocks. (Restricted)
@@ -1519,13 +1385,10 @@ impl DaemonRpc {
 
     /// Get list of alternate (orphan) chains. (Restricted)
     pub async fn get_alternate_chains(&self) -> Result<Vec<AltChain>, RpcError> {
-        let val = self
-            .client
-            .call("get_alternate_chains", serde_json::json!({}))
-            .await?;
-        let chains = val.get("chains").ok_or(RpcError::NoResult {
-            context: "get_alternate_chains".into(),
-        })?;
+        let val = self.client.call("get_alternate_chains", serde_json::json!({})).await?;
+        let chains = val
+            .get("chains")
+            .ok_or(RpcError::NoResult { context: "get_alternate_chains".into() })?;
         Ok(serde_json::from_value(chains.clone())?)
     }
 
@@ -1533,15 +1396,11 @@ impl DaemonRpc {
     ///
     /// Returns the new blockchain height after popping.
     pub async fn pop_blocks(&self, nblocks: u64) -> Result<u64, RpcError> {
-        let val = self
-            .client
-            .post("/pop_blocks", &serde_json::json!({ "nblocks": nblocks }))
-            .await?;
+        let val =
+            self.client.post("/pop_blocks", &serde_json::json!({ "nblocks": nblocks })).await?;
         val.get("height")
             .and_then(|v| v.as_u64())
-            .ok_or(RpcError::NoResult {
-                context: "pop_blocks".into(),
-            })
+            .ok_or(RpcError::NoResult { context: "pop_blocks".into() })
     }
 
     /// Prune the blockchain. (Restricted)
@@ -1549,10 +1408,8 @@ impl DaemonRpc {
     /// If `check` is true, only checks the current pruning status without
     /// performing additional pruning.
     pub async fn prune_blockchain(&self, check: bool) -> Result<PruneResult, RpcError> {
-        let val = self
-            .client
-            .call("prune_blockchain", serde_json::json!({ "check": check }))
-            .await?;
+        let val =
+            self.client.call("prune_blockchain", serde_json::json!({ "check": check })).await?;
         Ok(serde_json::from_value(val)?)
     }
 
@@ -1620,11 +1477,7 @@ impl DaemonRpc {
                 }),
             )
             .await?;
-        val.as_str()
-            .map(|s| s.to_string())
-            .ok_or(RpcError::NoResult {
-                context: "calc_pow".into(),
-            })
+        val.as_str().map(|s| s.to_string()).ok_or(RpcError::NoResult { context: "calc_pow".into() })
     }
 
     // =========================================================================
@@ -1669,10 +1522,7 @@ impl DaemonRpc {
     /// Used by the client-side payment mining system where clients mine
     /// to earn RPC credits for queries.
     pub async fn get_rpc_payment_info(&self) -> Result<RpcPaymentInfo, RpcError> {
-        let val = self
-            .client
-            .call("rpc_access_info", serde_json::json!({}))
-            .await?;
+        let val = self.client.call("rpc_access_info", serde_json::json!({})).await?;
 
         Ok(RpcPaymentInfo {
             credits: val["credits"].as_u64().unwrap_or(0),
@@ -1725,10 +1575,7 @@ mod tests {
 
     #[test]
     fn test_output_request_serialize() {
-        let req = OutputRequest {
-            amount: 0,
-            index: 42,
-        };
+        let req = OutputRequest { amount: 0, index: 42 };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["amount"], 0);
         assert_eq!(json["index"], 42);
@@ -1889,12 +1736,7 @@ mod tests {
 
     #[test]
     fn test_ban_entry_serialize() {
-        let ban = BanEntry {
-            host: "192.168.1.100".to_string(),
-            ip: 0,
-            ban: true,
-            seconds: 3600,
-        };
+        let ban = BanEntry { host: "192.168.1.100".to_string(), ip: 0, ban: true, seconds: 3600 };
         let json = serde_json::to_value(&ban).unwrap();
         assert_eq!(json["host"], "192.168.1.100");
         assert_eq!(json["ban"], true);

@@ -106,14 +106,7 @@ impl MiningEngine {
 
         let (cache, flags, using_large_pages) =
             alloc_cache(base_flags, seed_hash, use_large_pages)?;
-        eprintln!(
-            "Large pages: {}",
-            if using_large_pages {
-                "YES"
-            } else {
-                "NO (falling back)"
-            }
-        );
+        eprintln!("Large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
         eprintln!("RandomX flags: {:?}", flags);
         eprintln!("Cache initialized (256MB)");
 
@@ -172,14 +165,7 @@ impl MiningEngine {
             handles.push(handle);
         }
 
-        Ok(Self {
-            hash_count,
-            running,
-            throttle,
-            result_rx,
-            job_senders,
-            _handles: handles,
-        })
+        Ok(Self { hash_count, running, throttle, result_rx, job_senders, _handles: handles })
     }
 
     /// Initialize light mode (single shared 256MB cache)
@@ -193,14 +179,7 @@ impl MiningEngine {
 
         let (cache, flags, using_large_pages) =
             alloc_cache(base_flags, seed_hash, use_large_pages)?;
-        eprintln!(
-            "Large pages: {}",
-            if using_large_pages {
-                "YES"
-            } else {
-                "NO (falling back)"
-            }
-        );
+        eprintln!("Large pages: {}", if using_large_pages { "YES" } else { "NO (falling back)" });
         eprintln!("RandomX flags: {:?} (light mode)", flags);
         eprintln!("Cache initialized (256MB shared)");
 
@@ -252,14 +231,7 @@ impl MiningEngine {
             handles.push(handle);
         }
 
-        Ok(Self {
-            hash_count,
-            running,
-            throttle,
-            result_rx,
-            job_senders,
-            _handles: handles,
-        })
+        Ok(Self { hash_count, running, throttle, result_rx, job_senders, _handles: handles })
     }
 
     pub fn send_job(&self, job: MiningJob) {
@@ -337,9 +309,8 @@ fn worker_loop(
             Err(_) => break,
         };
 
-        let mut nonce_offset = job
-            .nonce_offset
-            .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+        let mut nonce_offset =
+            job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
         for blob in &mut blobs {
             blob.clone_from(&job.hashing_blob);
@@ -357,9 +328,8 @@ fn worker_loop(
                     local_count = 0;
                 }
                 job = new_job;
-                nonce_offset = job
-                    .nonce_offset
-                    .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+                nonce_offset =
+                    job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
                 nonce = nonce_start;
                 for blob in &mut blobs {
                     blob.clone_from(&job.hashing_blob);
@@ -373,9 +343,7 @@ fn worker_loop(
 
             // Pipelined hash (uses RandomX first/next/last internally)
             let batch_refs: Vec<&[u8]> = blobs.iter().map(|b| b.as_slice()).collect();
-            let hashes = vm
-                .calculate_hash_set(&batch_refs)
-                .expect("RandomX batch hash failed");
+            let hashes = vm.calculate_hash_set(&batch_refs).expect("RandomX batch hash failed");
             local_count += BATCH_SIZE as u64;
 
             // Check all results
@@ -428,9 +396,7 @@ fn submit_block(
     result_tx: &mpsc::Sender<FoundBlock>,
 ) {
     let mut template = job.template_blob.clone();
-    let tmpl_offset = job
-        .nonce_offset
-        .unwrap_or_else(|| find_nonce_offset(&template));
+    let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
     set_nonce(&mut template, tmpl_offset, nonce);
     let _ = result_tx.send(FoundBlock {
         nonce,

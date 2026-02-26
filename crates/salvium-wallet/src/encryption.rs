@@ -51,9 +51,8 @@ pub fn encrypt_wallet_data(plaintext: &[u8], password: &[u8]) -> Result<Vec<u8>,
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|e| WalletError::Encryption(e.to_string()))?;
+    let ciphertext =
+        cipher.encrypt(nonce, plaintext).map_err(|e| WalletError::Encryption(e.to_string()))?;
 
     // Build file: header + ciphertext.
     let mut output = Vec::with_capacity(HEADER_SIZE + ciphertext.len());
@@ -109,10 +108,7 @@ pub fn decrypt_wallet_data(encrypted: &[u8], password: &[u8]) -> Result<Vec<u8>,
     // Check version.
     let version = encrypted[4];
     if version != VERSION {
-        return Err(WalletError::InvalidFile(format!(
-            "unsupported version: {}",
-            version
-        )));
+        return Err(WalletError::InvalidFile(format!("unsupported version: {}", version)));
     }
 
     // Extract salt, nonce, and ciphertext.
@@ -138,9 +134,7 @@ pub fn decrypt_wallet_data(encrypted: &[u8], password: &[u8]) -> Result<Vec<u8>,
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(nonce_bytes);
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| WalletError::DecryptionFailed)?;
+    let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| WalletError::DecryptionFailed)?;
 
     Ok(plaintext)
 }

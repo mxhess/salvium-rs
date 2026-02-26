@@ -33,11 +33,7 @@ pub struct TxSummary {
 impl Transaction {
     /// Generate a summary of this transaction.
     pub fn summary(&self) -> TxSummary {
-        let is_coinbase = self
-            .prefix
-            .inputs
-            .iter()
-            .any(|i| matches!(i, TxInput::Gen { .. }));
+        let is_coinbase = self.prefix.inputs.iter().any(|i| matches!(i, TxInput::Gen { .. }));
         let fee = self.rct.as_ref().map(|r| r.txn_fee).unwrap_or(0);
 
         TxSummary {
@@ -55,11 +51,7 @@ impl Transaction {
 
     /// Extract all key images from the transaction inputs.
     pub fn key_images(&self) -> Vec<[u8; 32]> {
-        self.prefix
-            .inputs
-            .iter()
-            .filter_map(|i| i.key_image().copied())
-            .collect()
+        self.prefix.inputs.iter().filter_map(|i| i.key_image().copied()).collect()
     }
 
     /// Extract all output one-time keys.
@@ -82,10 +74,7 @@ impl Transaction {
 
     /// Check if this transaction is a coinbase (miner) transaction.
     pub fn is_coinbase(&self) -> bool {
-        self.prefix
-            .inputs
-            .iter()
-            .any(|i| matches!(i, TxInput::Gen { .. }))
+        self.prefix.inputs.iter().any(|i| matches!(i, TxInput::Gen { .. }))
     }
 
     /// Get the total number of ring members across all inputs.
@@ -102,18 +91,12 @@ impl Transaction {
 
     /// Check if this is a CARROT-era transaction (uses TCLSAG).
     pub fn is_carrot_era(&self) -> bool {
-        self.rct
-            .as_ref()
-            .map(|r| r.rct_type >= rct_type::SALVIUM_ONE)
-            .unwrap_or(false)
+        self.rct.as_ref().map(|r| r.rct_type >= rct_type::SALVIUM_ONE).unwrap_or(false)
     }
 
     /// Get the output commitment public keys (for verification).
     pub fn output_commitments(&self) -> Vec<[u8; 32]> {
-        self.rct
-            .as_ref()
-            .map(|r| r.out_pk.clone())
-            .unwrap_or_default()
+        self.rct.as_ref().map(|r| r.out_pk.clone()).unwrap_or_default()
     }
 
     /// Get the encrypted amount data for each output.
@@ -290,9 +273,7 @@ pub fn validate_structure(tx: &Transaction) -> Result<(), TxError> {
                     }
                 }
                 TxInput::Gen { .. } => {
-                    return Err(TxError::Invalid(
-                        "non-coinbase tx has generation input".into(),
-                    ));
+                    return Err(TxError::Invalid("non-coinbase tx has generation input".into()));
                 }
             }
         }

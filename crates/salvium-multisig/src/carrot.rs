@@ -104,12 +104,7 @@ pub struct CarrotTransactionProposal {
 impl CarrotTransactionProposal {
     /// Create an empty proposal.
     pub fn new() -> Self {
-        Self {
-            payment_proposals: Vec::new(),
-            self_send_proposals: Vec::new(),
-            fee: 0,
-            tx_type: 3,
-        }
+        Self { payment_proposals: Vec::new(), self_send_proposals: Vec::new(), fee: 0, tx_type: 3 }
     }
 
     /// Add a payment output.
@@ -215,10 +210,7 @@ impl MultisigCarrotAccount {
     /// Create a new CARROT-capable multisig account.
     pub fn new(threshold: usize, signer_count: usize) -> Result<Self, String> {
         let account = MultisigAccount::new(threshold, signer_count)?;
-        Ok(Self {
-            account,
-            carrot_keys: None,
-        })
+        Ok(Self { account, carrot_keys: None })
     }
 
     /// Derive the CARROT key set from a master secret (typically the spend key).
@@ -245,10 +237,7 @@ impl MultisigCarrotAccount {
         let spend_bytes =
             hex::decode(secret_spend).map_err(|e| format!("invalid secret_spend hex: {}", e))?;
         if spend_bytes.len() != 32 {
-            return Err(format!(
-                "secret_spend: expected 32 bytes, got {}",
-                spend_bytes.len()
-            ));
+            return Err(format!("secret_spend: expected 32 bytes, got {}", spend_bytes.len()));
         }
         let mut master = [0u8; 32];
         master.copy_from_slice(&spend_bytes);
@@ -295,10 +284,8 @@ impl MultisigCarrotAccount {
     /// # Errors
     /// Returns `Err` if `derive_carrot_keys` has not been called.
     pub fn get_carrot_address(&self, network: &str) -> Result<String, String> {
-        let keys = self
-            .carrot_keys
-            .as_ref()
-            .ok_or_else(|| "CARROT keys not derived".to_string())?;
+        let keys =
+            self.carrot_keys.as_ref().ok_or_else(|| "CARROT keys not derived".to_string())?;
 
         // Network byte: 0 = mainnet, 1 = testnet, 2 = stagenet
         let network_byte: u8 = match network {
@@ -343,10 +330,8 @@ impl MultisigCarrotAccount {
         major: u32,
         minor: u32,
     ) -> Result<String, String> {
-        let keys = self
-            .carrot_keys
-            .as_ref()
-            .ok_or_else(|| "CARROT keys not derived".to_string())?;
+        let keys =
+            self.carrot_keys.as_ref().ok_or_else(|| "CARROT keys not derived".to_string())?;
 
         // Derive subaddress spend pubkey using CARROT subaddress derivation.
         let spend_bytes = hex::decode(&keys.account_spend_pubkey)
@@ -425,10 +410,7 @@ pub fn build_multisig_carrot_tx(
     proposal: &CarrotTransactionProposal,
     account: &MultisigCarrotAccount,
 ) -> Result<Vec<u8>, String> {
-    let keys = account
-        .carrot_keys
-        .as_ref()
-        .ok_or("CARROT keys not derived")?;
+    let keys = account.carrot_keys.as_ref().ok_or("CARROT keys not derived")?;
 
     if proposal.payment_proposals.is_empty() && proposal.self_send_proposals.is_empty() {
         return Err("proposal has no outputs".to_string());
@@ -436,10 +418,8 @@ pub fn build_multisig_carrot_tx(
 
     // Build CARROT outputs using the multisig account's aggregate keys.
     let spend_pubkey = hex_decode_32(&keys.account_spend_pubkey, "account_spend_pubkey")?;
-    let view_pubkey = hex_decode_32(
-        &keys.primary_address_view_pubkey,
-        "primary_address_view_pubkey",
-    )?;
+    let view_pubkey =
+        hex_decode_32(&keys.primary_address_view_pubkey, "primary_address_view_pubkey")?;
 
     let mut outputs = Vec::new();
 
@@ -527,10 +507,7 @@ pub fn generate_multisig_carrot_key_image(
     account: &MultisigCarrotAccount,
     output_pubkey: &[u8; 32],
 ) -> Result<[u8; 32], String> {
-    let keys = account
-        .carrot_keys
-        .as_ref()
-        .ok_or("CARROT keys not derived")?;
+    let keys = account.carrot_keys.as_ref().ok_or("CARROT keys not derived")?;
 
     // The generate_image_key (k_gi) is one component of the CARROT spend key.
     // For a full key image, we need: (k_gi + k^o_g) * H_p(Ko)
@@ -544,10 +521,7 @@ pub fn generate_multisig_carrot_key_image(
     let mut gi32 = [0u8; 32];
     gi32.copy_from_slice(&gi_bytes);
 
-    Ok(crate::key_image::compute_partial_key_image(
-        &gi32,
-        output_pubkey,
-    ))
+    Ok(crate::key_image::compute_partial_key_image(&gi32, output_pubkey))
 }
 
 // ---------------------------------------------------------------------------
@@ -577,10 +551,7 @@ mod tests {
     fn test_enote_type_from_u8() {
         assert_eq!(CarrotEnoteType::from_u8(0), Some(CarrotEnoteType::Payment));
         assert_eq!(CarrotEnoteType::from_u8(1), Some(CarrotEnoteType::Change));
-        assert_eq!(
-            CarrotEnoteType::from_u8(2),
-            Some(CarrotEnoteType::SelfSpend)
-        );
+        assert_eq!(CarrotEnoteType::from_u8(2), Some(CarrotEnoteType::SelfSpend));
         assert_eq!(CarrotEnoteType::from_u8(3), None);
     }
 
@@ -649,10 +620,7 @@ mod tests {
         tp.add_self_send("SC1self", 200_000_000, CarrotEnoteType::Change);
         assert_eq!(tp.self_send_proposals.len(), 1);
         assert_eq!(tp.self_send_proposals[0].amount, 200_000_000);
-        assert_eq!(
-            tp.self_send_proposals[0].enote_type,
-            CarrotEnoteType::Change
-        );
+        assert_eq!(tp.self_send_proposals[0].enote_type, CarrotEnoteType::Change);
     }
 
     #[test]
@@ -738,9 +706,7 @@ mod tests {
         let view = "22".repeat(32);
         let result = acct.derive_carrot_keys(&spend, &view);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Key exchange must be complete"));
+        assert!(result.unwrap_err().contains("Key exchange must be complete"));
     }
 
     #[test]
@@ -788,8 +754,7 @@ mod tests {
     #[test]
     fn test_get_carrot_address_mainnet() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let addr = acct.get_carrot_address("mainnet").unwrap();
         assert!(addr.starts_with("SC1"));
         assert!(!addr.starts_with("SC1T"));
@@ -798,8 +763,7 @@ mod tests {
     #[test]
     fn test_get_carrot_address_testnet() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let addr = acct.get_carrot_address("testnet").unwrap();
         assert!(addr.starts_with("SC1T"));
     }
@@ -807,8 +771,7 @@ mod tests {
     #[test]
     fn test_get_carrot_subaddress() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let sub = acct.get_carrot_subaddress("mainnet", 0, 1).unwrap();
         assert!(sub.starts_with("SC1"));
         assert!(!sub.is_empty());
@@ -825,8 +788,7 @@ mod tests {
     #[test]
     fn test_get_carrot_subaddress_differs_by_index() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let sub1 = acct.get_carrot_subaddress("mainnet", 0, 1).unwrap();
         let sub2 = acct.get_carrot_subaddress("mainnet", 0, 2).unwrap();
         assert_ne!(sub1, sub2);
@@ -837,8 +799,7 @@ mod tests {
     #[test]
     fn test_build_multisig_carrot_tx_produces_output() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let mut proposal = CarrotTransactionProposal::new();
         proposal.add_payment("SC1dest", 1_000_000_000, "SAL", false);
         proposal.fee = 10_000_000;
@@ -852,8 +813,7 @@ mod tests {
     #[test]
     fn test_build_multisig_carrot_tx_rejects_empty_proposal() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let proposal = CarrotTransactionProposal::new();
         let result = build_multisig_carrot_tx(&proposal, &acct);
         assert!(result.is_err());
@@ -862,8 +822,7 @@ mod tests {
     #[test]
     fn test_generate_multisig_carrot_key_image() {
         let mut acct = completed_account();
-        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32))
-            .unwrap();
+        acct.derive_carrot_keys(&"11".repeat(32), &"22".repeat(32)).unwrap();
         let pubkey = {
             let mut s = [0u8; 32];
             s[0] = 7;

@@ -22,10 +22,7 @@ pub(crate) struct DaemonHandle {
 
 impl DaemonHandle {
     fn new(daemon: DaemonRpc) -> Self {
-        Self {
-            daemon,
-            in_use: AtomicUsize::new(0),
-        }
+        Self { daemon, in_use: AtomicUsize::new(0) }
     }
 }
 
@@ -79,9 +76,7 @@ pub unsafe extern "C" fn salvium_daemon_get_info(handle: *mut c_void) -> *mut c_
     ffi_try_string(|| {
         let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
         let rt = crate::runtime();
-        let info = rt
-            .block_on(dh.daemon.get_info())
-            .map_err(|e| e.to_string())?;
+        let info = rt.block_on(dh.daemon.get_info()).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| e.to_string())
     })
 }
@@ -128,9 +123,7 @@ pub unsafe extern "C" fn salvium_daemon_get_fee_estimate(handle: *mut c_void) ->
     ffi_try_string(|| {
         let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
         let rt = crate::runtime();
-        let fee = rt
-            .block_on(dh.daemon.get_fee_estimate(0))
-            .map_err(|e| e.to_string())?;
+        let fee = rt.block_on(dh.daemon.get_fee_estimate(0)).map_err(|e| e.to_string())?;
         serde_json::to_string(&fee).map_err(|e| e.to_string())
     })
 }
@@ -143,9 +136,7 @@ pub unsafe extern "C" fn salvium_daemon_get_supply_info(handle: *mut c_void) -> 
     ffi_try_string(|| {
         let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
         let rt = crate::runtime();
-        let info = rt
-            .block_on(dh.daemon.get_supply_info())
-            .map_err(|e| e.to_string())?;
+        let info = rt.block_on(dh.daemon.get_supply_info()).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| e.to_string())
     })
 }
@@ -158,9 +149,7 @@ pub unsafe extern "C" fn salvium_daemon_get_yield_info(handle: *mut c_void) -> *
     ffi_try_string(|| {
         let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
         let rt = crate::runtime();
-        let info = rt
-            .block_on(dh.daemon.get_yield_info())
-            .map_err(|e| e.to_string())?;
+        let info = rt.block_on(dh.daemon.get_yield_info()).map_err(|e| e.to_string())?;
         serde_json::to_string(&info).map_err(|e| e.to_string())
     })
 }

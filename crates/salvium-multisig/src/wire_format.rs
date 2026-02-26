@@ -23,27 +23,15 @@ pub fn encode_kex_message(msg: &SignedKexMessage) -> String {
     let mut map = HashMap::new();
 
     // Signing pubkey and signature are always present
-    map.insert(
-        "signing_pubkey".to_string(),
-        PsValue::String(msg.signing_pubkey.to_vec()),
-    );
-    map.insert(
-        "signature".to_string(),
-        PsValue::String(msg.signature.to_bytes().to_vec()),
-    );
+    map.insert("signing_pubkey".to_string(), PsValue::String(msg.signing_pubkey.to_vec()));
+    map.insert("signature".to_string(), PsValue::String(msg.signature.to_bytes().to_vec()));
 
     if msg.inner.round == 1 {
         // Round 1: include msg_privkey (the view key contribution)
-        map.insert(
-            "msg_privkey".to_string(),
-            PsValue::String(msg.msg_privkey.to_vec()),
-        );
+        map.insert("msg_privkey".to_string(), PsValue::String(msg.msg_privkey.to_vec()));
     } else {
         // Round N: include kex_round and msg_pubkeys
-        map.insert(
-            "kex_round".to_string(),
-            PsValue::Uint32(msg.inner.round as u32),
-        );
+        map.insert("kex_round".to_string(), PsValue::Uint32(msg.inner.round as u32));
 
         let pubkeys: Vec<PsValue> = msg
             .inner
@@ -60,11 +48,7 @@ pub fn encode_kex_message(msg: &SignedKexMessage) -> String {
     let encoded = base58::encode(&blob);
 
     // Prepend magic bytes
-    let magic = if msg.inner.round == 1 {
-        MAGIC_ROUND1
-    } else {
-        MAGIC_ROUND_N
-    };
+    let magic = if msg.inner.round == 1 { MAGIC_ROUND1 } else { MAGIC_ROUND_N };
     let magic_str = std::str::from_utf8(magic).unwrap();
     format!("{}{}", magic_str, encoded)
 }
@@ -100,9 +84,7 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
     // Epee deserialize
     let ps = portable_storage::deserialize(&blob)
         .map_err(|e| format!("portable storage deserialize failed: {}", e))?;
-    let obj = ps
-        .as_object()
-        .ok_or_else(|| "expected object at top level".to_string())?;
+    let obj = ps.as_object().ok_or_else(|| "expected object at top level".to_string())?;
 
     // Extract signing_pubkey (32 bytes)
     let signing_pubkey_bytes = obj
@@ -124,10 +106,7 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
         .and_then(|v| v.as_bytes())
         .ok_or_else(|| "missing signature".to_string())?;
     if sig_bytes.len() != 64 {
-        return Err(format!(
-            "signature: expected 64 bytes, got {}",
-            sig_bytes.len()
-        ));
+        return Err(format!("signature: expected 64 bytes, got {}", sig_bytes.len()));
     }
     let mut sig_arr = [0u8; 64];
     sig_arr.copy_from_slice(sig_bytes);
@@ -140,10 +119,7 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
             .and_then(|v| v.as_bytes())
             .ok_or_else(|| "missing msg_privkey for round 1".to_string())?;
         if privkey_bytes.len() != 32 {
-            return Err(format!(
-                "msg_privkey: expected 32 bytes, got {}",
-                privkey_bytes.len()
-            ));
+            return Err(format!("msg_privkey: expected 32 bytes, got {}", privkey_bytes.len()));
         }
         let mut msg_privkey = [0u8; 32];
         msg_privkey.copy_from_slice(privkey_bytes);
@@ -172,10 +148,8 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
             .and_then(|v| v.as_array())
             .ok_or_else(|| "missing msg_pubkeys".to_string())?;
 
-        let keys: Vec<String> = pubkeys
-            .iter()
-            .filter_map(|v| v.as_bytes().map(hex::encode))
-            .collect();
+        let keys: Vec<String> =
+            pubkeys.iter().filter_map(|v| v.as_bytes().map(hex::encode)).collect();
 
         let kex_msg = KexMessage {
             round,
@@ -221,12 +195,7 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
         }
     }
 
-    let signed = SignedKexMessage {
-        inner,
-        msg_privkey,
-        signing_pubkey,
-        signature,
-    };
+    let signed = SignedKexMessage { inner, msg_privkey, signing_pubkey, signature };
 
     // Verify the Schnorr signature (redundant safety net after field validation)
     signed.verify()?;
@@ -240,21 +209,12 @@ pub fn decode_kex_message(wire: &str) -> Result<SignedKexMessage, String> {
 pub fn encode_tx_set(set: &MultisigTxSet) -> Vec<u8> {
     let mut map = HashMap::new();
 
-    map.insert(
-        "threshold".to_string(),
-        PsValue::Uint32(set.threshold as u32),
-    );
-    map.insert(
-        "signer_count".to_string(),
-        PsValue::Uint32(set.signer_count as u32),
-    );
+    map.insert("threshold".to_string(), PsValue::Uint32(set.threshold as u32));
+    map.insert("signer_count".to_string(), PsValue::Uint32(set.signer_count as u32));
 
     // Signers contributed as array of hex strings
-    let signers: Vec<PsValue> = set
-        .signers_contributed
-        .iter()
-        .map(|s| PsValue::String(s.as_bytes().to_vec()))
-        .collect();
+    let signers: Vec<PsValue> =
+        set.signers_contributed.iter().map(|s| PsValue::String(s.as_bytes().to_vec())).collect();
     map.insert("signers_contributed".to_string(), PsValue::Array(signers));
 
     // Pending TXs
@@ -268,34 +228,21 @@ pub fn encode_tx_set(set: &MultisigTxSet) -> Vec<u8> {
 pub fn decode_tx_set(data: &[u8]) -> Result<MultisigTxSet, String> {
     let ps =
         portable_storage::deserialize(data).map_err(|e| format!("deserialize failed: {}", e))?;
-    let obj = ps
-        .as_object()
-        .ok_or_else(|| "expected object".to_string())?;
+    let obj = ps.as_object().ok_or_else(|| "expected object".to_string())?;
 
     let threshold = obj.get("threshold").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let signer_count = obj
-        .get("signer_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let signer_count = obj.get("signer_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
     let signers_contributed = obj
         .get("signers_contributed")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
 
     let pending_txs = obj
         .get("pending_txs")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| decode_pending_tx(v).ok())
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| decode_pending_tx(v).ok()).collect())
         .unwrap_or_default();
 
     Ok(MultisigTxSet {
@@ -313,10 +260,7 @@ pub fn decode_tx_set(data: &[u8]) -> Result<MultisigTxSet, String> {
 fn encode_pending_tx(tx: &PendingMultisigTx) -> PsValue {
     let mut map = HashMap::new();
 
-    map.insert(
-        "tx_blob".to_string(),
-        PsValue::String(tx.tx_blob.as_bytes().to_vec()),
-    );
+    map.insert("tx_blob".to_string(), PsValue::String(tx.tx_blob.as_bytes().to_vec()));
     map.insert(
         "tx_prefix_hash".to_string(),
         PsValue::String(tx.tx_prefix_hash.as_bytes().to_vec()),
@@ -327,21 +271,15 @@ fn encode_pending_tx(tx: &PendingMultisigTx) -> PsValue {
         PsValue::String(tx.signing_message.as_bytes().to_vec()),
     );
 
-    let ki: Vec<PsValue> = tx
-        .key_images
-        .iter()
-        .map(|s| PsValue::String(s.as_bytes().to_vec()))
-        .collect();
+    let ki: Vec<PsValue> =
+        tx.key_images.iter().map(|s| PsValue::String(s.as_bytes().to_vec())).collect();
     map.insert("key_images".to_string(), PsValue::Array(ki));
 
     // Complex nested structures are JSON-serialized as string blobs
     // to avoid issues with portable_storage's limited nesting support.
     let contexts_json =
         serde_json::to_vec(&tx.signing_contexts).expect("signing_contexts serialization");
-    map.insert(
-        "signing_contexts".to_string(),
-        PsValue::String(contexts_json),
-    );
+    map.insert("signing_contexts".to_string(), PsValue::String(contexts_json));
 
     let nonces_json = serde_json::to_vec(&tx.input_nonces).expect("input_nonces serialization");
     map.insert("input_nonces".to_string(), PsValue::String(nonces_json));
@@ -354,35 +292,19 @@ fn encode_pending_tx(tx: &PendingMultisigTx) -> PsValue {
 }
 
 fn decode_pending_tx(val: &PsValue) -> Result<PendingMultisigTx, String> {
-    let obj = val
-        .as_object()
-        .ok_or_else(|| "expected object for pending_tx".to_string())?;
+    let obj = val.as_object().ok_or_else(|| "expected object for pending_tx".to_string())?;
 
-    let tx_blob = obj
-        .get("tx_blob")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let tx_prefix_hash = obj
-        .get("tx_prefix_hash")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let tx_blob = obj.get("tx_blob").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let tx_prefix_hash =
+        obj.get("tx_prefix_hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let fee = obj.get("fee").and_then(|v| v.as_u64()).unwrap_or(0);
-    let signing_message = obj
-        .get("signing_message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let signing_message =
+        obj.get("signing_message").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     let key_images = obj
         .get("key_images")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default();
 
     // Complex nested structures are JSON-deserialized from string blobs
@@ -612,14 +534,8 @@ mod tests {
         // Encode normally, then tamper with the round in the Epee blob
         // Instead, we build a message that has round-N magic but round=1 in the body
         let mut map = std::collections::HashMap::new();
-        map.insert(
-            "signing_pubkey".to_string(),
-            PsValue::String(signed.signing_pubkey.to_vec()),
-        );
-        map.insert(
-            "signature".to_string(),
-            PsValue::String(signed.signature.to_bytes().to_vec()),
-        );
+        map.insert("signing_pubkey".to_string(), PsValue::String(signed.signing_pubkey.to_vec()));
+        map.insert("signature".to_string(), PsValue::String(signed.signature.to_bytes().to_vec()));
         map.insert("kex_round".to_string(), PsValue::Uint32(1)); // invalid: round=1 with round-N magic
         let pubkeys: Vec<PsValue> = signed
             .inner
@@ -656,14 +572,8 @@ mod tests {
             "signing_pubkey".to_string(),
             PsValue::String(vec![0u8; 32]), // null pubkey
         );
-        map.insert(
-            "signature".to_string(),
-            PsValue::String(signed.signature.to_bytes().to_vec()),
-        );
-        map.insert(
-            "msg_privkey".to_string(),
-            PsValue::String(signed.msg_privkey.to_vec()),
-        );
+        map.insert("signature".to_string(), PsValue::String(signed.signature.to_bytes().to_vec()));
+        map.insert("msg_privkey".to_string(), PsValue::String(signed.msg_privkey.to_vec()));
 
         let blob = salvium_rpc::portable_storage::serialize(&map);
         let encoded = salvium_types::base58::encode(&blob);

@@ -20,13 +20,8 @@ impl Wallet {
         self.clear_mms()?;
 
         // Store MMS config as a wallet attribute.
-        let config = MmsConfig {
-            active: true,
-            threshold,
-            signer_count,
-            own_index,
-            auto_send: true,
-        };
+        let config =
+            MmsConfig { active: true, threshold, signer_count, own_index, auto_send: true };
         let json = serde_json::to_string(&config).map_err(|e| WalletError::Other(e.to_string()))?;
         self.set_attribute("mms_config", &json)?;
 

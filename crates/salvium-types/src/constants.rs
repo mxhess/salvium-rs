@@ -590,11 +590,8 @@ pub fn format_amount(atomic: u64) -> String {
 /// Parse a human-readable amount string to atomic units.
 pub fn parse_amount(s: &str) -> Option<u64> {
     let s = s.trim();
-    let (whole_str, frac_str) = if let Some(dot_pos) = s.find('.') {
-        (&s[..dot_pos], &s[dot_pos + 1..])
-    } else {
-        (s, "")
-    };
+    let (whole_str, frac_str) =
+        if let Some(dot_pos) = s.find('.') { (&s[..dot_pos], &s[dot_pos + 1..]) } else { (s, "") };
 
     let whole: u64 = whole_str.parse().ok()?;
     let frac: u64 = if frac_str.is_empty() {
@@ -644,11 +641,7 @@ mod tests {
     #[test]
     fn test_get_prefix() {
         assert_eq!(
-            get_prefix(
-                Network::Testnet,
-                AddressFormat::Carrot,
-                AddressType::Standard
-            ),
+            get_prefix(Network::Testnet, AddressFormat::Carrot, AddressType::Standard),
             Some(0x254c96)
         );
     }

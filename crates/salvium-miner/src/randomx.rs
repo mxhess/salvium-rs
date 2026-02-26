@@ -25,12 +25,7 @@ pub struct Blake2Generator {
 impl Blake2Generator {
     /// Create a new generator from a 32-byte seed.
     pub fn new(seed: &[u8; 32]) -> Self {
-        let mut gen = Self {
-            seed: *seed,
-            counter: 0,
-            buffer: Vec::new(),
-            position: 0,
-        };
+        let mut gen = Self { seed: *seed, counter: 0, buffer: Vec::new(), position: 0 };
         gen.fill_buffer();
         gen
     }
@@ -195,10 +190,7 @@ mod tests {
 
         let bytes1 = gen1.get_bytes(16);
         let bytes2 = gen2.get_bytes(16);
-        assert_ne!(
-            bytes1, bytes2,
-            "different seeds should produce different bytes"
-        );
+        assert_ne!(bytes1, bytes2, "different seeds should produce different bytes");
     }
 
     #[test]
@@ -253,14 +245,8 @@ mod tests {
     #[test]
     fn test_check_difficulty_zero_hash() {
         let zero_hash = [0u8; 32];
-        assert!(
-            check_difficulty(&zero_hash, 1),
-            "zero hash should pass any difficulty"
-        );
-        assert!(
-            check_difficulty(&zero_hash, 1_000_000),
-            "zero hash should pass high difficulty"
-        );
+        assert!(check_difficulty(&zero_hash, 1), "zero hash should pass any difficulty");
+        assert!(check_difficulty(&zero_hash, 1_000_000), "zero hash should pass high difficulty");
     }
 
     #[test]
@@ -275,19 +261,13 @@ mod tests {
     #[test]
     fn test_check_difficulty_zero_difficulty() {
         let hash = [0xFFu8; 32];
-        assert!(
-            check_difficulty(&hash, 0),
-            "zero difficulty should always pass"
-        );
+        assert!(check_difficulty(&hash, 0), "zero difficulty should always pass");
     }
 
     #[test]
     fn test_check_difficulty_one() {
         let hash = [0xFFu8; 32];
-        assert!(
-            check_difficulty(&hash, 1),
-            "difficulty 1 should pass any hash"
-        );
+        assert!(check_difficulty(&hash, 1), "difficulty 1 should pass any hash");
     }
 
     // ── calculateCommitment ────────────────────────────────────────────
@@ -322,10 +302,7 @@ mod tests {
 
         let c1 = calculate_commitment(&bh1, &prev);
         let c2 = calculate_commitment(&bh2, &prev);
-        assert_ne!(
-            c1, c2,
-            "different inputs should produce different commitments"
-        );
+        assert_ne!(c1, c2, "different inputs should produce different commitments");
     }
 
     // ── reciprocal ─────────────────────────────────────────────────────

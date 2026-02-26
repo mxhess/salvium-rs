@@ -73,9 +73,7 @@ fn hash_to_point(data: &[u8]) -> EdwardsPoint {
 /// Generate key image: KI = sec * H_p(pub)
 fn generate_key_image(pub_key: &[u8; 32], sec_key: &Scalar) -> [u8; 32] {
     let hp = hash_to_point(pub_key);
-    EdwardsPoint::vartime_multiscalar_mul(&[*sec_key], &[hp])
-        .compress()
-        .to_bytes()
+    EdwardsPoint::vartime_multiscalar_mul(&[*sec_key], &[hp]).compress().to_bytes()
 }
 
 /// CryptoNote view tag: first byte of `keccak256("view_tag" || derivation || varint(index))`
@@ -149,9 +147,7 @@ pub fn gen_commitment_mask(shared_secret: &[u8; 32]) -> [u8; 32] {
 ///
 /// Matches the C++ rct::commit(amount, mask) which computes addKeys2(C, mask, d2h(amount), H).
 fn pedersen_commit_cn(amount: u64, mask: &[u8; 32]) -> [u8; 32] {
-    let h = CompressedEdwardsY(crate::H_POINT_BYTES)
-        .decompress()
-        .expect("invalid H");
+    let h = CompressedEdwardsY(crate::H_POINT_BYTES).decompress().expect("invalid H");
     let mut amount_bytes = [0u8; 32];
     amount_bytes[..8].copy_from_slice(&amount.to_le_bytes());
     let amount_scalar = Scalar::from_bytes_mod_order(amount_bytes);
@@ -268,13 +264,7 @@ pub fn scan_cryptonote_output(
         None
     };
 
-    Some(CnScanResult {
-        amount,
-        mask,
-        subaddress_major: major,
-        subaddress_minor: minor,
-        key_image,
-    })
+    Some(CnScanResult { amount, mask, subaddress_major: major, subaddress_minor: minor, key_image })
 }
 
 /// Public wrapper for `derive_subaddress_pubkey` that operates on raw byte arrays.
@@ -287,9 +277,7 @@ pub fn derive_subaddress_pubkey_bytes(
     derivation: &[u8; 32],
     output_index: u32,
 ) -> [u8; 32] {
-    let ko_point = CompressedEdwardsY(*output_pubkey)
-        .decompress()
-        .expect("invalid output pubkey");
+    let ko_point = CompressedEdwardsY(*output_pubkey).decompress().expect("invalid output pubkey");
     derive_subaddress_pubkey(&ko_point, derivation, output_index)
 }
 
@@ -318,9 +306,7 @@ pub fn derive_output_spend_key(
     let view_scalar = Scalar::from_bytes_mod_order(to32(view_secret_key));
 
     // derivation = 8 * (view_secret * tx_pub_key) — CryptoNote cofactor multiplication
-    let tx_pub = CompressedEdwardsY(to32(tx_pub_key))
-        .decompress()
-        .expect("invalid tx pubkey");
+    let tx_pub = CompressedEdwardsY(to32(tx_pub_key)).decompress().expect("invalid tx pubkey");
     let shared = view_scalar * tx_pub;
     let t = shared + shared; // 2P
     let t = t + t; // 4P

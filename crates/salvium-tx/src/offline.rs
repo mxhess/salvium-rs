@@ -160,15 +160,7 @@ pub fn create_signed_tx(
     tx_type: u32,
     asset_type: String,
 ) -> SignedTx {
-    SignedTx {
-        version: SIGNED_TX_VERSION,
-        tx_hash,
-        tx_blob,
-        tx_key,
-        fee,
-        tx_type,
-        asset_type,
-    }
+    SignedTx { version: SIGNED_TX_VERSION, tx_hash, tx_blob, tx_key, fee, tx_type, asset_type }
 }
 
 /// Deserialize a signed transaction from JSON, verifying the version.
@@ -283,11 +275,7 @@ mod tests {
     }
 
     fn sample_output(amount: u64) -> TxOutput {
-        TxOutput {
-            amount,
-            destination: "cc".repeat(32),
-            is_subaddress: false,
-        }
+        TxOutput { amount, destination: "cc".repeat(32), is_subaddress: false }
     }
 
     fn sample_unsigned_tx() -> UnsignedTx {
@@ -620,15 +608,7 @@ mod tests {
     #[test]
     fn empty_inputs_and_outputs_handling() {
         // An unsigned tx with no inputs and no outputs should fail verification.
-        let tx = create_unsigned_tx(
-            vec![],
-            vec![],
-            100_000_000,
-            3,
-            "SAL".to_string(),
-            16,
-            vec![],
-        );
+        let tx = create_unsigned_tx(vec![], vec![], 100_000_000, 3, "SAL".to_string(), 16, vec![]);
         let err = verify_unsigned_tx(&tx).unwrap_err();
         assert!(err.iter().any(|e| e.contains("input")));
         assert!(err.iter().any(|e| e.contains("output")));

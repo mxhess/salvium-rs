@@ -31,12 +31,7 @@ impl MultisigSigner {
         public_view_key: String,
         label: String,
     ) -> Self {
-        Self {
-            index,
-            public_spend_key,
-            public_view_key,
-            label,
-        }
+        Self { index, public_spend_key, public_view_key, label }
     }
 }
 

@@ -95,11 +95,7 @@ pub fn get_effective_median_block_weight(
 
     let block_limit = effective_median * 2;
 
-    BlockWeightInfo {
-        long_term_effective_median,
-        effective_median,
-        block_limit,
-    }
+    BlockWeightInfo { long_term_effective_median, effective_median, block_limit }
 }
 
 // =============================================================================
@@ -129,20 +125,14 @@ mod tests {
     fn weight_below_lower_bound_gets_clamped_up() {
         let median: u64 = 500_000;
         let lower_bound = median * 10 / 17; // 294117
-        assert_eq!(
-            get_next_long_term_block_weight(100_000, median),
-            lower_bound
-        );
+        assert_eq!(get_next_long_term_block_weight(100_000, median), lower_bound);
     }
 
     #[test]
     fn weight_above_upper_bound_gets_clamped_down() {
         let median: u64 = 500_000;
         let upper_bound = median + median * 7 / 10; // 850000
-        assert_eq!(
-            get_next_long_term_block_weight(1_000_000, median),
-            upper_bound
-        );
+        assert_eq!(get_next_long_term_block_weight(1_000_000, median), upper_bound);
     }
 
     #[test]
@@ -193,10 +183,7 @@ mod tests {
         let long_term = vec![FRZ; 100];
         let short_term = vec![FRZ * 100; 100]; // Way above surge limit
         let info = get_effective_median_block_weight(&long_term, &short_term);
-        assert_eq!(
-            info.effective_median,
-            SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * FRZ,
-        );
+        assert_eq!(info.effective_median, SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR * FRZ,);
     }
 
     #[test]

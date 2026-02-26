@@ -259,10 +259,7 @@ impl<'a> Reader<'a> {
             TYPE_STRING => Ok(PsValue::String(self.read_string()?)),
             TYPE_BOOL => Ok(PsValue::Bool(self.read_u8()? != 0)),
             TYPE_OBJECT => self.read_section().map(PsValue::Object),
-            _ => Err(RpcError::PortableStorage(format!(
-                "unknown type tag: {}",
-                type_tag
-            ))),
+            _ => Err(RpcError::PortableStorage(format!("unknown type tag: {}", type_tag))),
         }
     }
 
@@ -311,10 +308,7 @@ pub fn deserialize(data: &[u8]) -> Result<PsValue, RpcError> {
         )));
     }
     if ver != FORMAT_VER {
-        return Err(RpcError::PortableStorage(format!(
-            "unsupported version: {}",
-            ver
-        )));
+        return Err(RpcError::PortableStorage(format!("unsupported version: {}", ver)));
     }
 
     reader.read_section().map(PsValue::Object)
@@ -330,9 +324,7 @@ struct Writer {
 
 impl Writer {
     fn new() -> Self {
-        Self {
-            buf: Vec::with_capacity(256),
-        }
+        Self { buf: Vec::with_capacity(256) }
     }
 
     fn write_u8(&mut self, v: u8) {
@@ -522,11 +514,7 @@ mod tests {
         let mut map = HashMap::new();
         map.insert(
             "values".to_string(),
-            PsValue::Array(vec![
-                PsValue::Uint64(1),
-                PsValue::Uint64(2),
-                PsValue::Uint64(3),
-            ]),
+            PsValue::Array(vec![PsValue::Uint64(1), PsValue::Uint64(2), PsValue::Uint64(3)]),
         );
 
         let bytes = serialize(&map);
@@ -572,17 +560,11 @@ mod tests {
         // Verify the exact wire format for a get_blocks_by_height.bin request
         // with a single height [100].
         let mut req = HashMap::new();
-        req.insert(
-            "heights".to_string(),
-            PsValue::Array(vec![PsValue::Uint64(100)]),
-        );
+        req.insert("heights".to_string(), PsValue::Array(vec![PsValue::Uint64(100)]));
         let bytes = serialize(&req);
 
         // Header: 9 bytes
-        assert_eq!(
-            &bytes[0..9],
-            &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01]
-        );
+        assert_eq!(&bytes[0..9], &[0x01, 0x11, 0x01, 0x01, 0x01, 0x01, 0x02, 0x01, 0x01]);
         // Section: varint count=1 → 0x04 (1 << 2)
         assert_eq!(bytes[9], 0x04);
         // Key: length=7, "heights"

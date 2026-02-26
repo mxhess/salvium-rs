@@ -75,10 +75,7 @@ mod tests {
         let input =
             b"test input for ghostrider hash verification!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
         let hash = engine.hash(input);
-        assert!(
-            !hash.iter().all(|&b| b == 0),
-            "hash should not be all zeros"
-        );
+        assert!(!hash.iter().all(|&b| b == 0), "hash should not be all zeros");
     }
 
     #[test]
@@ -95,10 +92,7 @@ mod tests {
         let mut engine = GhostRiderEngine::new();
         let hash1 = engine.hash(b"input A for ghostrider that is long enough for cn v1 hash");
         let hash2 = engine.hash(b"input B for ghostrider that is long enough for cn v1 hash");
-        assert_ne!(
-            hash1, hash2,
-            "different inputs should produce different hashes"
-        );
+        assert_ne!(hash1, hash2, "different inputs should produce different hashes");
     }
 
     #[test]
@@ -113,10 +107,7 @@ mod tests {
         let mut engine = GhostRiderEngine::new();
         // Input less than 43 bytes should fail (return zeros)
         let hash = engine.hash(b"too short");
-        assert!(
-            hash.iter().all(|&b| b == 0),
-            "short input should return zeros"
-        );
+        assert!(hash.iter().all(|&b| b == 0), "short input should return zeros");
     }
 
     // ── SPH individual hash function verification ─────────────────────
@@ -164,11 +155,7 @@ mod tests {
         let mut hashes = Vec::new();
         for algo in 0..15 {
             let hash = sph_hash(algo, input);
-            assert!(
-                !hash.iter().all(|&b| b == 0),
-                "algo {} returned all zeros",
-                algo
-            );
+            assert!(!hash.iter().all(|&b| b == 0), "algo {} returned all zeros", algo);
             hashes.push(hex::encode(hash));
         }
         hashes.sort();
@@ -306,16 +293,10 @@ mod tests {
         assert!(hashes > 0, "should have computed at least some hashes");
 
         let block = mining_loop.try_recv_block();
-        assert!(
-            block.is_some(),
-            "should have found a block with difficulty=1"
-        );
+        assert!(block.is_some(), "should have found a block with difficulty=1");
 
         let block = block.unwrap();
-        assert!(
-            !block.hash.iter().all(|&b| b == 0),
-            "found block hash should be non-zero"
-        );
+        assert!(!block.hash.iter().all(|&b| b == 0), "found block hash should be non-zero");
 
         mining_loop.stop();
     }

@@ -70,11 +70,7 @@ fn hf_eras(chain_height: u64) -> Vec<HfEra> {
             chain_height.saturating_sub(10) // avoid tip reorgs
         };
         if start < end {
-            eras.push(HfEra {
-                version,
-                start,
-                end,
-            });
+            eras.push(HfEra { version, start, end });
         }
     }
     eras
@@ -147,10 +143,7 @@ async fn test_mainnet_daemon_reachable() {
     let d = daemon();
     let info = d.get_info().await.expect("mainnet daemon unreachable");
     assert!(info.height > 0, "chain height should be > 0");
-    println!(
-        "Mainnet daemon reachable: height={}, mainnet={}",
-        info.height, info.mainnet
-    );
+    println!("Mainnet daemon reachable: height={}, mainnet={}", info.height, info.mainnet);
 
     let eras = hf_eras(info.height);
     println!("Hard fork eras:");
@@ -206,19 +199,11 @@ async fn test_parse_blocks_per_hf_era() {
             // prevId should be non-zero (except genesis).
             let prev_id = header["prevId"].as_str().unwrap_or("");
             if h > 1 {
-                assert!(
-                    !prev_id.chars().all(|c| c == '0'),
-                    "prevId at h={} should be non-zero",
-                    h
-                );
+                assert!(!prev_id.chars().all(|c| c == '0'), "prevId at h={} should be non-zero", h);
             }
 
             // minerTx should parse.
-            assert!(
-                !block_json["minerTx"].is_null(),
-                "minerTx should parse at h={}",
-                h
-            );
+            assert!(!block_json["minerTx"].is_null(), "minerTx should parse at h={}", h);
 
             // TX count should match header.
             let parsed_tx_count = block_json["txHashes"].as_array().map_or(0, |a| a.len());
@@ -264,12 +249,7 @@ async fn test_block_headers_per_hf_era() {
             assert_eq!(header.height, h);
             assert!(header.difficulty > 0, "difficulty should be > 0 at h={}", h);
             assert!(header.reward > 0, "reward should be > 0 at h={}", h);
-            assert_eq!(
-                header.hash.len(),
-                64,
-                "hash should be 64 hex chars at h={}",
-                h
-            );
+            assert_eq!(header.hash.len(), 64, "hash should be 64 hex chars at h={}", h);
             assert_eq!(
                 header.major_version, era.version,
                 "major_version should be {} at h={}, got {}",
@@ -346,12 +326,7 @@ async fn test_block_tree_hash_per_hf_era() {
             let tree2 = tree_hash(&all_hashes);
             assert_eq!(tree, tree2, "tree_hash must be deterministic");
 
-            println!(
-                "  h={}: {} hashes -> {}",
-                h,
-                all_hashes.len(),
-                hex::encode(tree)
-            );
+            println!("  h={}: {} hashes -> {}", h, all_hashes.len(), hex::encode(tree));
         }
     }
 }
@@ -371,19 +346,12 @@ async fn test_parse_transactions_per_hf_era() {
         println!("\n--- {} ---", era.label());
 
         // Sample more candidates for narrow eras or eras with few TXs (e.g. HF5).
-        let sample_count = if era.len() < 1000 {
-            era.len() as usize
-        } else {
-            100
-        };
+        let sample_count = if era.len() < 1000 { era.len() as usize } else { 100 };
         let heights = era_sample_heights(era, sample_count);
         let txs = find_txs_at_heights(&d, &heights, SAMPLES_PER_ERA).await;
 
         if txs.is_empty() {
-            println!(
-                "  (no user transactions found — may be expected for HF{})",
-                era.version
-            );
+            println!("  (no user transactions found — may be expected for HF{})", era.version);
             continue;
         }
 
@@ -392,25 +360,13 @@ async fn test_parse_transactions_per_hf_era() {
             let rct = tx.rct.as_ref().expect("TX should have RCT data");
 
             // Structural assertions that apply to all eras.
-            assert!(
-                !tx.prefix.inputs.is_empty(),
-                "TX at h={} should have inputs",
-                height
-            );
-            assert!(
-                !tx.prefix.outputs.is_empty(),
-                "TX at h={} should have outputs",
-                height
-            );
+            assert!(!tx.prefix.inputs.is_empty(), "TX at h={} should have inputs", height);
+            assert!(!tx.prefix.outputs.is_empty(), "TX at h={} should have outputs", height);
 
             // Key images should be non-zero.
             for input in &tx.prefix.inputs {
                 if let Some(ki) = input.key_image() {
-                    assert_ne!(
-                        ki, &[0u8; 32],
-                        "key image should be non-zero at h={}",
-                        height
-                    );
+                    assert_ne!(ki, &[0u8; 32], "key image should be non-zero at h={}", height);
                 }
             }
 
@@ -438,10 +394,7 @@ async fn test_parse_transactions_per_hf_era() {
                 rct_type::SALVIUM_ZERO => "SALVIUM_ZERO",
                 rct_type::SALVIUM_ONE => "TCLSAG",
                 other => {
-                    panic!(
-                        "unexpected RCT type {} at h={} (HF{})",
-                        other, height, era.version
-                    );
+                    panic!("unexpected RCT type {} at h={} (HF{})", other, height, era.version);
                 }
             };
 
@@ -466,12 +419,7 @@ async fn test_parse_transactions_per_hf_era() {
                     era.version,
                     height
                 );
-                assert!(
-                    rct.p_r.is_some(),
-                    "HF{} TX at h={} should have p_r",
-                    era.version,
-                    height
-                );
+                assert!(rct.p_r.is_some(), "HF{} TX at h={} should have p_r", era.version, height);
             }
 
             println!(
@@ -501,11 +449,7 @@ async fn test_tx_serialize_roundtrip_per_hf_era() {
     for era in &eras {
         println!("\n--- {} ---", era.label());
 
-        let sample_count = if era.len() < 1000 {
-            era.len() as usize
-        } else {
-            100
-        };
+        let sample_count = if era.len() < 1000 { era.len() as usize } else { 100 };
         let heights = era_sample_heights(era, sample_count);
         let txs = find_txs_at_heights(&d, &heights, 3).await;
 
@@ -564,11 +508,7 @@ async fn test_verify_signatures_per_hf_era() {
     for era in &eras {
         println!("\n--- {} ---", era.label());
 
-        let sample_count = if era.len() < 1000 {
-            era.len() as usize
-        } else {
-            100
-        };
+        let sample_count = if era.len() < 1000 { era.len() as usize } else { 100 };
         let heights = era_sample_heights(era, sample_count);
         let txs = find_txs_at_heights(&d, &heights, 3).await;
 
@@ -583,11 +523,7 @@ async fn test_verify_signatures_per_hf_era() {
             let mix_ring = fetch_mix_ring(&d, &tx).await;
             let vd = prepare_verification_data(&tx, &mix_ring, &raw_bytes);
 
-            let sig_type = if rct.rct_type == rct_type::SALVIUM_ONE {
-                "TCLSAG"
-            } else {
-                "CLSAG"
-            };
+            let sig_type = if rct.rct_type == rct_type::SALVIUM_ONE { "TCLSAG" } else { "CLSAG" };
 
             let (valid, failed_idx) = salvium_crypto::rct_verify::verify_rct_signatures(
                 vd.rct_type,
@@ -623,10 +559,7 @@ async fn test_verify_signatures_per_hf_era() {
         }
     }
 
-    assert!(
-        total_verified > 0,
-        "should verify at least one TX across all eras"
-    );
+    assert!(total_verified > 0, "should verify at least one TX across all eras");
     println!("\nTotal TXs verified across all eras: {}", total_verified);
 }
 
@@ -701,11 +634,7 @@ async fn test_bulletproof_plus_structure() {
     // BP+ proofs are present in all eras with user TXs.
     let mut found_any = false;
     for era in &eras {
-        let sample_count = if era.len() < 1000 {
-            era.len() as usize
-        } else {
-            50
-        };
+        let sample_count = if era.len() < 1000 { era.len() as usize } else { 50 };
         let heights = era_sample_heights(era, sample_count);
         let txs = find_txs_at_heights(&d, &heights, 2).await;
 

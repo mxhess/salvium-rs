@@ -247,13 +247,7 @@ pub fn describe_address(address: &str) -> String {
             };
 
             if let Some(pid) = &parsed.payment_id {
-                format!(
-                    "{} {} {} (Payment ID: {})",
-                    network,
-                    format,
-                    addr_type,
-                    hex::encode(pid)
-                )
+                format!("{} {} {} (Payment ID: {})", network, format, addr_type, hex::encode(pid))
             } else {
                 format!("{} {} {}", network, format, addr_type)
             }

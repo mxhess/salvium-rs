@@ -60,12 +60,7 @@ impl SignedKexMessage {
         let data_to_sign = Self::compute_data_to_sign(&msg, &signing_pubkey, signing_privkey);
         let signature = schnorr_sign(&data_to_sign, &signing_pubkey, signing_privkey);
 
-        Ok(Self {
-            inner: msg,
-            msg_privkey: *signing_privkey,
-            signing_pubkey,
-            signature,
-        })
+        Ok(Self { inner: msg, msg_privkey: *signing_privkey, signing_pubkey, signature })
     }
 
     /// Verify the Schnorr signature and all fields on this message.
@@ -99,11 +94,7 @@ impl SignedKexMessage {
                 let key_bytes = hex::decode(key_hex)
                     .map_err(|e| format!("key[{}] hex decode failed: {}", i, e))?;
                 if key_bytes.len() != 32 {
-                    return Err(format!(
-                        "key[{}] must be 32 bytes, got {}",
-                        i,
-                        key_bytes.len()
-                    ));
+                    return Err(format!("key[{}] must be 32 bytes, got {}", i, key_bytes.len()));
                 }
                 if key_bytes == [0u8; 32] {
                     return Err(format!("key[{}] must not be the identity element", i));
@@ -143,11 +134,7 @@ impl SignedKexMessage {
         signing_pubkey: &[u8; 32],
         msg_privkey: &[u8; 32],
     ) -> Vec<u8> {
-        let magic = if msg.round == 1 {
-            MAGIC_ROUND1
-        } else {
-            MAGIC_ROUND_N
-        };
+        let magic = if msg.round == 1 { MAGIC_ROUND1 } else { MAGIC_ROUND_N };
 
         let mut preimage = Vec::new();
         preimage.extend_from_slice(magic);

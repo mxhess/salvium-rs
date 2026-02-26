@@ -30,11 +30,7 @@ impl<'a> TxPipeline<'a> {
         ctx: &AppContext,
         fee_priority: salvium_tx::fee::FeePriority,
     ) -> Self {
-        Self {
-            wallet,
-            daemon: DaemonRpc::new(&ctx.daemon_url),
-            fee_priority,
-        }
+        Self { wallet, daemon: DaemonRpc::new(&ctx.daemon_url), fee_priority }
     }
 
     /// Select UTXOs for the given amount + fee, derive spend keys, and return
@@ -46,9 +42,7 @@ impl<'a> TxPipeline<'a> {
         asset_type: &str,
         strategy: salvium_wallet::utxo::SelectionStrategy,
     ) -> Result<(Vec<InputData>, u64)> {
-        let selection = self
-            .wallet
-            .select_outputs(amount, estimated_fee, asset_type, strategy)?;
+        let selection = self.wallet.select_outputs(amount, estimated_fee, asset_type, strategy)?;
         println!(
             "Selected {} input(s), total {} SAL",
             selection.selected.len(),
@@ -65,14 +59,9 @@ impl<'a> TxPipeline<'a> {
         );
 
         let keys = self.wallet.keys();
-        let cn_spend_secret = keys
-            .cn
-            .spend_secret_key
-            .ok_or("wallet has no spend secret key")?;
-        let carrot_prove_spend = keys
-            .carrot
-            .prove_spend_key
-            .ok_or("wallet has no CARROT prove_spend key")?;
+        let cn_spend_secret = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
+        let carrot_prove_spend =
+            keys.carrot.prove_spend_key.ok_or("wallet has no CARROT prove_spend key")?;
 
         let mut inputs = Vec::new();
         for utxo in &selection.selected {
@@ -81,12 +70,8 @@ impl<'a> TxPipeline<'a> {
                 .get_output(&utxo.key_image)?
                 .ok_or_else(|| format!("output not found for key image: {}", utxo.key_image))?;
 
-            let public_key = hex_to_32(
-                output
-                    .public_key
-                    .as_deref()
-                    .ok_or("output missing public_key")?,
-            )?;
+            let public_key =
+                hex_to_32(output.public_key.as_deref().ok_or("output missing public_key")?)?;
             let mask = hex_to_32(output.mask.as_deref().ok_or("output missing mask")?)?;
 
             let (secret_key, secret_key_y) = if output.is_carrot {
@@ -97,10 +82,7 @@ impl<'a> TxPipeline<'a> {
                         .ok_or("CARROT output missing shared_secret")?,
                 )?;
                 let commitment = hex_to_32(
-                    output
-                        .commitment
-                        .as_deref()
-                        .ok_or("CARROT output missing commitment")?,
+                    output.commitment.as_deref().ok_or("CARROT output missing commitment")?,
                 )?;
                 let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
                     &carrot_prove_spend,
@@ -110,12 +92,8 @@ impl<'a> TxPipeline<'a> {
                 );
                 (sk_x, Some(sk_y))
             } else {
-                let tx_pub_key = hex_to_32(
-                    output
-                        .tx_pub_key
-                        .as_deref()
-                        .ok_or("CN output missing tx_pub_key")?,
-                )?;
+                let tx_pub_key =
+                    hex_to_32(output.tx_pub_key.as_deref().ok_or("CN output missing tx_pub_key")?)?;
                 let sk = salvium_crypto::cn_scan::derive_output_spend_key(
                     &keys.cn.view_secret_key,
                     &cn_spend_secret,
@@ -148,15 +126,9 @@ impl<'a> TxPipeline<'a> {
     ) -> Result<Vec<salvium_tx::builder::PreparedInput>> {
         println!("Fetching decoy data from daemon...");
         let info = self.daemon.get_info().await?;
-        let dist = self
-            .daemon
-            .get_output_distribution(&[0], 0, info.height, true, "")
-            .await?;
-        let rct_offsets = dist
-            .first()
-            .ok_or("no output distribution returned from daemon")?
-            .distribution
-            .clone();
+        let dist = self.daemon.get_output_distribution(&[0], 0, info.height, true, "").await?;
+        let rct_offsets =
+            dist.first().ok_or("no output distribution returned from daemon")?.distribution.clone();
         let decoy_selector = salvium_tx::DecoySelector::new(rct_offsets)
             .map_err(|e| format!("decoy selector: {}", e))?;
 
@@ -170,10 +142,7 @@ impl<'a> TxPipeline<'a> {
 
             let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices
                 .iter()
-                .map(|&idx| salvium_rpc::daemon::OutputRequest {
-                    amount: 0,
-                    index: idx,
-                })
+                .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
                 .collect();
             let outs_info = self.daemon.get_outs(&requests, false, "").await?;
 
@@ -214,9 +183,7 @@ impl<'a> TxPipeline<'a> {
         let signed_tx =
             salvium_tx::sign_transaction(unsigned).map_err(|e| format!("signing: {}", e))?;
 
-        let tx_bytes = signed_tx
-            .to_bytes()
-            .map_err(|e| format!("serialize: {}", e))?;
+        let tx_bytes = signed_tx.to_bytes().map_err(|e| format!("serialize: {}", e))?;
         let tx_hex = hex::encode(&tx_bytes);
         let tx_hash = signed_tx.tx_hash().map_err(|e| format!("tx hash: {}", e))?;
 

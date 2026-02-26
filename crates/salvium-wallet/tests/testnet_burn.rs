@@ -65,13 +65,9 @@ async fn test_burn_transaction_build() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
     let sync_height = wallet
@@ -132,13 +128,9 @@ async fn test_burn_submit_testnet() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
     let sync_height = wallet
@@ -154,10 +146,7 @@ async fn test_burn_submit_testnet() {
     let balance = wallet.get_balance(db_asset_type, 0).unwrap();
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap();
     if unlocked <= BURN_AMOUNT {
-        println!(
-            "Insufficient balance ({} < {}), skipping submit",
-            unlocked, BURN_AMOUNT
-        );
+        println!("Insufficient balance ({} < {}), skipping submit", unlocked, BURN_AMOUNT);
         return;
     }
 
@@ -177,10 +166,7 @@ async fn test_burn_submit_testnet() {
         .expect("output selection failed");
 
     // Distribution for decoy selection
-    let dist = d
-        .get_output_distribution(&[0], 0, 0, true, tx_asset_type)
-        .await
-        .unwrap();
+    let dist = d.get_output_distribution(&[0], 0, 0, true, tx_asset_type).await.unwrap();
     let decoy_selector = DecoySelector::new(dist[0].distribution.clone()).unwrap();
 
     let keys = wallet.keys();
@@ -189,14 +175,7 @@ async fn test_burn_submit_testnet() {
     let tx_hashes_to_resolve: Vec<String> = selection
         .selected
         .iter()
-        .map(|u| {
-            wallet
-                .get_output(&u.key_image)
-                .unwrap()
-                .unwrap()
-                .tx_hash
-                .clone()
-        })
+        .map(|u| wallet.get_output(&u.key_image).unwrap().unwrap().tx_hash.clone())
         .collect();
     let tx_hash_refs: Vec<&str> = tx_hashes_to_resolve.iter().map(|s| s.as_str()).collect();
     let tx_entries = d.get_transactions(&tx_hash_refs, false).await.unwrap();
@@ -214,23 +193,15 @@ async fn test_burn_submit_testnet() {
             .unwrap();
 
         let h_idx = (entry.block_height - dist[0].start_height) as usize;
-        let at_start = if h_idx == 0 {
-            0
-        } else {
-            dist[0].distribution[h_idx - 1]
-        };
+        let at_start = if h_idx == 0 { 0 } else { dist[0].distribution[h_idx - 1] };
         let at_end = dist[0].distribution[h_idx];
         let at_count = at_end - at_start;
 
         let asset_type_index = if at_count == 1 {
             at_start
         } else {
-            let candidates: Vec<OutputRequest> = (at_start..at_end)
-                .map(|idx| OutputRequest {
-                    amount: 0,
-                    index: idx,
-                })
-                .collect();
+            let candidates: Vec<OutputRequest> =
+                (at_start..at_end).map(|idx| OutputRequest { amount: 0, index: idx }).collect();
             let probe = d.get_outs(&candidates, false, tx_asset_type).await.unwrap();
             probe
                 .iter()
@@ -286,20 +257,11 @@ async fn test_burn_submit_testnet() {
         };
 
         let mask = hex_to_32(output_row.mask.as_ref().unwrap());
-        let (ring_indices, real_pos) = decoy_selector
-            .build_ring(asset_type_index, DEFAULT_RING_SIZE)
-            .unwrap();
-        let out_requests: Vec<OutputRequest> = ring_indices
-            .iter()
-            .map(|&idx| OutputRequest {
-                amount: 0,
-                index: idx,
-            })
-            .collect();
-        let ring_members = d
-            .get_outs(&out_requests, false, tx_asset_type)
-            .await
-            .unwrap();
+        let (ring_indices, real_pos) =
+            decoy_selector.build_ring(asset_type_index, DEFAULT_RING_SIZE).unwrap();
+        let out_requests: Vec<OutputRequest> =
+            ring_indices.iter().map(|&idx| OutputRequest { amount: 0, index: idx }).collect();
+        let ring_members = d.get_outs(&out_requests, false, tx_asset_type).await.unwrap();
 
         prepared_inputs.push(PreparedInput {
             secret_key,
@@ -337,10 +299,7 @@ async fn test_burn_submit_testnet() {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::BURN)
         .set_amount_burnt(BURN_AMOUNT)
@@ -352,19 +311,9 @@ async fn test_burn_submit_testnet() {
     let unsigned = builder.build().expect("failed to build BURN TX");
 
     // Verify prefix structure
-    assert_eq!(
-        unsigned.prefix.tx_type,
-        tx_type::BURN,
-        "tx_type should be BURN"
-    );
-    assert_eq!(
-        unsigned.prefix.amount_burnt, BURN_AMOUNT,
-        "amount_burnt should match"
-    );
-    assert_eq!(
-        unsigned.prefix.unlock_time, 0,
-        "unlock_time should be 0 for BURN"
-    );
+    assert_eq!(unsigned.prefix.tx_type, tx_type::BURN, "tx_type should be BURN");
+    assert_eq!(unsigned.prefix.amount_burnt, BURN_AMOUNT, "amount_burnt should match");
+    assert_eq!(unsigned.prefix.unlock_time, 0, "unlock_time should be 0 for BURN");
 
     println!(
         "Unsigned BURN TX: {} inputs, {} outputs",
@@ -382,10 +331,7 @@ async fn test_burn_submit_testnet() {
 
     // Submit
     println!("\nSubmitting BURN TX...");
-    let result = d
-        .send_raw_transaction_ex(&tx_hex, false, true, tx_asset_type)
-        .await
-        .unwrap();
+    let result = d.send_raw_transaction_ex(&tx_hex, false, true, tx_asset_type).await.unwrap();
     println!("Status: {}", result.status);
     if !result.reason.is_empty() {
         println!("Reason: {}", result.reason);

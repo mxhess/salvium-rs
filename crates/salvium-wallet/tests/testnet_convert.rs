@@ -65,13 +65,9 @@ async fn test_convert_transaction_build() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
     let sync_height = wallet
@@ -87,10 +83,7 @@ async fn test_convert_transaction_build() {
     let balance = wallet.get_balance(db_asset_type, 0).unwrap();
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap();
     println!("Unlocked balance: {:.9} SAL", unlocked as f64 / 1e9);
-    assert!(
-        unlocked > CONVERT_AMOUNT,
-        "insufficient balance for convert"
-    );
+    assert!(unlocked > CONVERT_AMOUNT, "insufficient balance for convert");
 
     // Default slippage: 1/32 of convert amount (3.125%)
     let slippage_limit = CONVERT_AMOUNT >> 5;
@@ -100,11 +93,7 @@ async fn test_convert_transaction_build() {
     println!("  convert_amount: {:.9} SAL", CONVERT_AMOUNT as f64 / 1e9);
     println!("  source_asset_type: {}", tx_asset_type);
     println!("  destination_asset_type: VSD");
-    println!(
-        "  slippage_limit: {:.9} ({:.2}%)",
-        slippage_limit as f64 / 1e9,
-        100.0 / 32.0
-    );
+    println!("  slippage_limit: {:.9} ({:.2}%)", slippage_limit as f64 / 1e9, 100.0 / 32.0);
     println!("  NOTE: CONVERT is gated at HF v255 — submission will be rejected");
 
     println!("\nCONVERT transaction structure verified.");
@@ -130,13 +119,9 @@ async fn test_convert_expected_rejection() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
     let sync_height = wallet
@@ -170,10 +155,7 @@ async fn test_convert_expected_rejection() {
         )
         .expect("output selection failed");
 
-    let dist = d
-        .get_output_distribution(&[0], 0, 0, true, tx_asset_type)
-        .await
-        .unwrap();
+    let dist = d.get_output_distribution(&[0], 0, 0, true, tx_asset_type).await.unwrap();
     let decoy_selector = DecoySelector::new(dist[0].distribution.clone()).unwrap();
 
     let keys = wallet.keys();
@@ -182,14 +164,7 @@ async fn test_convert_expected_rejection() {
     let tx_hashes_to_resolve: Vec<String> = selection
         .selected
         .iter()
-        .map(|u| {
-            wallet
-                .get_output(&u.key_image)
-                .unwrap()
-                .unwrap()
-                .tx_hash
-                .clone()
-        })
+        .map(|u| wallet.get_output(&u.key_image).unwrap().unwrap().tx_hash.clone())
         .collect();
     let tx_hash_refs: Vec<&str> = tx_hashes_to_resolve.iter().map(|s| s.as_str()).collect();
     let tx_entries = d.get_transactions(&tx_hash_refs, false).await.unwrap();
@@ -207,23 +182,15 @@ async fn test_convert_expected_rejection() {
             .unwrap();
 
         let h_idx = (entry.block_height - dist[0].start_height) as usize;
-        let at_start = if h_idx == 0 {
-            0
-        } else {
-            dist[0].distribution[h_idx - 1]
-        };
+        let at_start = if h_idx == 0 { 0 } else { dist[0].distribution[h_idx - 1] };
         let at_end = dist[0].distribution[h_idx];
         let at_count = at_end - at_start;
 
         let asset_type_index = if at_count == 1 {
             at_start
         } else {
-            let candidates: Vec<OutputRequest> = (at_start..at_end)
-                .map(|idx| OutputRequest {
-                    amount: 0,
-                    index: idx,
-                })
-                .collect();
+            let candidates: Vec<OutputRequest> =
+                (at_start..at_end).map(|idx| OutputRequest { amount: 0, index: idx }).collect();
             let probe = d.get_outs(&candidates, false, tx_asset_type).await.unwrap();
             probe
                 .iter()
@@ -279,20 +246,11 @@ async fn test_convert_expected_rejection() {
         };
 
         let mask = hex_to_32(output_row.mask.as_ref().unwrap());
-        let (ring_indices, real_pos) = decoy_selector
-            .build_ring(asset_type_index, DEFAULT_RING_SIZE)
-            .unwrap();
-        let out_requests: Vec<OutputRequest> = ring_indices
-            .iter()
-            .map(|&idx| OutputRequest {
-                amount: 0,
-                index: idx,
-            })
-            .collect();
-        let ring_members = d
-            .get_outs(&out_requests, false, tx_asset_type)
-            .await
-            .unwrap();
+        let (ring_indices, real_pos) =
+            decoy_selector.build_ring(asset_type_index, DEFAULT_RING_SIZE).unwrap();
+        let out_requests: Vec<OutputRequest> =
+            ring_indices.iter().map(|&idx| OutputRequest { amount: 0, index: idx }).collect();
+        let ring_members = d.get_outs(&out_requests, false, tx_asset_type).await.unwrap();
 
         prepared_inputs.push(PreparedInput {
             secret_key,
@@ -325,10 +283,7 @@ async fn test_convert_expected_rejection() {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(tx_type::CONVERT)
         .set_amount_burnt(CONVERT_AMOUNT) // Convert amount goes to amount_burnt
@@ -341,15 +296,8 @@ async fn test_convert_expected_rejection() {
     let unsigned = builder.build().expect("failed to build CONVERT TX");
 
     // Verify prefix structure
-    assert_eq!(
-        unsigned.prefix.tx_type,
-        tx_type::CONVERT,
-        "tx_type should be CONVERT"
-    );
-    assert_eq!(
-        unsigned.prefix.amount_slippage_limit, slippage_limit,
-        "slippage should match"
-    );
+    assert_eq!(unsigned.prefix.tx_type, tx_type::CONVERT, "tx_type should be CONVERT");
+    assert_eq!(unsigned.prefix.amount_slippage_limit, slippage_limit, "slippage should match");
     assert_eq!(unsigned.prefix.source_asset_type, tx_asset_type);
     assert_eq!(unsigned.prefix.destination_asset_type, "VSD");
 
@@ -370,19 +318,13 @@ async fn test_convert_expected_rejection() {
 
     // Submit — expect rejection because CONVERT is gated at HF v255.
     println!("\nSubmitting CONVERT TX (expecting rejection)...");
-    let result = d
-        .send_raw_transaction_ex(&tx_hex, false, true, tx_asset_type)
-        .await
-        .unwrap();
+    let result = d.send_raw_transaction_ex(&tx_hex, false, true, tx_asset_type).await.unwrap();
     println!("Status: {}", result.status);
     if !result.reason.is_empty() {
         println!("Reason: {}", result.reason);
     }
 
     // CONVERT should be rejected at the current hardfork.
-    assert_ne!(
-        result.status, "OK",
-        "CONVERT TX should be rejected (HF gate not reached)"
-    );
+    assert_ne!(result.status, "OK", "CONVERT TX should be rejected (HF gate not reached)");
     println!("\n=== CONVERT TX correctly rejected (expected) ===");
 }

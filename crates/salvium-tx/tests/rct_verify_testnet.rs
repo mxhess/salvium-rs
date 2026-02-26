@@ -68,12 +68,7 @@ async fn test_daemon_has_user_transactions() {
     println!(
         "Found {} user TX(s): {}",
         tx_hashes.len(),
-        tx_hashes
-            .iter()
-            .take(3)
-            .map(|h| format!("{}...", &h[..12]))
-            .collect::<Vec<_>>()
-            .join(", ")
+        tx_hashes.iter().take(3).map(|h| format!("{}...", &h[..12])).collect::<Vec<_>>().join(", ")
     );
     // Informational — if 0 TXs, the verification tests will skip.
 }
@@ -102,11 +97,8 @@ async fn test_parse_real_transaction() {
         rct.rct_type
     );
 
-    let rct_name = if rct.rct_type == rct_type::SALVIUM_ONE {
-        "TCLSAG/SalviumOne"
-    } else {
-        "CLSAG"
-    };
+    let rct_name =
+        if rct.rct_type == rct_type::SALVIUM_ONE { "TCLSAG/SalviumOne" } else { "CLSAG" };
 
     println!("TX {}...", &tx_hashes[0][..16]);
     println!("  RCT type: {} ({})", rct.rct_type, rct_name);
@@ -134,17 +126,9 @@ async fn test_fetch_ring_members() {
     let (tx, _) = fetch_and_parse_tx(&d, &tx_hashes[0]).await;
     let mix_ring = fetch_mix_ring(&d, &tx).await;
 
-    let key_inputs: Vec<_> = tx
-        .prefix
-        .inputs
-        .iter()
-        .filter(|i| matches!(i, TxInput::Key { .. }))
-        .collect();
-    assert_eq!(
-        mix_ring.len(),
-        key_inputs.len(),
-        "mix_ring should have one entry per key input"
-    );
+    let key_inputs: Vec<_> =
+        tx.prefix.inputs.iter().filter(|i| matches!(i, TxInput::Key { .. })).collect();
+    assert_eq!(mix_ring.len(), key_inputs.len(), "mix_ring should have one entry per key input");
 
     for (i, ring) in mix_ring.iter().enumerate() {
         if let TxInput::Key { key_offsets, .. } = &key_inputs[i] {
@@ -233,11 +217,7 @@ async fn test_verify_multiple_txs() {
         let (tx, raw_bytes) = fetch_and_parse_tx(&d, tx_hash).await;
 
         // Skip if no key inputs (coinbase-only).
-        let has_key_inputs = tx
-            .prefix
-            .inputs
-            .iter()
-            .any(|i| matches!(i, TxInput::Key { .. }));
+        let has_key_inputs = tx.prefix.inputs.iter().any(|i| matches!(i, TxInput::Key { .. }));
         if !has_key_inputs {
             println!("  Skipping {}... (coinbase only)", &tx_hash[..12]);
             continue;
@@ -247,11 +227,7 @@ async fn test_verify_multiple_txs() {
         let vd = prepare_verification_data(&tx, &mix_ring, &raw_bytes);
 
         let rct = tx.rct.as_ref().unwrap();
-        let rct_name = if rct.rct_type == rct_type::SALVIUM_ONE {
-            "TCLSAG"
-        } else {
-            "CLSAG"
-        };
+        let rct_name = if rct.rct_type == rct_type::SALVIUM_ONE { "TCLSAG" } else { "CLSAG" };
 
         let (valid, failed_idx) = salvium_crypto::rct_verify::verify_rct_signatures(
             vd.rct_type,
@@ -276,20 +252,11 @@ async fn test_verify_multiple_txs() {
             );
         } else {
             failed += 1;
-            println!(
-                "  FAIL {}... (failed at input {:?})",
-                &tx_hash[..16],
-                failed_idx
-            );
+            println!("  FAIL {}... (failed at input {:?})", &tx_hash[..16], failed_idx);
         }
     }
 
-    println!(
-        "Summary: {} verified, {} failed out of {}",
-        verified,
-        failed,
-        tx_hashes.len()
-    );
+    println!("Summary: {} verified, {} failed out of {}", verified, failed, tx_hashes.len());
     assert!(verified > 0, "should verify at least one TX");
     assert_eq!(failed, 0, "no TX should fail verification");
 }
@@ -330,10 +297,7 @@ async fn test_tampered_tx_fails() {
     );
 
     assert!(!valid, "tampered TX should fail verification");
-    println!(
-        "Tampered TX correctly rejected (failed at input {:?})",
-        failed_idx
-    );
+    println!("Tampered TX correctly rejected (failed at input {:?})", failed_idx);
 }
 
 // =============================================================================
@@ -370,11 +334,7 @@ async fn test_offset_to_absolute_indices() {
 
             // Verify reconstruction: indices back to offsets.
             for i in 0..indices.len() {
-                let expected_offset = if i == 0 {
-                    indices[0]
-                } else {
-                    indices[i] - indices[i - 1]
-                };
+                let expected_offset = if i == 0 { indices[0] } else { indices[i] - indices[i - 1] };
                 assert_eq!(
                     expected_offset, key_offsets[i],
                     "offset reconstruction mismatch at index {}: expected {}, got {}",
@@ -384,12 +344,7 @@ async fn test_offset_to_absolute_indices() {
 
             println!(
                 "Ring indices: [{}{} ({} members)",
-                indices
-                    .iter()
-                    .take(4)
-                    .map(|i| i.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                indices.iter().take(4).map(|i| i.to_string()).collect::<Vec<_>>().join(", "),
                 if indices.len() > 4 { ", ..." } else { "]" },
                 indices.len()
             );

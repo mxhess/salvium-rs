@@ -125,10 +125,7 @@ pub fn build_multisig_contexts(
     for (i, input) in inputs.iter().enumerate() {
         let n = input.ring.len();
         if input.real_index >= n {
-            return Err(format!(
-                "input {}: real_index {} >= ring size {}",
-                i, input.real_index, n
-            ));
+            return Err(format!("input {}: real_index {} >= ring size {}", i, input.real_index, n));
         }
 
         // Commitment mask for signing: z = input_mask - pseudo_mask (mod L).
@@ -240,10 +237,7 @@ fn compute_pseudo_outputs(
         .iter()
         .zip(pseudo_masks.iter())
         .map(|(input, mask)| {
-            to_32(&salvium_crypto::pedersen_commit(
-                &input.amount.to_le_bytes(),
-                mask,
-            ))
+            to_32(&salvium_crypto::pedersen_commit(&input.amount.to_le_bytes(), mask))
         })
         .collect();
 
@@ -273,10 +267,8 @@ struct BpComponents {
 fn generate_bp_data(amounts: &[u64], masks: &[[u8; 32]]) -> Result<BpComponents, String> {
     use curve25519_dalek::scalar::Scalar;
 
-    let scalar_masks: Vec<Scalar> = masks
-        .iter()
-        .map(|m| Scalar::from_bytes_mod_order(*m))
-        .collect();
+    let scalar_masks: Vec<Scalar> =
+        masks.iter().map(|m| Scalar::from_bytes_mod_order(*m)).collect();
 
     let proof = salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(amounts, &scalar_masks);
 
@@ -287,16 +279,8 @@ fn generate_bp_data(amounts: &[u64], masks: &[[u8; 32]]) -> Result<BpComponents,
         r1: proof.r1.to_bytes(),
         s1: proof.s1.to_bytes(),
         d1: proof.d1.to_bytes(),
-        l_vec: proof
-            .l_vec
-            .iter()
-            .map(|p| p.compress().to_bytes())
-            .collect(),
-        r_vec: proof
-            .r_vec
-            .iter()
-            .map(|p| p.compress().to_bytes())
-            .collect(),
+        l_vec: proof.l_vec.iter().map(|p| p.compress().to_bytes()).collect(),
+        r_vec: proof.r_vec.iter().map(|p| p.compress().to_bytes()).collect(),
     })
 }
 
@@ -367,9 +351,7 @@ fn build_salvium_data_bytes(rct_type: u8, commitment_diff: Option<&[u8; 32]>) ->
     if has_diff {
         let diff = commitment_diff.unwrap();
         // c = H(R)
-        let c = to_32(&salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(
-            &r_point,
-        )));
+        let c = to_32(&salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(&r_point)));
         // z1 = r + c * diff
         let c_diff = to_32(&salvium_crypto::sc_mul(&c, diff));
         let z1 = to_32(&salvium_crypto::sc_add(&r_scalar, &c_diff));
@@ -425,10 +407,8 @@ mod tests {
 
         let (sk, pk) = test_keypair();
         let input_mask = random_scalar_test();
-        let commitment = to_32(&salvium_crypto::pedersen_commit(
-            &amount.to_le_bytes(),
-            &input_mask,
-        ));
+        let commitment =
+            to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &input_mask));
 
         let ki = to_32(&salvium_crypto::scalar_mult_point(
             &sk,
@@ -448,14 +428,10 @@ mod tests {
 
         let output_mask1 = random_scalar_test();
         let output_mask2 = random_scalar_test();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let prefix_hash = to_32(&salvium_crypto::keccak256(b"test_prefix"));
 
@@ -498,10 +474,8 @@ mod tests {
 
         let (sk, pk) = test_keypair();
         let input_mask = random_scalar_test();
-        let commitment = to_32(&salvium_crypto::pedersen_commit(
-            &amount.to_le_bytes(),
-            &input_mask,
-        ));
+        let commitment =
+            to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &input_mask));
         let ki = to_32(&salvium_crypto::scalar_mult_point(
             &sk,
             &to_32(&salvium_crypto::hash_to_point(&pk)),
@@ -535,14 +509,10 @@ mod tests {
 
         let output_mask1 = random_scalar_test();
         let output_mask2 = random_scalar_test();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let prefix_hash = to_32(&salvium_crypto::keccak256(b"test_prefix"));
 

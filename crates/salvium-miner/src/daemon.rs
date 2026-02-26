@@ -65,12 +65,7 @@ impl DaemonClient {
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id: "0",
-            method: method.to_string(),
-            params,
-        };
+        let req = JsonRpcRequest { jsonrpc: "2.0", id: "0", method: method.to_string(), params };
 
         let resp = self
             .client
@@ -79,16 +74,13 @@ impl DaemonClient {
             .send()
             .map_err(|e| format!("HTTP error: {}", e))?;
 
-        let body: JsonRpcResponse = resp
-            .json()
-            .map_err(|e| format!("JSON parse error: {}", e))?;
+        let body: JsonRpcResponse = resp.json().map_err(|e| format!("JSON parse error: {}", e))?;
 
         if let Some(err) = body.error {
             return Err(format!("RPC error: {}", err));
         }
 
-        body.result
-            .ok_or_else(|| "No result in response".to_string())
+        body.result.ok_or_else(|| "No result in response".to_string())
     }
 
     pub fn get_info(&self) -> Result<DaemonInfo, String> {
@@ -127,9 +119,7 @@ impl DaemonClient {
             .send()
             .map_err(|e| format!("HTTP error: {}", e))?;
 
-        let body: JsonRpcResponse = resp
-            .json()
-            .map_err(|e| format!("JSON parse error: {}", e))?;
+        let body: JsonRpcResponse = resp.json().map_err(|e| format!("JSON parse error: {}", e))?;
 
         if let Some(err) = body.error {
             return Err(format!("Block rejected: {}", err));

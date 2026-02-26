@@ -96,14 +96,7 @@ impl MiningLoop {
             handles.push(handle);
         }
 
-        Ok(Self {
-            hash_count,
-            running,
-            throttle,
-            result_rx,
-            job_senders,
-            _handles: handles,
-        })
+        Ok(Self { hash_count, running, throttle, result_rx, job_senders, _handles: handles })
     }
 
     pub fn send_job(&self, job: MiningJob) {
@@ -144,9 +137,7 @@ fn generic_worker_loop(
             Err(_) => break,
         };
 
-        let nonce_offset = job
-            .nonce_offset
-            .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+        let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
         let mut nonce = nonce_start;
         let mut blob = job.hashing_blob.clone();
 
@@ -181,9 +172,7 @@ fn generic_worker_loop(
             };
             if meets {
                 let mut template = job.template_blob.clone();
-                let tmpl_offset = job
-                    .nonce_offset
-                    .unwrap_or_else(|| find_nonce_offset(&template));
+                let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
                 set_nonce(&mut template, tmpl_offset, nonce);
 
                 let _ = result_tx.send(FoundBlock {
@@ -224,9 +213,7 @@ fn mine_single_job(
     job_rx: &mpsc::Receiver<MiningJob>,
     throttle: &ThrottleState,
 ) {
-    let nonce_offset = job
-        .nonce_offset
-        .unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
+    let nonce_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&job.hashing_blob));
     let mut nonce = nonce_start;
     let mut blob = job.hashing_blob.clone();
 
@@ -260,9 +247,7 @@ fn mine_single_job(
         };
         if meets {
             let mut template = job.template_blob.clone();
-            let tmpl_offset = job
-                .nonce_offset
-                .unwrap_or_else(|| find_nonce_offset(&template));
+            let tmpl_offset = job.nonce_offset.unwrap_or_else(|| find_nonce_offset(&template));
             set_nonce(&mut template, tmpl_offset, nonce);
 
             let _ = result_tx.send(FoundBlock {

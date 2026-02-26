@@ -23,14 +23,12 @@ pub async fn export_key_images(ctx: &AppContext, output_file: &str, _all: bool) 
     let images: Vec<salvium_tx::offline::ExportedKeyImage> = outputs
         .iter()
         .filter_map(|o| {
-            o.key_image
-                .as_ref()
-                .map(|ki| salvium_tx::offline::ExportedKeyImage {
-                    key_image: ki.clone(),
-                    signature: String::new(), // Placeholder — full impl signs with key image secret.
-                    output_index: o.output_index as u64,
-                    amount: o.amount.parse().unwrap_or(0),
-                })
+            o.key_image.as_ref().map(|ki| salvium_tx::offline::ExportedKeyImage {
+                key_image: ki.clone(),
+                signature: String::new(), // Placeholder — full impl signs with key image secret.
+                output_index: o.output_index as u64,
+                amount: o.amount.parse().unwrap_or(0),
+            })
         })
         .collect();
 
@@ -57,11 +55,7 @@ pub async fn import_key_images(ctx: &AppContext, input_file: &str) -> Result {
         }
     }
 
-    println!(
-        "Imported {} key images, {} newly spent.",
-        images.len(),
-        spent_count
-    );
+    println!("Imported {} key images, {} newly spent.", images.len(), spent_count);
     Ok(())
 }
 
@@ -142,10 +136,8 @@ pub async fn sign_transfer(ctx: &AppContext, input_file: &str) -> Result {
 
     // Sign the transaction using wallet keys.
     let keys = wallet.keys();
-    let spend_secret = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key — cannot sign")?;
+    let spend_secret =
+        keys.cn.spend_secret_key.ok_or("wallet has no spend secret key — cannot sign")?;
 
     // Generate tx key and hash.
     let tx_data = json.as_bytes();
@@ -165,11 +157,8 @@ pub async fn sign_transfer(ctx: &AppContext, input_file: &str) -> Result {
 
     let signed_json = salvium_tx::offline::export_signed_tx(&signed);
     let output_file = input_file.replace("unsigned", "signed");
-    let output_file = if output_file == input_file {
-        format!("{}.signed", input_file)
-    } else {
-        output_file
-    };
+    let output_file =
+        if output_file == input_file { format!("{}.signed", input_file) } else { output_file };
     std::fs::write(&output_file, &signed_json)?;
     println!("Signed transaction written to {}", output_file);
 
@@ -266,9 +255,8 @@ pub async fn mark_output_unspent(ctx: &AppContext, key_image: &str) -> Result {
 
 pub async fn is_output_spent(ctx: &AppContext, key_image: &str) -> Result {
     let wallet = open_wallet(ctx)?;
-    let output = wallet
-        .get_output(key_image)?
-        .ok_or_else(|| format!("output not found: {}", key_image))?;
+    let output =
+        wallet.get_output(key_image)?.ok_or_else(|| format!("output not found: {}", key_image))?;
 
     if output.is_spent {
         println!("Output {} is SPENT", key_image);
@@ -339,10 +327,7 @@ pub async fn hw_key_images_sync(ctx: &AppContext) -> Result {
         }
     }
 
-    println!(
-        "Exported {} key images, {} newly spent.",
-        result.num_exported, spent_count
-    );
+    println!("Exported {} key images, {} newly spent.", result.num_exported, spent_count);
 
     Ok(())
 }

@@ -65,13 +65,9 @@ async fn test_real_testnet_transfer() {
     let db_path = temp_dir.path().join("wallet-a.db");
     let db_key = [0u8; 32];
 
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &db_key,
-    )
-    .expect("failed to create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &db_key)
+            .expect("failed to create wallet");
     println!("  CN address:     {}", wallet.cn_address().unwrap());
     println!("  CARROT address: {}", wallet.carrot_address().unwrap());
 
@@ -80,20 +76,14 @@ async fn test_real_testnet_transfer() {
     let daemon = DaemonRpc::new(DAEMON_URL);
 
     let info = daemon.get_info().await.expect("cannot connect to daemon");
-    println!(
-        "  Daemon height: {}, synchronized: {}",
-        info.height, info.synchronized
-    );
+    println!("  Daemon height: {}, synchronized: {}", info.height, info.synchronized);
     assert!(info.synchronized, "daemon is not synchronized");
 
     // Query hardfork version to determine correct asset type.
     // HF >= 6 (SALVIUM_ONE_PROOFS): "SAL1" for TRANSFER/MINER/STAKE
     // HF < 6: "SAL"
     // Future hardforks may introduce additional asset types.
-    let hf_info = daemon
-        .hard_fork_info()
-        .await
-        .expect("failed to get hard_fork_info");
+    let hf_info = daemon.hard_fork_info().await.expect("failed to get hard_fork_info");
     let hf_version = hf_info.version;
     let tx_asset_type = if hf_version >= 6 { "SAL1" } else { "SAL" };
     // DB stores outputs with whatever asset type was on-chain at scan time.
@@ -124,10 +114,7 @@ async fn test_real_testnet_transfer() {
                 salvium_wallet::SyncEvent::Complete { height } => {
                     println!("  Sync complete at height {}", height);
                 }
-                salvium_wallet::SyncEvent::Reorg {
-                    from_height,
-                    to_height,
-                } => {
+                salvium_wallet::SyncEvent::Reorg { from_height, to_height } => {
                     println!("  Reorg detected: {} -> {}", from_height, to_height);
                 }
                 _ => {}
@@ -136,38 +123,20 @@ async fn test_real_testnet_transfer() {
     });
 
     let no_cancel = std::sync::atomic::AtomicBool::new(false);
-    let sync_height = wallet
-        .sync(&daemon, Some(&event_tx), &no_cancel)
-        .await
-        .expect("sync failed");
+    let sync_height = wallet.sync(&daemon, Some(&event_tx), &no_cancel).await.expect("sync failed");
     drop(event_tx);
     let _ = sync_handle.await;
     println!("  Final sync height: {}", sync_height);
 
     // ── Step 4: Verify balance ──────────────────────────────────────────────
     println!("\n[4/8] Checking balance...");
-    let balance = wallet
-        .get_balance(db_asset_type, 0)
-        .expect("failed to get balance");
+    let balance = wallet.get_balance(db_asset_type, 0).expect("failed to get balance");
     let total_balance: u64 = balance.balance.parse().expect("invalid balance string");
-    let unlocked_balance: u64 = balance
-        .unlocked_balance
-        .parse()
-        .expect("invalid unlocked_balance string");
-    println!(
-        "  Total:    {:.9} SAL ({} atomic)",
-        total_balance as f64 / 1e9,
-        total_balance
-    );
-    println!(
-        "  Unlocked: {:.9} SAL ({} atomic)",
-        unlocked_balance as f64 / 1e9,
-        unlocked_balance
-    );
-    assert!(
-        unlocked_balance > 0,
-        "wallet has no unlocked balance to spend"
-    );
+    let unlocked_balance: u64 =
+        balance.unlocked_balance.parse().expect("invalid unlocked_balance string");
+    println!("  Total:    {:.9} SAL ({} atomic)", total_balance as f64 / 1e9, total_balance);
+    println!("  Unlocked: {:.9} SAL ({} atomic)", unlocked_balance as f64 / 1e9, unlocked_balance);
+    assert!(unlocked_balance > 0, "wallet has no unlocked balance to spend");
     assert!(
         unlocked_balance > SEND_AMOUNT,
         "insufficient balance: need {} but have {} unlocked",
@@ -179,10 +148,7 @@ async fn test_real_testnet_transfer() {
     println!("\n[5/8] Selecting outputs...");
 
     // Use daemon's dynamic fee estimate (accounts for current block size/reward).
-    let fee_estimate = daemon
-        .get_fee_estimate(10)
-        .await
-        .expect("failed to get fee estimate");
+    let fee_estimate = daemon.get_fee_estimate(10).await.expect("failed to get fee estimate");
     let daemon_fee_per_byte = fee_estimate.fee;
     println!("  Daemon fee per byte: {} atomic", daemon_fee_per_byte);
 
@@ -191,11 +157,7 @@ async fn test_real_testnet_transfer() {
     let estimated_fee =
         (est_weight as u64) * daemon_fee_per_byte * FeePriority::Normal.multiplier();
     println!("  Estimated weight: {} bytes", est_weight);
-    println!(
-        "  Estimated fee: {:.9} SAL ({} atomic)",
-        estimated_fee as f64 / 1e9,
-        estimated_fee
-    );
+    println!("  Estimated fee: {:.9} SAL ({} atomic)", estimated_fee as f64 / 1e9, estimated_fee);
 
     let selection = wallet
         .select_carrot_outputs(
@@ -250,14 +212,7 @@ async fn test_real_testnet_transfer() {
     let mut tx_hashes_to_resolve: Vec<String> = selection
         .selected
         .iter()
-        .map(|u| {
-            wallet
-                .get_output(&u.key_image)
-                .unwrap()
-                .unwrap()
-                .tx_hash
-                .clone()
-        })
+        .map(|u| wallet.get_output(&u.key_image).unwrap().unwrap().tx_hash.clone())
         .collect();
     tx_hashes_to_resolve.sort();
     tx_hashes_to_resolve.dedup();
@@ -292,33 +247,21 @@ async fn test_real_testnet_transfer() {
 
         // Resolve asset-type-specific index from the cumulative distribution.
         // cumDist[h - start_height] = total asset-type outputs up to and including block h.
-        let block_height = *tx_height_map
-            .get(&output_row.tx_hash)
-            .expect("tx not found in height map");
+        let block_height =
+            *tx_height_map.get(&output_row.tx_hash).expect("tx not found in height map");
         let start_h = dist_entry.start_height;
 
         // Print distribution values around this height for debugging.
         let h_idx = (block_height - start_h) as usize;
-        println!(
-            "  Height {}: dist_idx={}, start_h={}",
-            block_height, h_idx, start_h
-        );
+        println!("  Height {}: dist_idx={}, start_h={}", block_height, h_idx, start_h);
         if h_idx > 0 && h_idx < rct_offsets.len() {
-            let before = if h_idx >= 2 {
-                rct_offsets[h_idx - 2]
-            } else {
-                0
-            };
+            let before = if h_idx >= 2 { rct_offsets[h_idx - 2] } else { 0 };
             println!(
                 "    cumDist[h-2]={}, cumDist[h-1]={}, cumDist[h]={}, cumDist[h+1]={}",
                 before,
                 rct_offsets[h_idx - 1],
                 rct_offsets[h_idx],
-                if h_idx + 1 < rct_offsets.len() {
-                    rct_offsets[h_idx + 1]
-                } else {
-                    0
-                }
+                if h_idx + 1 < rct_offsets.len() { rct_offsets[h_idx + 1] } else { 0 }
             );
         }
 
@@ -336,14 +279,7 @@ async fn test_real_testnet_transfer() {
                 let gi = global_indices_for_tx[output_row.output_index as usize];
                 println!("    Global index (from get_transactions): {}", gi);
                 let probe_global = daemon
-                    .get_outs(
-                        &[OutputRequest {
-                            amount: 0,
-                            index: gi,
-                        }],
-                        false,
-                        "",
-                    )
+                    .get_outs(&[OutputRequest { amount: 0, index: gi }], false, "")
                     .await
                     .expect("probe global index");
                 if !probe_global.is_empty() {
@@ -361,11 +297,7 @@ async fn test_real_testnet_transfer() {
             }
         }
 
-        let at_start = if h_idx == 0 {
-            0
-        } else {
-            rct_offsets[h_idx - 1]
-        };
+        let at_start = if h_idx == 0 { 0 } else { rct_offsets[h_idx - 1] };
         let at_end = rct_offsets[h_idx];
         let at_count = at_end - at_start;
 
@@ -379,12 +311,8 @@ async fn test_real_testnet_transfer() {
             );
         } else {
             // Multiple outputs at this height. Probe to find ours by public key.
-            let candidates: Vec<OutputRequest> = (at_start..at_end)
-                .map(|idx| OutputRequest {
-                    amount: 0,
-                    index: idx,
-                })
-                .collect();
+            let candidates: Vec<OutputRequest> =
+                (at_start..at_end).map(|idx| OutputRequest { amount: 0, index: idx }).collect();
             let probe = daemon
                 .get_outs(&candidates, false, tx_asset_type)
                 .await
@@ -421,10 +349,8 @@ async fn test_real_testnet_transfer() {
             let prove_spend_key = keys.carrot.prove_spend_key.expect("not a full wallet");
             let generate_image_key = keys.carrot.generate_image_key;
 
-            let shared_secret_hex = output_row
-                .carrot_shared_secret
-                .as_ref()
-                .expect("missing carrot_shared_secret");
+            let shared_secret_hex =
+                output_row.carrot_shared_secret.as_ref().expect("missing carrot_shared_secret");
             let shared_secret = hex_to_32(shared_secret_hex);
 
             // The commitment is needed to derive extensions.
@@ -489,13 +415,8 @@ async fn test_real_testnet_transfer() {
 
         // Fetch ring member public keys and commitments from daemon.
         // Pass asset_type so the daemon interprets indices as asset-type-specific.
-        let out_requests: Vec<OutputRequest> = ring_indices
-            .iter()
-            .map(|&idx| OutputRequest {
-                amount: 0,
-                index: idx,
-            })
-            .collect();
+        let out_requests: Vec<OutputRequest> =
+            ring_indices.iter().map(|&idx| OutputRequest { amount: 0, index: idx }).collect();
 
         let ring_members = daemon
             .get_outs(&out_requests, false, tx_asset_type)
@@ -573,10 +494,7 @@ async fn test_real_testnet_transfer() {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_asset_types(tx_asset_type, tx_asset_type)
         .set_rct_type(rct)
@@ -635,46 +553,31 @@ async fn test_real_testnet_transfer() {
     let rct = signed_tx.rct.as_ref().unwrap();
 
     // 1. Verify output commitments: C = mask*G + amount*H
-    for (i, (mask, amount)) in verify_output_masks
-        .iter()
-        .zip(verify_output_amounts.iter())
-        .enumerate()
+    for (i, (mask, amount)) in
+        verify_output_masks.iter().zip(verify_output_amounts.iter()).enumerate()
     {
-        let expected = to_32(&salvium_crypto::pedersen_commit(
-            &amount.to_le_bytes(),
-            mask,
-        ));
+        let expected = to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), mask));
         if expected == verify_output_commitments[i] {
             println!("  Output {} commitment: MATCH", i);
         } else {
             println!("  Output {} commitment: MISMATCH!", i);
             println!("    Expected: {}", hex::encode(expected));
-            println!(
-                "    Got:      {}",
-                hex::encode(verify_output_commitments[i])
-            );
+            println!("    Got:      {}", hex::encode(verify_output_commitments[i]));
         }
     }
 
     // 2. Verify pseudo-output commitments match input amounts.
     for (i, pseudo_out) in rct.pseudo_outs.iter().enumerate() {
         let (input_amount, _, _, _, _, _, _) = &verify_inputs[i];
-        println!(
-            "  Input {} pseudo-out: {} (amount={})",
-            i,
-            hex::encode(pseudo_out),
-            input_amount
-        );
+        println!("  Input {} pseudo-out: {} (amount={})", i, hex::encode(pseudo_out), input_amount);
     }
 
     // 3. Balance check: sum(pseudo_outs) == sum(out_pk) + fee*H
     {
         // Compute fee commitment: fee * H (with zero mask)
         let zero_mask = [0u8; 32];
-        let fee_commit = to_32(&salvium_crypto::pedersen_commit(
-            &verify_fee.to_le_bytes(),
-            &zero_mask,
-        ));
+        let fee_commit =
+            to_32(&salvium_crypto::pedersen_commit(&verify_fee.to_le_bytes(), &zero_mask));
 
         // Sum pseudo_outs
         let mut pseudo_sum = rct.pseudo_outs[0];
@@ -735,10 +638,7 @@ async fn test_real_testnet_transfer() {
             }
             // salvium_data (extract actual pr_proof from signed TX)
             if let Some(ref sd) = rct.salvium_data {
-                let dt = sd
-                    .get("salvium_data_type")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let dt = sd.get("salvium_data_type").and_then(|v| v.as_u64()).unwrap_or(0);
                 wv(&mut buf, dt);
                 // pr_proof
                 if let Some(pr) = sd.get("pr_proof") {
@@ -786,12 +686,7 @@ async fn test_real_testnet_transfer() {
             let (_, input_pk, input_sk_x, _, ring, ring_commits, real_idx) = &verify_inputs[i];
             let ki = to_32(&salvium_crypto::generate_key_image(input_pk, input_sk_x));
             println!("  TCLSAG {} key_image: {}", i, hex::encode(ki));
-            println!(
-                "  TCLSAG {} ring_size: {}, real_idx: {}",
-                i,
-                ring.len(),
-                real_idx
-            );
+            println!("  TCLSAG {} ring_size: {}, real_idx: {}", i, ring.len(), real_idx);
             println!("  TCLSAG {} real key: {}", i, hex::encode(ring[*real_idx]));
             println!("  TCLSAG {} input pk: {}", i, hex::encode(input_pk));
             // Check key match.
@@ -813,11 +708,7 @@ async fn test_real_testnet_transfer() {
                 ring_commits,
                 &rct.pseudo_outs[i],
             );
-            println!(
-                "  TCLSAG {} verify: {}",
-                i,
-                if valid { "PASS" } else { "FAIL" }
-            );
+            println!("  TCLSAG {} verify: {}", i, if valid { "PASS" } else { "FAIL" });
 
             // Debug: verify Ko = sk_x*G + sk_y*T
             let (_, _, sk_x, sk_y_opt, _, _, _) = &verify_inputs[i];
@@ -831,14 +722,8 @@ async fn test_real_testnet_transfer() {
                 let t_part = salvium_crypto::scalar_mult_point(sk_y, &t_bytes);
                 let expected_pk = to_32(&salvium_crypto::point_add_compressed(&g_part, &t_part));
                 println!("  TCLSAG {} Ko verification:", i);
-                println!(
-                    "    Expected Ko = sk_x*G + sk_y*T: {}",
-                    hex::encode(expected_pk)
-                );
-                println!(
-                    "    Actual Ko (from DB):           {}",
-                    hex::encode(input_pk)
-                );
+                println!("    Expected Ko = sk_x*G + sk_y*T: {}", hex::encode(expected_pk));
+                println!("    Actual Ko (from DB):           {}", hex::encode(input_pk));
                 println!("    Match: {}", expected_pk == *input_pk);
                 println!("    sk_x: {}", hex::encode(sk_x));
                 println!("    sk_y: {}", hex::encode(sk_y));
@@ -852,15 +737,8 @@ async fn test_real_testnet_transfer() {
                 input_mask,
             ));
             println!("  TCLSAG {} commitment at real_idx:", i);
-            println!(
-                "    Ring commit[{}]: {}",
-                real_idx,
-                hex::encode(input_commitment)
-            );
-            println!(
-                "    Expected C=mask*G+amt*H: {}",
-                hex::encode(expected_commit)
-            );
+            println!("    Ring commit[{}]: {}", real_idx, hex::encode(input_commitment));
+            println!("    Expected C=mask*G+amt*H: {}", hex::encode(expected_commit));
             println!("    Match: {}", input_commitment == expected_commit);
         }
     }
@@ -887,10 +765,7 @@ async fn test_real_testnet_transfer() {
         }
     }
     println!("  TX JSON extra: {:?}", tx_json["prefix"]["extra"]);
-    println!(
-        "  TX JSON salvium_data: {:?}",
-        tx_json["rct"]["salvium_data"]
-    );
+    println!("  TX JSON salvium_data: {:?}", tx_json["rct"]["salvium_data"]);
 
     // Try parsing the bytes back.
     let roundtrip_json_str = salvium_crypto::parse_transaction_bytes(&tx_bytes);
@@ -916,10 +791,7 @@ async fn test_real_testnet_transfer() {
             // Re-serialize and compare.
             let roundtrip_bytes = salvium_crypto::serialize_transaction_json(&roundtrip_json_str);
             if roundtrip_bytes == tx_bytes {
-                println!(
-                    "  Re-serialization: MATCH ({} bytes)",
-                    roundtrip_bytes.len()
-                );
+                println!("  Re-serialization: MATCH ({} bytes)", roundtrip_bytes.len());
             } else {
                 println!(
                     "  Re-serialization: MISMATCH (original={}, roundtrip={})",
@@ -1053,11 +925,7 @@ async fn test_real_testnet_transfer() {
         }
 
         let extra_len = read_varint(b, &mut pos);
-        println!(
-            "  extra: {} bytes, pos_after_extra={}",
-            extra_len,
-            pos + extra_len as usize
-        );
+        println!("  extra: {} bytes, pos_after_extra={}", extra_len, pos + extra_len as usize);
         pos += extra_len as usize;
 
         let tx_type = read_varint(b, &mut pos);
@@ -1147,16 +1015,9 @@ async fn test_real_testnet_transfer() {
             // TCLSAG: ring_size * 32 (sx) + ring_size * 32 (sy) + 32 (c1) + 32 (D)
             let ring_size = 16; // known
             let tclsag_size = ring_size * 32 * 2 + 64;
-            println!(
-                "  TCLSAG expected size: {} bytes (ring={})",
-                tclsag_size, ring_size
-            );
+            println!("  TCLSAG expected size: {} bytes (ring={})", tclsag_size, ring_size);
             pos += tclsag_size;
-            println!(
-                "  pseudoOuts at byte {}: {}",
-                pos,
-                hex::encode(&b[pos..pos + 32])
-            );
+            println!("  pseudoOuts at byte {}: {}", pos, hex::encode(&b[pos..pos + 32]));
             pos += 32;
             println!("  --- END at byte {} (total={}) ---", pos, b.len());
         }
@@ -1198,10 +1059,7 @@ async fn test_real_testnet_transfer() {
 
     println!("\n=== SUCCESS ===");
     println!("TX hash: {}", hex::encode(tx_hash));
-    println!(
-        "Sent {:.9} SAL from Wallet A to Wallet B",
-        SEND_AMOUNT as f64 / 1e9
-    );
+    println!("Sent {:.9} SAL from Wallet A to Wallet B", SEND_AMOUNT as f64 / 1e9);
 }
 
 fn hex_to_32(s: &str) -> [u8; 32] {

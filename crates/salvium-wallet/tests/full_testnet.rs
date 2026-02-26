@@ -196,10 +196,7 @@ fn daemon_url() -> String {
 }
 
 fn resume_from_hf() -> u8 {
-    std::env::var("RESUME_FROM_HF")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
+    std::env::var("RESUME_FROM_HF").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 /// Auto-detect the appropriate resume HF based on the daemon's current height.
@@ -226,12 +223,8 @@ async fn get_daemon_height(daemon: &DaemonRpc) -> u64 {
 
 fn miner_binary_path() -> PathBuf {
     // Look relative to the workspace root
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let workspace =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf();
     let release = workspace.join("target/release/salvium-miner");
     if release.exists() {
         return release;
@@ -263,21 +256,12 @@ async fn mine_to(
 ) -> MiningStats {
     let current = get_daemon_height(daemon).await;
     if current >= target_height {
-        println!(
-            "  Already at height {} (target {}), skipping",
-            current, target_height
-        );
-        return MiningStats {
-            blocks_mined: 0,
-            elapsed_secs: 0.0,
-        };
+        println!("  Already at height {} (target {}), skipping", current, target_height);
+        return MiningStats { blocks_mined: 0, elapsed_secs: 0.0 };
     }
 
     let blocks_needed = target_height - current;
-    println!(
-        "  Mining {} blocks ({} -> {})...",
-        blocks_needed, current, target_height
-    );
+    println!("  Mining {} blocks ({} -> {})...", blocks_needed, current, target_height);
 
     let t0 = Instant::now();
     let miner_path = miner_binary_path();
@@ -334,10 +318,7 @@ async fn mine_to(
                 fmt_duration(elapsed),
                 mined
             );
-            return MiningStats {
-                blocks_mined: mined,
-                elapsed_secs: elapsed,
-            };
+            return MiningStats { blocks_mined: mined, elapsed_secs: elapsed };
         }
 
         if attempt < MINER_RETRIES {
@@ -409,12 +390,7 @@ impl TestFixture {
         )
         .expect("failed to create wallet B");
 
-        TestFixture {
-            wallet_a,
-            wallet_b,
-            _tmp_a: tmp_a,
-            _tmp_b: tmp_b,
-        }
+        TestFixture { wallet_a, wallet_b, _tmp_a: tmp_a, _tmp_b: tmp_b }
     }
 }
 
@@ -464,12 +440,7 @@ impl<'a> TestTransactor<'a> {
         // prepare_inputs how to derive spending keys.
         let selection = self
             .wallet
-            .select_outputs(
-                amount,
-                estimated_fee,
-                db_asset_type,
-                SelectionStrategy::Default,
-            )
+            .select_outputs(amount, estimated_fee, db_asset_type, SelectionStrategy::Default)
             .expect("output selection failed");
         println!(
             "    Selected {} output(s), total: {} SAL, change: {} SAL",
@@ -482,14 +453,7 @@ impl<'a> TestTransactor<'a> {
         let mut tx_hashes: Vec<String> = selection
             .selected
             .iter()
-            .map(|u| {
-                self.wallet
-                    .get_output(&u.key_image)
-                    .unwrap()
-                    .unwrap()
-                    .tx_hash
-                    .clone()
-            })
+            .map(|u| self.wallet.get_output(&u.key_image).unwrap().unwrap().tx_hash.clone())
             .collect();
         tx_hashes.sort();
         tx_hashes.dedup();
@@ -556,11 +520,7 @@ impl<'a> TestTransactor<'a> {
                 if h_idx >= distribution.len() {
                     continue;
                 }
-                let at_start = if h_idx == 0 {
-                    0
-                } else {
-                    distribution[h_idx - 1]
-                };
+                let at_start = if h_idx == 0 { 0 } else { distribution[h_idx - 1] };
                 let at_end = distribution[h_idx];
                 let at_count = at_end - at_start;
 
@@ -572,10 +532,7 @@ impl<'a> TestTransactor<'a> {
                     at_start
                 } else {
                     let candidates: Vec<OutputRequest> = (at_start..at_end)
-                        .map(|idx| OutputRequest {
-                            amount: 0,
-                            index: idx,
-                        })
+                        .map(|idx| OutputRequest { amount: 0, index: idx })
                         .collect();
                     let probe = self
                         .daemon
@@ -657,11 +614,7 @@ impl<'a> TestTransactor<'a> {
                 let pk = to_32(&salvium_crypto::scalar_mult_base(&sk));
                 // For TCLSAG (rct_type >= 9), legacy outputs need secret_key_y = 0.
                 // The C++ code sets ctkey.y = rct::zero() for non-CARROT outputs.
-                let sk_y = if fork.rct_type >= 9 {
-                    Some([0u8; 32])
-                } else {
-                    None
-                };
+                let sk_y = if fork.rct_type >= 9 { Some([0u8; 32]) } else { None };
                 (sk, sk_y, pk)
             };
 
@@ -671,13 +624,8 @@ impl<'a> TestTransactor<'a> {
             let (ring_indices, real_pos) = decoy_selector
                 .build_ring(asset_type_index, DEFAULT_RING_SIZE)
                 .expect("failed to build ring");
-            let out_requests: Vec<OutputRequest> = ring_indices
-                .iter()
-                .map(|&idx| OutputRequest {
-                    amount: 0,
-                    index: idx,
-                })
-                .collect();
+            let out_requests: Vec<OutputRequest> =
+                ring_indices.iter().map(|&idx| OutputRequest { amount: 0, index: idx }).collect();
             let ring_members = self
                 .daemon
                 .get_outs(&out_requests, false, &ring_asset)
@@ -690,11 +638,7 @@ impl<'a> TestTransactor<'a> {
             if public_key != ring_pub_keys[real_pos] {
                 eprintln!("    WARNING: derived pk != ring[real_pos]!");
                 eprintln!("      derived pk:    {}", hex::encode(public_key));
-                eprintln!(
-                    "      ring[{}]:   {}",
-                    real_pos,
-                    hex::encode(ring_pub_keys[real_pos])
-                );
+                eprintln!("      ring[{}]:   {}", real_pos, hex::encode(ring_pub_keys[real_pos]));
                 eprintln!("      output_pub_key: {}", hex::encode(output_pub_key));
             }
             eprintln!(
@@ -725,16 +669,9 @@ impl<'a> TestTransactor<'a> {
 
     /// Estimate fee using daemon's dynamic fee rate.
     async fn estimate_fee(&self, n_inputs: usize, n_outputs: usize, fork: &ForkSpec) -> u64 {
-        let fee_estimate = self
-            .daemon
-            .get_fee_estimate(10)
-            .await
-            .expect("failed to get fee estimate");
-        let out_type = if fork.hf >= 10 {
-            output_type::CARROT_V1
-        } else {
-            output_type::TAGGED_KEY
-        };
+        let fee_estimate =
+            self.daemon.get_fee_estimate(10).await.expect("failed to get fee estimate");
+        let out_type = if fork.hf >= 10 { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
         let est_weight =
             fee::estimate_tx_weight(n_inputs, n_outputs, DEFAULT_RING_SIZE, true, out_type);
         (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier()
@@ -868,11 +805,7 @@ impl<'a> TestTransactor<'a> {
         // Mark spent inputs in the wallet DB so we don't re-spend them.
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult {
-            tx_hash,
-            fee,
-            tx_bytes,
-        }
+        TxResult { tx_hash, fee, tx_bytes }
     }
 
     /// Build, sign, and submit a STAKE transaction.
@@ -937,11 +870,7 @@ impl<'a> TestTransactor<'a> {
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult {
-            tx_hash,
-            fee,
-            tx_bytes: vec![],
-        }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 
     /// Build, sign, and submit a BURN transaction.
@@ -1001,11 +930,7 @@ impl<'a> TestTransactor<'a> {
 
         self.mark_inputs_spent(&signed, &tx_hash);
 
-        TxResult {
-            tx_hash,
-            fee,
-            tx_bytes: vec![],
-        }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 
     /// Build, sign, and submit a SWEEP transaction (transfer entire balance).
@@ -1014,10 +939,7 @@ impl<'a> TestTransactor<'a> {
         // Must estimate fee using the actual number of inputs (all unlocked
         // outputs), not 1.
         let db_asset_type = self.db_asset_type(fork);
-        let balance = self
-            .wallet
-            .get_balance(db_asset_type, 0)
-            .expect("get_balance failed");
+        let balance = self.wallet.get_balance(db_asset_type, 0).expect("get_balance failed");
         let unlocked: u64 = balance.unlocked_balance.parse().expect("invalid balance");
 
         // First pass: use a minimal fee to select ALL unlocked outputs and
@@ -1057,10 +979,7 @@ impl<'a> TestTransactor<'a> {
                 payment_id: [0u8; 8],
                 is_subaddress: false,
             })
-            .set_change_address(
-                change_keys(self.wallet, fork).0,
-                change_keys(self.wallet, fork).1,
-            )
+            .set_change_address(change_keys(self.wallet, fork).0, change_keys(self.wallet, fork).1)
             .set_asset_types(fork.asset, fork.asset)
             .set_rct_type(fork.rct_type)
             .set_fee(estimated_fee);
@@ -1102,11 +1021,7 @@ impl<'a> TestTransactor<'a> {
         self.mark_inputs_spent(&signed, &tx_hash);
 
         println!("    sweep amount: {} SAL", fmt_sal(sweep_amount));
-        TxResult {
-            tx_hash,
-            fee,
-            tx_bytes: vec![],
-        }
+        TxResult { tx_hash, fee, tx_bytes: vec![] }
     }
 }
 
@@ -1146,10 +1061,7 @@ async fn sync_wallet_checked(wallet: &mut Wallet, daemon: &DaemonRpc, label: &st
 
     let t0 = Instant::now();
     let no_cancel = std::sync::atomic::AtomicBool::new(false);
-    let sync_height = wallet
-        .sync(daemon, Some(&event_tx), &no_cancel)
-        .await
-        .expect("sync failed");
+    let sync_height = wallet.sync(daemon, Some(&event_tx), &no_cancel).await.expect("sync failed");
     drop(event_tx);
     let (parse_errors, empty_blobs, outputs_found) = stats_task.await.unwrap();
     let elapsed = t0.elapsed().as_secs_f64();
@@ -1167,18 +1079,11 @@ async fn sync_wallet_checked(wallet: &mut Wallet, daemon: &DaemonRpc, label: &st
     assert_eq!(parse_errors, 0, "{} had parse errors during sync", label);
     assert_eq!(empty_blobs, 0, "{} had empty blobs during sync", label);
 
-    SyncStats {
-        sync_height,
-        parse_errors,
-        empty_blobs,
-        outputs_found,
-    }
+    SyncStats { sync_height, parse_errors, empty_blobs, outputs_found }
 }
 
 fn print_balance(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
-    let bal = wallet
-        .get_balance(asset_type, 0)
-        .expect("get_balance failed");
+    let bal = wallet.get_balance(asset_type, 0).expect("get_balance failed");
     let total: u64 = bal.balance.parse().unwrap_or(0);
     let unlocked: u64 = bal.unlocked_balance.parse().unwrap_or(0);
     let locked: u64 = bal.locked_balance.parse().unwrap_or(0);
@@ -1195,12 +1100,7 @@ fn print_balance(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
 
 fn assert_balance_positive(wallet: &Wallet, label: &str, asset_type: &str) -> (u64, u64) {
     let (total, unlocked) = print_balance(wallet, label, asset_type);
-    assert!(
-        total > 0,
-        "{} {} total balance should be positive",
-        label,
-        asset_type
-    );
+    assert!(total > 0, "{} {} total balance should be positive", label, asset_type);
     (total, unlocked)
 }
 
@@ -1221,10 +1121,7 @@ fn change_keys(wallet: &Wallet, fork: &ForkSpec) -> ([u8; 32], [u8; 32]) {
     let keys = wallet.keys();
     match fork.addr_format {
         AddrFormat::Legacy => (keys.cn.spend_public_key, keys.cn.view_public_key),
-        AddrFormat::Carrot => (
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        ),
+        AddrFormat::Carrot => (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey),
     }
 }
 
@@ -1270,10 +1167,7 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
     // Parse the TX bytes back to JSON
     let tx_json_str = salvium_crypto::parse_transaction_bytes(tx_bytes);
     if tx_json_str.starts_with(r#"{"error":"#) {
-        println!(
-            "    PARSE ERROR: {}",
-            &tx_json_str[..tx_json_str.len().min(200)]
-        );
+        println!("    PARSE ERROR: {}", &tx_json_str[..tx_json_str.len().min(200)]);
         return;
     }
 
@@ -1310,10 +1204,7 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
     }
 
     // Check outputs
-    let vout = prefix
-        .get("vout")
-        .or_else(|| tx_json.get("vout"))
-        .and_then(|v| v.as_array());
+    let vout = prefix.get("vout").or_else(|| tx_json.get("vout")).and_then(|v| v.as_array());
     println!("    outputs: {}", vout.map(|v| v.len()).unwrap_or(0));
     if let Some(outs) = vout {
         for (i, out) in outs.iter().enumerate() {
@@ -1334,26 +1225,15 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
 
     // Check vin for key images
     let vin = prefix.get("vin").and_then(|v| v.as_array());
-    let first_ki = vin
-        .and_then(|v| v.first())
-        .and_then(|inp| inp.get("keyImage"))
-        .and_then(|v| v.as_str());
-    println!(
-        "    first_key_image: {:?}",
-        first_ki.map(|k| &k[..k.len().min(16)])
-    );
+    let first_ki =
+        vin.and_then(|v| v.first()).and_then(|inp| inp.get("keyImage")).and_then(|v| v.as_str());
+    println!("    first_key_image: {:?}", first_ki.map(|k| &k[..k.len().min(16)]));
 
     // Build scan context from wallet B's keys
     let keys = wallet.keys();
     println!("    carrot_enabled: {}", !keys.carrot.is_empty());
-    println!(
-        "    k_vi (view_incoming): {}...",
-        hex::encode(&keys.carrot.view_incoming_key[..8])
-    );
-    println!(
-        "    K_s (account_spend): {}...",
-        hex::encode(&keys.carrot.account_spend_pubkey[..8])
-    );
+    println!("    k_vi (view_incoming): {}...", hex::encode(&keys.carrot.view_incoming_key[..8]));
+    println!("    K_s (account_spend): {}...", hex::encode(&keys.carrot.account_spend_pubkey[..8]));
 
     // Now attempt manual CARROT scan
     if let (Some(outs), Some(ki_hex)) = (vout, first_ki) {
@@ -1471,20 +1351,14 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
                 );
                 println!(
                     "      full scan result: {}",
-                    if result.is_some() {
-                        "MATCH"
-                    } else {
-                        "NO MATCH"
-                    }
+                    if result.is_some() { "MATCH" } else { "NO MATCH" }
                 );
                 continue;
             }
 
             // If view tag matches, try full scan with real encrypted amount
             let rct = tx_json.get("rct").or_else(|| tx_json.get("rct_signatures"));
-            let ecdh_info = rct
-                .and_then(|r| r.get("ecdhInfo"))
-                .and_then(|e| e.as_array());
+            let ecdh_info = rct.and_then(|r| r.get("ecdhInfo")).and_then(|e| e.as_array());
             let enc_amt = ecdh_info
                 .and_then(|info| info.get(i))
                 .and_then(|e| e.get("amount"))
@@ -1576,12 +1450,7 @@ async fn run_full_tests(
 
     // 3 transfers A→B
     for (i, (amount_f, amount_s)) in [(1.0, "1"), (2.0, "2"), (5.0, "5")].iter().enumerate() {
-        println!(
-            "\n  TX {}: Transfer A->B {} {} SAL",
-            i + 1,
-            amount_s,
-            fork.asset
-        );
+        println!("\n  TX {}: Transfer A->B {} {} SAL", i + 1, amount_s, fork.asset);
         let result = TestTransactor::new(daemon, &fixture.wallet_a)
             .transfer(dest_b_spend, dest_b_view, sal(*amount_f), fork, false)
             .await;
@@ -1598,13 +1467,9 @@ async fn run_full_tests(
 
     // Mine maturity so B can spend
     println!("\n  Mining {} maturity blocks...", MATURITY_BLOCKS);
-    let ms = mine_to(
-        daemon,
-        get_daemon_height(daemon).await + MATURITY_BLOCKS,
-        &addr_a,
-        daemon_url,
-    )
-    .await;
+    let ms =
+        mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+            .await;
     stats.record_mining(&ms);
 
     // Diagnostic: check mempool after mining — our TXs should NOT be there
@@ -1638,10 +1503,7 @@ async fn run_full_tests(
             fmt_sal(unlocked_b),
             db_asset_b
         );
-        println!(
-            "    B total={} locked={}",
-            bal_b.balance, bal_b.locked_balance
-        );
+        println!("    B total={} locked={}", bal_b.balance, bal_b.locked_balance);
         // Diagnostic: check what outputs B has
         let all_query = OutputQuery {
             is_spent: None,
@@ -1670,36 +1532,21 @@ async fn run_full_tests(
 
     // Stake (HF6+)
     if fork.hf >= 6 {
-        println!(
-            "\n  Mining {} maturity blocks for stake...",
-            MATURITY_BLOCKS
-        );
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + MATURITY_BLOCKS,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        println!("\n  Mining {} maturity blocks for stake...", MATURITY_BLOCKS);
+        let ms =
+            mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+                .await;
         stats.record_mining(&ms);
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 5: Stake 10 {} SAL", fork.asset);
-        let result = TestTransactor::new(daemon, &fixture.wallet_a)
-            .stake(sal(10.0), fork)
-            .await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a).stake(sal(10.0), fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
         // Mine past stake lock period (20 blocks on testnet) + maturity
         println!("\n  Mining past stake lock period...");
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + 30,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        let ms = mine_to(daemon, get_daemon_height(daemon).await + 30, &addr_a, daemon_url).await;
         stats.record_mining(&ms);
 
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
@@ -1720,10 +1567,7 @@ async fn run_full_tests(
             txid_matched,
             height_fallback
         );
-        assert!(
-            returned > 0,
-            "stake should have been returned after lock period"
-        );
+        assert!(returned > 0, "stake should have been returned after lock period");
         // TX-ID matching requires CARROT v4+ (HF10). Pre-CARROT stakes
         // legitimately use height-based fallback since they don't embed
         // protocol_tx_data.return_address.
@@ -1735,34 +1579,21 @@ async fn run_full_tests(
     // Burn + Sweep (HF10+)
     if fork.hf >= 10 {
         println!("\n  Mining {} maturity blocks for burn...", MATURITY_BLOCKS);
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + MATURITY_BLOCKS,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        let ms =
+            mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+                .await;
         stats.record_mining(&ms);
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
         println!("\n  TX 6: Burn 0.1 {} SAL", fork.asset);
-        let result = TestTransactor::new(daemon, &fixture.wallet_a)
-            .burn(sal(0.1), fork)
-            .await;
+        let result = TestTransactor::new(daemon, &fixture.wallet_a).burn(sal(0.1), fork).await;
         println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
         stats.record_tx(&result);
 
-        println!(
-            "\n  Mining {} maturity blocks for sweep...",
-            MATURITY_BLOCKS
-        );
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + MATURITY_BLOCKS,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        println!("\n  Mining {} maturity blocks for sweep...", MATURITY_BLOCKS);
+        let ms =
+            mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+                .await;
         stats.record_mining(&ms);
         sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
@@ -1774,17 +1605,10 @@ async fn run_full_tests(
         stats.record_tx(&result);
 
         // TX 8: Send to Wallet B subaddress (0,1)
-        println!(
-            "\n  Mining {} maturity blocks for subaddress test...",
-            MATURITY_BLOCKS
-        );
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + MATURITY_BLOCKS,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        println!("\n  Mining {} maturity blocks for subaddress test...", MATURITY_BLOCKS);
+        let ms =
+            mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+                .await;
         stats.record_mining(&ms);
         sync_wallet_checked(&mut fixture.wallet_a, daemon, "A").await;
 
@@ -1815,22 +1639,14 @@ async fn run_full_tests(
         let sub_result = TestTransactor::new(daemon, &fixture.wallet_a)
             .transfer(sub_spend, sub_view, sal(0.5), fork, true)
             .await;
-        println!(
-            "    hash={} fee={}",
-            sub_result.tx_hash,
-            fmt_sal(sub_result.fee)
-        );
+        println!("    hash={} fee={}", sub_result.tx_hash, fmt_sal(sub_result.fee));
         stats.record_tx(&sub_result);
 
         // Mine + sync, then verify B detected the output at subaddress (0,1)
         println!("\n  Mining {} maturity blocks...", MATURITY_BLOCKS);
-        let ms = mine_to(
-            daemon,
-            get_daemon_height(daemon).await + MATURITY_BLOCKS,
-            &addr_a,
-            daemon_url,
-        )
-        .await;
+        let ms =
+            mine_to(daemon, get_daemon_height(daemon).await + MATURITY_BLOCKS, &addr_a, daemon_url)
+                .await;
         stats.record_mining(&ms);
         sync_wallet_checked(&mut fixture.wallet_b, daemon, "B").await;
 
@@ -1850,10 +1666,7 @@ async fn run_full_tests(
             !sub_outputs.is_empty(),
             "wallet B should have detected output at subaddress (0,1)"
         );
-        println!(
-            "  Subaddress (0,1) output detected: {} output(s)",
-            sub_outputs.len()
-        );
+        println!("  Subaddress (0,1) output detected: {} output(s)", sub_outputs.len());
     }
 }
 
@@ -1868,9 +1681,7 @@ async fn run_lightweight_test(
     let (dest_b_spend, dest_b_view) = dest_keys(&fixture.wallet_b, fork);
 
     println!("\n  TX: Transfer A->B 0.5 {} SAL (lightweight)", fork.asset);
-    let result = transactor_a
-        .transfer(dest_b_spend, dest_b_view, sal(0.5), fork, false)
-        .await;
+    let result = transactor_a.transfer(dest_b_spend, dest_b_view, sal(0.5), fork, false).await;
     println!("    hash={} fee={}", result.tx_hash, fmt_sal(result.fee));
     stats.record_tx(&result);
 }
@@ -1895,44 +1706,22 @@ async fn full_testnet_hardfork_progression() {
 
     let info = daemon.get_info().await.expect("cannot connect to daemon");
     println!("  Daemon: {}", url);
-    println!(
-        "  Height: {}, synchronized: {}",
-        info.height, info.synchronized
-    );
+    println!("  Height: {}, synchronized: {}", info.height, info.synchronized);
     assert!(info.synchronized, "daemon is not synchronized");
 
     // Auto-detect resume point from chain state if not explicitly set.
     // If the chain has already advanced past fork boundaries, skip those
     // forks — the daemon will reject TXs built with outdated parameters.
-    let resume_hf = if env_resume_hf > 0 {
-        env_resume_hf
-    } else {
-        auto_resume_hf(info.height)
-    };
+    let resume_hf = if env_resume_hf > 0 { env_resume_hf } else { auto_resume_hf(info.height) };
     if resume_hf > 0 {
-        println!(
-            "  Resuming from HF{} (chain already at height {})",
-            resume_hf, info.height
-        );
+        println!("  Resuming from HF{} (chain already at height {})", resume_hf, info.height);
     }
 
     let mut fixture = TestFixture::create();
-    println!(
-        "  Wallet A (CN):     {}...",
-        &fixture.wallet_a.cn_address().unwrap()[..30]
-    );
-    println!(
-        "  Wallet A (CARROT): {}...",
-        &fixture.wallet_a.carrot_address().unwrap()[..30]
-    );
-    println!(
-        "  Wallet B (CN):     {}...",
-        &fixture.wallet_b.cn_address().unwrap()[..30]
-    );
-    println!(
-        "  Wallet B (CARROT): {}...",
-        &fixture.wallet_b.carrot_address().unwrap()[..30]
-    );
+    println!("  Wallet A (CN):     {}...", &fixture.wallet_a.cn_address().unwrap()[..30]);
+    println!("  Wallet A (CARROT): {}...", &fixture.wallet_a.carrot_address().unwrap()[..30]);
+    println!("  Wallet B (CN):     {}...", &fixture.wallet_b.cn_address().unwrap()[..30]);
+    println!("  Wallet B (CARROT): {}...", &fixture.wallet_b.carrot_address().unwrap()[..30]);
 
     let start_height = info.height;
     let mut stats = RunStats::new();
@@ -1995,22 +1784,14 @@ async fn full_testnet_hardfork_progression() {
                 run_lightweight_test(&daemon, &mut fixture, fork, &mut stats).await;
             }
             TestMode::Paused => {
-                println!(
-                    "  (HF{} paused — user transactions disabled by daemon)",
-                    fork.hf
-                );
+                println!("  (HF{} paused — user transactions disabled by daemon)", fork.hf);
             }
         }
 
         // Mine maturity after last TX
         let addr = mining_address(&fixture.wallet_a, fork);
-        let ms = mine_to(
-            &daemon,
-            get_daemon_height(&daemon).await + MATURITY_BLOCKS,
-            &addr,
-            &url,
-        )
-        .await;
+        let ms =
+            mine_to(&daemon, get_daemon_height(&daemon).await + MATURITY_BLOCKS, &addr, &url).await;
         stats.record_mining(&ms);
 
         // Sync and print post-test balances
@@ -2051,10 +1832,7 @@ async fn full_testnet_hardfork_progression() {
             a_total += total;
         }
     }
-    assert!(
-        a_total > 0,
-        "Wallet A total balance (SAL+SAL1) should be positive"
-    );
+    assert!(a_total > 0, "Wallet A total balance (SAL+SAL1) should be positive");
 
     println!("\n  --- Wallet B ---");
     let (b_sal, _) = print_balance(&fixture.wallet_b, "B", "SAL");
@@ -2066,34 +1844,17 @@ async fn full_testnet_hardfork_progression() {
             b_total += total;
         }
     }
-    assert!(
-        b_total > 0,
-        "Wallet B total balance (SAL+SAL1) should be positive"
-    );
+    assert!(b_total > 0, "Wallet B total balance (SAL+SAL1) should be positive");
 
     // Verify no overflow/negative values
-    assert!(
-        a_total < u64::MAX / 2,
-        "Wallet A balance looks like overflow: {}",
-        a_total
-    );
-    assert!(
-        b_total < u64::MAX / 2,
-        "Wallet B balance looks like overflow: {}",
-        b_total
-    );
+    assert!(a_total < u64::MAX / 2, "Wallet A balance looks like overflow: {}", a_total);
+    assert!(b_total < u64::MAX / 2, "Wallet B balance looks like overflow: {}", b_total);
 
     // TX summary
-    println!(
-        "\n  Transactions: {} succeeded, {} failed",
-        stats.tx_succeeded, stats.tx_failed
-    );
+    println!("\n  Transactions: {} succeeded, {} failed", stats.tx_succeeded, stats.tx_failed);
     println!("  Total fees: {} SAL", fmt_sal(stats.total_fees));
     println!("  Total blocks mined: {}", stats.total_blocks_mined);
-    println!(
-        "  Total mining time: {}",
-        fmt_duration(stats.total_mining_secs)
-    );
+    println!("  Total mining time: {}", fmt_duration(stats.total_mining_secs));
 
     // ── Phase 7b: View-Only Wallet Verification ────────────────────────
     println!("\n  Phase 7b: View-only wallet verification...");
@@ -2107,12 +1868,9 @@ async fn full_testnet_hardfork_progression() {
             Network::Testnet,
         );
         let tmp_vo = tempfile::tempdir().unwrap();
-        let mut wallet_vo = Wallet::open(
-            view_keys,
-            tmp_vo.path().join("vo.db").to_str().unwrap(),
-            &[0u8; 32],
-        )
-        .unwrap();
+        let mut wallet_vo =
+            Wallet::open(view_keys, tmp_vo.path().join("vo.db").to_str().unwrap(), &[0u8; 32])
+                .unwrap();
         sync_wallet_checked(&mut wallet_vo, &daemon, "A-ViewOnly").await;
 
         // Compare SAL balance.
@@ -2144,10 +1902,9 @@ async fn full_testnet_hardfork_progression() {
         // but CANNOT compute CN key images (no spend_secret). So spent CN SAL1
         // outputs from the HF6-9 era remain "unspent" in the view-only wallet,
         // making its total SAL1 balance >= the full wallet's.
-        if let (Ok(bf), Ok(bv)) = (
-            fixture.wallet_a.get_balance("SAL1", 0),
-            wallet_vo.get_balance("SAL1", 0),
-        ) {
+        if let (Ok(bf), Ok(bv)) =
+            (fixture.wallet_a.get_balance("SAL1", 0), wallet_vo.get_balance("SAL1", 0))
+        {
             let full_sal1: u64 = bf.balance.parse().unwrap();
             let vo_sal1: u64 = bv.balance.parse().unwrap();
             assert!(
@@ -2214,19 +1971,12 @@ async fn full_testnet_hardfork_progression() {
     seed_c[0] = 0xCA; // Just needs to be unique, not cryptographically random for test
     seed_c[1] = 0xFE;
     use std::time::SystemTime;
-    let ts = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
+    let ts = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos() as u64;
     seed_c[2..10].copy_from_slice(&ts.to_le_bytes());
 
-    let mut wallet_c = Wallet::create(
-        seed_c,
-        Network::Testnet,
-        db_path_c.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet C");
+    let mut wallet_c =
+        Wallet::create(seed_c, Network::Testnet, db_path_c.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet C");
 
     println!("  Wallet C: {}...", &wallet_c.cn_address().unwrap()[..30]);
     println!("  Syncing from genesis...");
@@ -2246,10 +1996,7 @@ async fn full_testnet_hardfork_progression() {
     let post_height = fixture.wallet_a.sync_height().unwrap();
     let post_bal = fixture.wallet_a.get_balance(at, 0).unwrap();
     assert_eq!(pre_height, post_height, "sync height should be unchanged");
-    assert_eq!(
-        pre_bal.balance, post_bal.balance,
-        "balance should be unchanged after re-sync"
-    );
+    assert_eq!(pre_bal.balance, post_bal.balance, "balance should be unchanged after re-sync");
     assert_eq!(
         pre_bal.unlocked_balance, post_bal.unlocked_balance,
         "unlocked balance should be unchanged after re-sync"
@@ -2265,10 +2012,7 @@ async fn full_testnet_hardfork_progression() {
     println!("  Total time: {}", fmt_duration(total_elapsed));
     println!("  Start height: {}", start_height);
     println!("  Final height: {}", final_height);
-    println!(
-        "  TX results: {} passed, {} failed",
-        stats.tx_succeeded, stats.tx_failed
-    );
+    println!("  TX results: {} passed, {} failed", stats.tx_succeeded, stats.tx_failed);
     println!("  Total blocks mined: {}", stats.total_blocks_mined);
     println!("  Total fees: {} SAL", fmt_sal(stats.total_fees));
 

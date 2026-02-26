@@ -125,20 +125,15 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let network = parse_network(&args.network)?;
-    let daemon_url = args
-        .daemon
-        .as_deref()
-        .unwrap_or_else(|| default_daemon_url(network));
+    let daemon_url = args.daemon.as_deref().unwrap_or_else(|| default_daemon_url(network));
 
     // ── 1. Determine wallet type and source label ───────────────────────
     let source_label;
 
     // ── 2. Connect to daemon ────────────────────────────────────────────
     let daemon = DaemonRpc::new(daemon_url);
-    let info = daemon
-        .get_info()
-        .await
-        .map_err(|e| format!("cannot reach daemon at {daemon_url}: {e}"))?;
+    let info =
+        daemon.get_info().await.map_err(|e| format!("cannot reach daemon at {daemon_url}: {e}"))?;
 
     let daemon_height = info.height;
     let synchronized = info.synchronized;
@@ -151,14 +146,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         format!("{dir}/wallet.db")
     } else {
         temp_dir = Some(tempfile::tempdir()?);
-        temp_dir
-            .as_ref()
-            .unwrap()
-            .path()
-            .join("wallet.db")
-            .to_str()
-            .unwrap()
-            .to_string()
+        temp_dir.as_ref().unwrap().path().join("wallet.db").to_str().unwrap().to_string()
     };
 
     let mut db_key = [0u8; 32];
@@ -183,7 +171,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Verify the view key matches
             if keys.cn.view_secret_key != view_sk {
                 return Err(
-                    "--view-key does not match the view key derived from --spend-key".into(),
+                    "--view-key does not match the view key derived from --spend-key".into()
                 );
             }
             Wallet::open(keys, &db_path, &db_key)?
@@ -216,17 +204,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "Daemon:         {} (height: {}, {})",
         daemon_url,
         daemon_height,
-        if synchronized {
-            "synchronized"
-        } else {
-            "syncing"
-        }
+        if synchronized { "synchronized" } else { "syncing" }
     );
-    println!(
-        "Wallet type:    {} (from {})",
-        wallet_type_label(wallet.wallet_type()),
-        source_label
-    );
+    println!("Wallet type:    {} (from {})", wallet_type_label(wallet.wallet_type()), source_label);
     println!("Restore height: {}", args.restore_height);
     println!();
 
@@ -266,11 +246,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             100.0
                         };
-                        let bps = if elapsed > 0.0 {
-                            current_height as f64 / elapsed
-                        } else {
-                            0.0
-                        };
+                        let bps = if elapsed > 0.0 { current_height as f64 / elapsed } else { 0.0 };
                         let err_suffix = if parse_errors > 0 {
                             format!("  |  {} parse errors", parse_errors)
                         } else {
@@ -283,20 +259,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         last_print_height = current_height;
                     }
                 }
-                SyncEvent::Reorg {
-                    from_height,
-                    to_height,
-                } => {
+                SyncEvent::Reorg { from_height, to_height } => {
                     println!("  ** Reorg detected: {} -> {} **", from_height, to_height);
                 }
                 SyncEvent::Error(ref msg) => {
                     log::error!("sync error: {}", msg);
                 }
-                SyncEvent::ParseError {
-                    height,
-                    blob_len,
-                    ref error,
-                } => {
+                SyncEvent::ParseError { height, blob_len, ref error } => {
                     log::error!(
                         "block parse error at height {} (blob_len={}): {}",
                         height,
@@ -306,11 +275,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SyncEvent::Complete { height } => {
                     let elapsed = start.elapsed().as_secs_f64();
-                    let bps = if elapsed > 0.0 {
-                        height as f64 / elapsed
-                    } else {
-                        0.0
-                    };
+                    let bps = if elapsed > 0.0 { height as f64 / elapsed } else { 0.0 };
                     println!(
                         "  Height {:>6}/{} (100.0%)  |  sync complete  |  {:.1}s  |  {:.0} blocks/s",
                         height, height, elapsed, bps
@@ -366,10 +331,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("Height:          {}", sync_height);
     println!("Duration:        {:.1}s", elapsed.as_secs_f64());
     println!("Avg blocks/sec:  {:.1}", blocks_per_sec);
-    println!(
-        "Total outputs:   {} ({} unspent, {} spent)",
-        total_outputs, unspent, spent
-    );
+    println!("Total outputs:   {} ({} unspent, {} spent)", total_outputs, unspent, spent);
     println!("  CryptoNote:    {}", cn);
     println!("  CARROT:        {}", carrot);
     println!("Parse errors:    {}", final_parse_errors);
@@ -387,10 +349,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!("{}", "-".repeat(110));
         for o in &unspent_outputs {
-            let height_str = o
-                .block_height
-                .map(|h| h.to_string())
-                .unwrap_or_else(|| "?".into());
+            let height_str = o.block_height.map(|h| h.to_string()).unwrap_or_else(|| "?".into());
             let ki_str = o.key_image.as_deref().unwrap_or("(none)");
             let tx_type_str = match o.tx_type {
                 1 => "miner",
@@ -420,18 +379,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let all_stakes = wallet.get_stakes(None)?;
     if !all_stakes.is_empty() {
         let locked_stakes: Vec<_> = all_stakes.iter().filter(|s| s.status == "locked").collect();
-        let returned_stakes: Vec<_> = all_stakes
-            .iter()
-            .filter(|s| s.status == "returned")
-            .collect();
-        let txid_matched: Vec<_> = returned_stakes
-            .iter()
-            .filter(|s| s.return_output_key.is_some())
-            .collect();
-        let origin_matched: Vec<_> = returned_stakes
-            .iter()
-            .filter(|s| s.return_output_key.is_none())
-            .collect();
+        let returned_stakes: Vec<_> =
+            all_stakes.iter().filter(|s| s.status == "returned").collect();
+        let txid_matched: Vec<_> =
+            returned_stakes.iter().filter(|s| s.return_output_key.is_some()).collect();
+        let origin_matched: Vec<_> =
+            returned_stakes.iter().filter(|s| s.return_output_key.is_none()).collect();
 
         println!();
         println!(
@@ -484,19 +437,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!();
         println!("Balances");
         println!("--------");
-        println!(
-            "{:<8} {:>19} {:>19} {:>19}",
-            "Asset", "Total", "Unlocked", "Locked"
-        );
+        println!("{:<8} {:>19} {:>19} {:>19}", "Asset", "Total", "Unlocked", "Locked");
 
         let mut assets: Vec<_> = balances.iter().collect();
-        assets.sort_by_key(|(name, _)| {
-            if *name == "SAL" {
-                String::new()
-            } else {
-                (*name).clone()
-            }
-        });
+        assets.sort_by_key(
+            |(name, _)| {
+                if *name == "SAL" {
+                    String::new()
+                } else {
+                    (*name).clone()
+                }
+            },
+        );
 
         for (asset, bal) in &assets {
             println!(
@@ -536,10 +488,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ... ({} earlier transactions omitted)", start_idx);
         }
         for tx in &transfers[start_idx..] {
-            let height_str = tx
-                .block_height
-                .map(|h| h.to_string())
-                .unwrap_or_else(|| "?".into());
+            let height_str = tx.block_height.map(|h| h.to_string()).unwrap_or_else(|| "?".into());
             let type_str = match tx.tx_type {
                 1 => "miner",
                 2 => "proto",

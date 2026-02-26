@@ -74,10 +74,7 @@ fn expand_clsag_single_input() {
 
     let result = expand_transaction(&[ki], &mut rct);
     assert!(result.is_ok());
-    assert_eq!(
-        rct["p"]["CLSAGs"][0]["I"].as_str().unwrap(),
-        hex::encode(ki)
-    );
+    assert_eq!(rct["p"]["CLSAGs"][0]["I"].as_str().unwrap(), hex::encode(ki));
 }
 
 #[test]
@@ -176,10 +173,7 @@ fn expand_tclsag_single_input() {
 
     let result = expand_transaction(&[ki], &mut rct);
     assert!(result.is_ok());
-    assert_eq!(
-        rct["p"]["TCLSAGs"][0]["I"].as_str().unwrap(),
-        hex::encode(ki)
-    );
+    assert_eq!(rct["p"]["TCLSAGs"][0]["I"].as_str().unwrap(), hex::encode(ki));
 }
 
 // =============================================================================
@@ -194,11 +188,7 @@ fn expand_mismatched_count_clsag() {
     let result = expand_transaction(&key_images, &mut rct);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(
-        err.contains("count 3 != key image count 2"),
-        "unexpected error: {}",
-        err
-    );
+    assert!(err.contains("count 3 != key image count 2"), "unexpected error: {}", err);
 }
 
 #[test]
@@ -209,11 +199,7 @@ fn expand_mismatched_count_tclsag() {
     let result = expand_transaction(&key_images, &mut rct);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(
-        err.contains("count 1 != key image count 2"),
-        "unexpected error: {}",
-        err
-    );
+    assert!(err.contains("count 1 != key image count 2"), "unexpected error: {}", err);
 }
 
 #[test]
@@ -246,10 +232,7 @@ fn expand_empty_key_images_empty_sigs() {
     let mut rct = make_clsag_rct_json(0);
 
     let result = expand_transaction(key_images, &mut rct);
-    assert!(
-        result.is_ok(),
-        "empty key images with empty sigs should succeed"
-    );
+    assert!(result.is_ok(), "empty key images with empty sigs should succeed");
 }
 
 // =============================================================================
@@ -271,10 +254,7 @@ fn expand_with_prunable_key() {
 
     let result = expand_transaction(&[ki], &mut rct);
     assert!(result.is_ok());
-    assert_eq!(
-        rct["prunable"]["CLSAGs"][0]["I"].as_str().unwrap(),
-        hex::encode(ki)
-    );
+    assert_eq!(rct["prunable"]["CLSAGs"][0]["I"].as_str().unwrap(), hex::encode(ki));
 }
 
 #[test]
@@ -292,10 +272,7 @@ fn expand_with_lowercase_clsags_key() {
 
     let result = expand_transaction(&[ki], &mut rct);
     assert!(result.is_ok());
-    assert_eq!(
-        rct["p"]["clsags"][0]["I"].as_str().unwrap(),
-        hex::encode(ki)
-    );
+    assert_eq!(rct["p"]["clsags"][0]["I"].as_str().unwrap(), hex::encode(ki));
 }
 
 #[test]
@@ -314,10 +291,7 @@ fn expand_with_lowercase_tclsags_key() {
 
     let result = expand_transaction(&[ki], &mut rct);
     assert!(result.is_ok());
-    assert_eq!(
-        rct["p"]["tclsags"][0]["I"].as_str().unwrap(),
-        hex::encode(ki)
-    );
+    assert_eq!(rct["p"]["tclsags"][0]["I"].as_str().unwrap(), hex::encode(ki));
 }
 
 // =============================================================================
@@ -337,11 +311,7 @@ fn expand_produces_correct_hex_encoding() {
     assert!(result.is_ok());
 
     let i_hex = rct["p"]["CLSAGs"][0]["I"].as_str().unwrap();
-    assert_eq!(
-        i_hex.len(),
-        64,
-        "hex-encoded 32-byte key image should be 64 chars"
-    );
+    assert_eq!(i_hex.len(), 64, "hex-encoded 32-byte key image should be 64 chars");
 
     // Decode back and compare
     let decoded = hex::decode(i_hex).unwrap();

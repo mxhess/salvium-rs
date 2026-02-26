@@ -301,10 +301,7 @@ mod tests {
     fn test_weight_includes_clawback() {
         let size = estimate_tx_size(2, 8, 16, true, output_type::CARROT_V1);
         let weight = estimate_tx_weight(2, 8, 16, true, output_type::CARROT_V1);
-        assert!(
-            weight > size,
-            "weight should include clawback for 8 outputs"
-        );
+        assert!(weight > size, "weight should include clawback for 8 outputs");
     }
 
     #[test]

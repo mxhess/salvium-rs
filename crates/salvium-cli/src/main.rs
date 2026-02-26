@@ -51,10 +51,7 @@ impl std::str::FromStr for NetworkArg {
             "mainnet" | "main" => Ok(Self::Mainnet),
             "testnet" | "test" => Ok(Self::Testnet),
             "stagenet" | "stage" => Ok(Self::Stagenet),
-            _ => Err(format!(
-                "unknown network: {} (use mainnet, testnet, or stagenet)",
-                s
-            )),
+            _ => Err(format!("unknown network: {} (use mainnet, testnet, or stagenet)", s)),
         }
     }
 }
@@ -833,10 +830,7 @@ pub struct AppContext {
 impl AppContext {
     fn from_cli(cli: &Cli) -> Self {
         let network = cli.network.to_network();
-        let daemon_url = cli
-            .daemon
-            .clone()
-            .unwrap_or_else(|| cli.network.default_daemon_url());
+        let daemon_url = cli.daemon.clone().unwrap_or_else(|| cli.network.default_daemon_url());
 
         let wallet_path = if let Some(ref path) = cli.wallet_file {
             PathBuf::from(path)
@@ -844,18 +838,12 @@ impl AppContext {
             default_wallet_dir(&cli.network).join("wallet.db")
         };
 
-        Self {
-            network,
-            daemon_url,
-            wallet_path,
-        }
+        Self { network, daemon_url, wallet_path }
     }
 }
 
 fn default_wallet_dir(network: &NetworkArg) -> PathBuf {
-    let base = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("salvium");
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")).join("salvium");
     match network {
         NetworkArg::Mainnet => base,
         NetworkArg::Testnet => base.join("testnet"),
@@ -883,10 +871,9 @@ async fn main() {
     let result = match cli.command {
         // Wallet management
         Commands::Create { name } => commands::create_wallet(&ctx, name).await,
-        Commands::Restore {
-            name,
-            restore_height,
-        } => commands::restore_wallet(&ctx, name, restore_height).await,
+        Commands::Restore { name, restore_height } => {
+            commands::restore_wallet(&ctx, name, restore_height).await
+        }
         Commands::Info => commands::wallet_info(&ctx).await,
         Commands::Seed => commands::show_seed(&ctx).await,
         Commands::EncryptedSeed => commands::encrypted_seed(&ctx).await,
@@ -897,10 +884,9 @@ async fn main() {
 
         // Balance & query
         Commands::Balance { account } => commands::show_balance(&ctx, account).await,
-        Commands::IncomingTransfers {
-            transfer_type,
-            account,
-        } => commands::incoming_transfers(&ctx, &transfer_type, account).await,
+        Commands::IncomingTransfers { transfer_type, account } => {
+            commands::incoming_transfers(&ctx, &transfer_type, account).await
+        }
         Commands::UnspentOutputs { account } => commands::unspent_outputs(&ctx, account).await,
         Commands::Payments { payment_id } => commands::payments(&ctx, &payment_id).await,
 
@@ -914,11 +900,9 @@ async fn main() {
             commands::address_new(&ctx, account, &label).await
         }
         Commands::AddressAll { account } => commands::address_all(&ctx, account).await,
-        Commands::AddressLabel {
-            major,
-            minor,
-            label,
-        } => commands::address_label(&ctx, major, minor, &label).await,
+        Commands::AddressLabel { major, minor, label } => {
+            commands::address_label(&ctx, major, minor, &label).await
+        }
         Commands::IntegratedAddress { payment_id } => {
             commands::integrated_address(&ctx, payment_id.as_deref()).await
         }
@@ -937,59 +921,40 @@ async fn main() {
 
         // Address book
         Commands::AddressBook => commands::address_book_list(&ctx).await,
-        Commands::AddressBookAdd {
-            address,
-            label,
-            description,
-        } => commands::address_book_add(&ctx, &address, &label, &description).await,
+        Commands::AddressBookAdd { address, label, description } => {
+            commands::address_book_add(&ctx, &address, &label, &description).await
+        }
         Commands::AddressBookDelete { index } => commands::address_book_delete(&ctx, index).await,
 
         // Transfers
-        Commands::Transfer {
-            address,
-            amount,
-            priority,
-        } => commands::transfer(&ctx, &address, &amount, &priority).await,
-        Commands::LockedTransfer {
-            address,
-            amount,
-            unlock_time,
-            priority,
-        } => commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority).await,
+        Commands::Transfer { address, amount, priority } => {
+            commands::transfer(&ctx, &address, &amount, &priority).await
+        }
+        Commands::LockedTransfer { address, amount, unlock_time, priority } => {
+            commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority).await
+        }
         Commands::Stake { amount } => commands::stake(&ctx, &amount).await,
         Commands::Burn { amount, priority } => commands::burn(&ctx, &amount, &priority).await,
-        Commands::Convert {
-            amount,
-            source,
-            dest,
-            priority,
-        } => commands::convert(&ctx, &amount, &source, &dest, &priority).await,
+        Commands::Convert { amount, source, dest, priority } => {
+            commands::convert(&ctx, &amount, &source, &dest, &priority).await
+        }
         Commands::Audit { priority } => commands::audit(&ctx, &priority).await,
         Commands::SweepAll { address, priority } => {
             commands::sweep_all(&ctx, &address, &priority).await
         }
-        Commands::SweepAccount {
-            account,
-            address,
-            priority,
-            indices,
-        } => commands::sweep_account(&ctx, account, &address, &priority, &indices).await,
-        Commands::SweepBelow {
-            address,
-            threshold,
-            priority,
-        } => commands::sweep_below(&ctx, &address, &threshold, &priority).await,
-        Commands::SweepSingle {
-            key_image,
-            address,
-            priority,
-        } => commands::sweep_single(&ctx, &key_image, &address, &priority).await,
+        Commands::SweepAccount { account, address, priority, indices } => {
+            commands::sweep_account(&ctx, account, &address, &priority, &indices).await
+        }
+        Commands::SweepBelow { address, threshold, priority } => {
+            commands::sweep_below(&ctx, &address, &threshold, &priority).await
+        }
+        Commands::SweepSingle { key_image, address, priority } => {
+            commands::sweep_single(&ctx, &key_image, &address, &priority).await
+        }
         Commands::SweepUnmixable => commands::sweep_unmixable(&ctx).await,
-        Commands::LockedSweepAll {
-            address,
-            unlock_time,
-            priority,
-        } => commands::locked_sweep_all(&ctx, &address, unlock_time, &priority).await,
+        Commands::LockedSweepAll { address, unlock_time, priority } => {
+            commands::locked_sweep_all(&ctx, &address, unlock_time, &priority).await
+        }
         Commands::ReturnPayment { tx_hash, priority } => {
             commands::return_payment(&ctx, &tx_hash, &priority).await
         }
@@ -1039,49 +1004,36 @@ async fn main() {
 
         // Sign / Verify
         Commands::Sign { file } => commands::sign_data(&ctx, &file).await,
-        Commands::Verify {
-            file,
-            address,
-            signature,
-        } => commands::verify_data(&ctx, &file, &address, &signature).await,
+        Commands::Verify { file, address, signature } => {
+            commands::verify_data(&ctx, &file, &address, &signature).await
+        }
 
         // TX proofs
         Commands::GetTxKey { tx_hash } => commands::get_tx_key(&ctx, &tx_hash).await,
         Commands::SetTxKey { tx_hash, tx_key } => {
             commands::set_tx_key(&ctx, &tx_hash, &tx_key).await
         }
-        Commands::CheckTxKey {
-            tx_hash,
-            tx_key,
-            address,
-        } => commands::check_tx_key(&ctx, &tx_hash, &tx_key, &address).await,
-        Commands::GetTxProof {
-            tx_hash,
-            address,
-            message,
-        } => commands::get_tx_proof(&ctx, &tx_hash, &address, &message).await,
-        Commands::CheckTxProof {
-            tx_hash,
-            address,
-            message,
-            signature,
-        } => commands::check_tx_proof(&ctx, &tx_hash, &address, &message, &signature).await,
+        Commands::CheckTxKey { tx_hash, tx_key, address } => {
+            commands::check_tx_key(&ctx, &tx_hash, &tx_key, &address).await
+        }
+        Commands::GetTxProof { tx_hash, address, message } => {
+            commands::get_tx_proof(&ctx, &tx_hash, &address, &message).await
+        }
+        Commands::CheckTxProof { tx_hash, address, message, signature } => {
+            commands::check_tx_proof(&ctx, &tx_hash, &address, &message, &signature).await
+        }
         Commands::GetSpendProof { tx_hash, message } => {
             commands::get_spend_proof(&ctx, &tx_hash, &message).await
         }
-        Commands::CheckSpendProof {
-            tx_hash,
-            message,
-            signature,
-        } => commands::check_spend_proof(&ctx, &tx_hash, &message, &signature).await,
+        Commands::CheckSpendProof { tx_hash, message, signature } => {
+            commands::check_spend_proof(&ctx, &tx_hash, &message, &signature).await
+        }
         Commands::GetReserveProof { amount, message } => {
             commands::get_reserve_proof(&ctx, &amount, &message).await
         }
-        Commands::CheckReserveProof {
-            address,
-            message,
-            signature,
-        } => commands::check_reserve_proof(&ctx, &address, &message, &signature).await,
+        Commands::CheckReserveProof { address, message, signature } => {
+            commands::check_reserve_proof(&ctx, &address, &message, &signature).await
+        }
 
         // Output management
         Commands::ExportKeyImages { output, all } => {
@@ -1117,11 +1069,9 @@ async fn main() {
         Commands::PrintRing { key_image_or_txid } => {
             commands::print_ring(&ctx, &key_image_or_txid).await
         }
-        Commands::SetRing {
-            key_image,
-            indices,
-            relative,
-        } => commands::set_ring(&ctx, &key_image, &indices, relative).await,
+        Commands::SetRing { key_image, indices, relative } => {
+            commands::set_ring(&ctx, &key_image, &indices, relative).await
+        }
         Commands::UnsetRing { key_image_or_txid } => {
             commands::unset_ring(&ctx, &key_image_or_txid).await
         }
@@ -1166,10 +1116,9 @@ async fn main() {
 
         // Multisig
         Commands::PrepareMultisig => commands::prepare_multisig(&ctx).await,
-        Commands::MakeMultisig {
-            threshold,
-            messages,
-        } => commands::make_multisig(&ctx, threshold, &messages).await,
+        Commands::MakeMultisig { threshold, messages } => {
+            commands::make_multisig(&ctx, threshold, &messages).await
+        }
         Commands::ExchangeMultisigKeys { messages } => {
             commands::exchange_multisig_keys(&ctx, &messages).await
         }
@@ -1188,18 +1137,11 @@ async fn main() {
 
         // MMS
         Commands::Mms(action) => match action {
-            MmsAction::Init {
-                threshold,
-                signers,
-                label,
-            } => commands::mms_init(&ctx, threshold, signers, &label).await,
+            MmsAction::Init { threshold, signers, label } => {
+                commands::mms_init(&ctx, threshold, signers, &label).await
+            }
             MmsAction::Info => commands::mms_info(&ctx).await,
-            MmsAction::Signer {
-                index,
-                label,
-                transport,
-                address,
-            } => {
+            MmsAction::Signer { index, label, transport, address } => {
                 commands::mms_signer(
                     &ctx,
                     index,

@@ -167,21 +167,13 @@ impl ClsagContext {
             return Err("ring is empty".to_string());
         }
         if n != commitments.len() {
-            return Err(format!(
-                "ring size {} != commitments size {}",
-                n,
-                commitments.len()
-            ));
+            return Err(format!("ring size {} != commitments size {}", n, commitments.len()));
         }
         if real_index >= n {
             return Err(format!("real_index {} >= ring size {}", real_index, n));
         }
         if fake_responses.len() != n {
-            return Err(format!(
-                "fake_responses size {} != ring size {}",
-                fake_responses.len(),
-                n
-            ));
+            return Err(format!("fake_responses size {} != ring size {}", fake_responses.len(), n));
         }
 
         // Compute D_full = 8 * D/8 (three doublings)
@@ -222,10 +214,8 @@ impl ClsagContext {
             .collect();
 
         // Precompute H_p(P[i]) for each ring member
-        let hp: Vec<[u8; 32]> = ring
-            .iter()
-            .map(|p| to_arr32(&salvium_crypto::hash_to_point(p)))
-            .collect();
+        let hp: Vec<[u8; 32]> =
+            ring.iter().map(|p| to_arr32(&salvium_crypto::hash_to_point(p))).collect();
 
         Ok(ClsagContext {
             ring: ring.to_vec(),
@@ -311,17 +301,11 @@ impl ClsagContext {
         // 2. Combine aggregate nonces using binding factor
         // L_l = total_alpha_g[0] + b * total_alpha_g[1]
         let b_ag1 = to_arr32(&salvium_crypto::scalar_mult_point(&b, &total_alpha_g[1]));
-        let l_l = to_arr32(&salvium_crypto::point_add_compressed(
-            &total_alpha_g[0],
-            &b_ag1,
-        ));
+        let l_l = to_arr32(&salvium_crypto::point_add_compressed(&total_alpha_g[0], &b_ag1));
 
         // R_l = total_alpha_hp[0] + b * total_alpha_hp[1]
         let b_ahp1 = to_arr32(&salvium_crypto::scalar_mult_point(&b, &total_alpha_hp[1]));
-        let r_l = to_arr32(&salvium_crypto::point_add_compressed(
-            &total_alpha_hp[0],
-            &b_ahp1,
-        ));
+        let r_l = to_arr32(&salvium_crypto::point_add_compressed(&total_alpha_hp[0], &b_ahp1));
 
         // 3. Compute this signer's combined secret nonce
         // alpha_combined = my_alpha[0] + b * my_alpha[1]
@@ -431,10 +415,7 @@ pub fn generate_nonces_ext(
     let mut rng = rand::thread_rng();
     let pubkey_bytes = hex::decode(pubkey_hex).map_err(|e| format!("invalid pubkey hex: {}", e))?;
     if pubkey_bytes.len() != 32 {
-        return Err(format!(
-            "pubkey: expected 32 bytes, got {}",
-            pubkey_bytes.len()
-        ));
+        return Err(format!("pubkey: expected 32 bytes, got {}", pubkey_bytes.len()));
     }
     let hp = salvium_crypto::hash_to_point(&pubkey_bytes);
 
@@ -464,10 +445,7 @@ pub fn generate_nonces_ext(
         let ki_y_bytes =
             hex::decode(ki_y_hex).map_err(|e| format!("invalid key_image_y hex: {}", e))?;
         if ki_y_bytes.len() != 32 {
-            return Err(format!(
-                "key_image_y: expected 32 bytes, got {}",
-                ki_y_bytes.len()
-            ));
+            return Err(format!("key_image_y: expected 32 bytes, got {}", ki_y_bytes.len()));
         }
         let hp_y = salvium_crypto::hash_to_point(&ki_y_bytes);
 
@@ -516,10 +494,7 @@ pub fn aggregate_nonces(
     all_nonces: &[SignerNonces],
 ) -> Result<([[u8; 32]; 2], [[u8; 32]; 2]), String> {
     if all_nonces.len() < 2 {
-        return Err(format!(
-            "need at least 2 signers' nonces, got {}",
-            all_nonces.len()
-        ));
+        return Err(format!("need at least 2 signers' nonces, got {}", all_nonces.len()));
     }
 
     let mut total_g = [[0u8; 32]; 2];
@@ -527,10 +502,7 @@ pub fn aggregate_nonces(
 
     for (idx, nonces) in all_nonces.iter().enumerate() {
         if nonces.pub_nonces_g.len() != 2 || nonces.pub_nonces_hp.len() != 2 {
-            return Err(format!(
-                "signer {} nonces must have exactly 2 components",
-                idx
-            ));
+            return Err(format!("signer {} nonces must have exactly 2 components", idx));
         }
         for k in 0..2 {
             let g = hex_to_32(&nonces.pub_nonces_g[k], "pub_nonce_g")?;
@@ -657,23 +629,14 @@ pub fn partial_sign(
         return Err("ring is empty".to_string());
     }
     if ctx.real_index >= ctx.ring.len() {
-        return Err(format!(
-            "real_index {} >= ring size {}",
-            ctx.real_index,
-            ctx.ring.len()
-        ));
+        return Err(format!("real_index {} >= ring size {}", ctx.real_index, ctx.ring.len()));
     }
     if all_nonces.len() < 2 {
-        return Err(format!(
-            "need at least 2 signers' nonces, got {}",
-            all_nonces.len()
-        ));
+        return Err(format!("need at least 2 signers' nonces, got {}", all_nonces.len()));
     }
 
-    let commitment_image_hex = ctx
-        .commitment_image
-        .as_deref()
-        .ok_or("commitment_image is required for CLSAG signing")?;
+    let commitment_image_hex =
+        ctx.commitment_image.as_deref().ok_or("commitment_image is required for CLSAG signing")?;
 
     if ctx.fake_responses.len() != ctx.ring.len() {
         return Err(format!(
@@ -684,16 +647,10 @@ pub fn partial_sign(
     }
 
     // Decode all hex fields
-    let ring: Vec<[u8; 32]> = ctx
-        .ring
-        .iter()
-        .map(|s| hex_to_32(s, "ring member"))
-        .collect::<Result<_, _>>()?;
-    let commitments: Vec<[u8; 32]> = ctx
-        .commitments
-        .iter()
-        .map(|s| hex_to_32(s, "commitment"))
-        .collect::<Result<_, _>>()?;
+    let ring: Vec<[u8; 32]> =
+        ctx.ring.iter().map(|s| hex_to_32(s, "ring member")).collect::<Result<_, _>>()?;
+    let commitments: Vec<[u8; 32]> =
+        ctx.commitments.iter().map(|s| hex_to_32(s, "commitment")).collect::<Result<_, _>>()?;
     let key_image = hex_to_32(&ctx.key_image, "key_image")?;
     let pseudo_output = hex_to_32(&ctx.pseudo_output_commitment, "pseudo_output")?;
     let message = hex_to_32(&ctx.message, "message")?;
@@ -765,23 +722,14 @@ pub fn partial_sign_tclsag(
         return Err("ring is empty".to_string());
     }
     if ctx.real_index >= ctx.ring.len() {
-        return Err(format!(
-            "real_index {} >= ring size {}",
-            ctx.real_index,
-            ctx.ring.len()
-        ));
+        return Err(format!("real_index {} >= ring size {}", ctx.real_index, ctx.ring.len()));
     }
     if all_nonces.len() < 2 {
-        return Err(format!(
-            "need at least 2 signers' nonces, got {}",
-            all_nonces.len()
-        ));
+        return Err(format!("need at least 2 signers' nonces, got {}", all_nonces.len()));
     }
 
-    let commitment_image_hex = ctx
-        .commitment_image
-        .as_deref()
-        .ok_or("commitment_image is required for TCLSAG signing")?;
+    let commitment_image_hex =
+        ctx.commitment_image.as_deref().ok_or("commitment_image is required for TCLSAG signing")?;
 
     if ctx.fake_responses.len() != ctx.ring.len() {
         return Err(format!(
@@ -792,16 +740,10 @@ pub fn partial_sign_tclsag(
     }
 
     // Decode all hex fields
-    let ring: Vec<[u8; 32]> = ctx
-        .ring
-        .iter()
-        .map(|s| hex_to_32(s, "ring member"))
-        .collect::<Result<_, _>>()?;
-    let commitments: Vec<[u8; 32]> = ctx
-        .commitments
-        .iter()
-        .map(|s| hex_to_32(s, "commitment"))
-        .collect::<Result<_, _>>()?;
+    let ring: Vec<[u8; 32]> =
+        ctx.ring.iter().map(|s| hex_to_32(s, "ring member")).collect::<Result<_, _>>()?;
+    let commitments: Vec<[u8; 32]> =
+        ctx.commitments.iter().map(|s| hex_to_32(s, "commitment")).collect::<Result<_, _>>()?;
     let key_image = hex_to_32(&ctx.key_image, "key_image")?;
     let pseudo_output = hex_to_32(&ctx.pseudo_output_commitment, "pseudo_output")?;
     let message = hex_to_32(&ctx.message, "message")?;
@@ -943,11 +885,7 @@ pub fn combine_partial_signatures_ext(partials: &[PartialClsag]) -> Result<Combi
     Ok(CombinedClsag {
         s: hex::encode(s_sum),
         c_0,
-        sy: if has_sy {
-            Some(hex::encode(sy_sum))
-        } else {
-            None
-        },
+        sy: if has_sy { Some(hex::encode(sy_sum)) } else { None },
     })
 }
 
@@ -1071,25 +1009,15 @@ mod tests {
     #[test]
     fn test_clsag_context_init() {
         let (ctx, _, _) = make_test_context(4);
-        let ring: Vec<[u8; 32]> = ctx
-            .ring
-            .iter()
-            .map(|s| hex_to_32(s, "r").unwrap())
-            .collect();
-        let comms: Vec<[u8; 32]> = ctx
-            .commitments
-            .iter()
-            .map(|s| hex_to_32(s, "c").unwrap())
-            .collect();
+        let ring: Vec<[u8; 32]> = ctx.ring.iter().map(|s| hex_to_32(s, "r").unwrap()).collect();
+        let comms: Vec<[u8; 32]> =
+            ctx.commitments.iter().map(|s| hex_to_32(s, "c").unwrap()).collect();
         let ki = hex_to_32(&ctx.key_image, "ki").unwrap();
         let po = hex_to_32(&ctx.pseudo_output_commitment, "po").unwrap();
         let msg = hex_to_32(&ctx.message, "msg").unwrap();
         let d8 = hex_to_32(ctx.commitment_image.as_deref().unwrap(), "d8").unwrap();
-        let fakes: Vec<[u8; 32]> = ctx
-            .fake_responses
-            .iter()
-            .map(|s| hex_to_32(s, "f").unwrap())
-            .collect();
+        let fakes: Vec<[u8; 32]> =
+            ctx.fake_responses.iter().map(|s| hex_to_32(s, "f").unwrap()).collect();
 
         let clsag_ctx = ClsagContext::init(&ring, &comms, &po, &msg, &ki, &d8, 0, &fakes).unwrap();
         assert_eq!(clsag_ctx.n, 4);

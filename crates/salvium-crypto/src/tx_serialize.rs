@@ -32,10 +32,7 @@ fn get_u8(v: &Value, key: &str) -> u8 {
 }
 
 fn get_array<'a>(v: &'a Value, key: &str) -> &'a [Value] {
-    v.get(key)
-        .and_then(|v| v.as_array())
-        .map(|a| a.as_slice())
-        .unwrap_or(&[])
+    v.get(key).and_then(|v| v.as_array()).map(|a| a.as_slice()).unwrap_or(&[])
 }
 
 fn write_varint(buf: &mut Vec<u8>, val: u64) {
@@ -298,10 +295,7 @@ fn serialize_extra_from_parsed(extra: &Value) -> Result<Vec<u8>, String> {
     // If the first entry is a number, this is a raw byte array (from builder).
     // Just collect the bytes directly.
     if entries[0].is_number() {
-        return Ok(entries
-            .iter()
-            .filter_map(|v| v.as_u64().map(|n| n as u8))
-            .collect());
+        return Ok(entries.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect());
     }
 
     // Structured extra entries (from parse_extra).
@@ -544,10 +538,6 @@ mod tests {
         let reserialized =
             serialize_transaction(&json).expect("Failed to re-serialize real miner TX");
 
-        assert_eq!(
-            hex_str,
-            hex::encode(&reserialized),
-            "Real miner TX roundtrip failed"
-        );
+        assert_eq!(hex_str, hex::encode(&reserialized), "Real miner TX roundtrip failed");
     }
 }

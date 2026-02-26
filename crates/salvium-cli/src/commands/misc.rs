@@ -3,10 +3,7 @@
 use super::*;
 
 pub async fn show_version() -> Result {
-    println!(
-        "Salvium wallet CLI v{} (salvium-rs)",
-        env!("CARGO_PKG_VERSION")
-    );
+    println!("Salvium wallet CLI v{} (salvium-rs)", env!("CARGO_PKG_VERSION"));
     Ok(())
 }
 
@@ -106,19 +103,12 @@ pub async fn show_qr_code(ctx: &AppContext, use_carrot: bool) -> Result {
     let wallet = open_wallet(ctx)?;
 
     let address = if use_carrot {
-        wallet
-            .carrot_address()
-            .map_err(|e| format!("failed to get CARROT address: {}", e))?
+        wallet.carrot_address().map_err(|e| format!("failed to get CARROT address: {}", e))?
     } else {
-        wallet
-            .cn_address()
-            .map_err(|e| format!("failed to get CryptoNote address: {}", e))?
+        wallet.cn_address().map_err(|e| format!("failed to get CryptoNote address: {}", e))?
     };
 
-    println!(
-        "{} address:",
-        if use_carrot { "CARROT" } else { "CryptoNote" }
-    );
+    println!("{} address:", if use_carrot { "CARROT" } else { "CryptoNote" });
     println!("  {}", address);
     println!();
 

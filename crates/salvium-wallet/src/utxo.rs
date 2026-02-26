@@ -37,12 +37,7 @@ pub struct SelectionOptions {
 
 impl Default for SelectionOptions {
     fn default() -> Self {
-        Self {
-            min_confirmations: 10,
-            dust_threshold: 0,
-            max_inputs: 16,
-            current_height: 0,
-        }
+        Self { min_confirmations: 10, dust_threshold: 0, max_inputs: 16, current_height: 0 }
     }
 }
 
@@ -97,11 +92,7 @@ pub fn select_utxos(
 
 fn select_all(candidates: &[UtxoCandidate]) -> Option<SelectionResult> {
     let total: u64 = candidates.iter().map(|c| c.amount).sum();
-    Some(SelectionResult {
-        selected: candidates.to_vec(),
-        total,
-        change: 0,
-    })
+    Some(SelectionResult { selected: candidates.to_vec(), total, change: 0 })
 }
 
 fn select_sorted(
@@ -201,11 +192,7 @@ fn accumulate(ordered: &[UtxoCandidate], needed: u64) -> Option<SelectionResult>
         selected.push(candidate.clone());
         total += candidate.amount;
         if total >= needed {
-            return Some(SelectionResult {
-                selected,
-                total,
-                change: total - needed,
-            });
+            return Some(SelectionResult { selected, total, change: total - needed });
         }
     }
 
@@ -354,11 +341,8 @@ mod tests {
             (100, 90),  // confirmed (110 >= 90+10)
             (200, 105), // not confirmed (110 < 105+10)
         ]);
-        let options = SelectionOptions {
-            min_confirmations: 10,
-            current_height: 110,
-            ..Default::default()
-        };
+        let options =
+            SelectionOptions { min_confirmations: 10, current_height: 110, ..Default::default() };
         let result = select_utxos_with_options(
             &candidates,
             50,
@@ -374,10 +358,7 @@ mod tests {
     #[test]
     fn test_selection_options_dust_threshold() {
         let candidates = make_candidates(&[5, 10, 200]);
-        let options = SelectionOptions {
-            dust_threshold: 10,
-            ..Default::default()
-        };
+        let options = SelectionOptions { dust_threshold: 10, ..Default::default() };
         let result = select_utxos_with_options(
             &candidates,
             50,
@@ -395,10 +376,7 @@ mod tests {
     #[test]
     fn test_selection_options_max_inputs() {
         let candidates = make_candidates(&[10, 20, 30, 40, 50]);
-        let options = SelectionOptions {
-            max_inputs: 2,
-            ..Default::default()
-        };
+        let options = SelectionOptions { max_inputs: 2, ..Default::default() };
         let result = select_utxos_with_options(
             &candidates,
             60,
@@ -428,11 +406,8 @@ mod tests {
             (200, 80), // confirmed
             (300, 95), // not confirmed at height 100 with min_conf=10
         ]);
-        let options = SelectionOptions {
-            min_confirmations: 10,
-            current_height: 100,
-            ..Default::default()
-        };
+        let options =
+            SelectionOptions { min_confirmations: 10, current_height: 100, ..Default::default() };
         let result =
             select_utxos_with_options(&candidates, 250, 0, SelectionStrategy::Fifo, &options)
                 .unwrap();
@@ -448,11 +423,8 @@ mod tests {
     fn test_options_no_current_height() {
         // When current_height=0, min_confirmations check is skipped.
         let candidates = make_candidates_with_heights(&[(100, 999_999)]);
-        let options = SelectionOptions {
-            min_confirmations: 10,
-            current_height: 0,
-            ..Default::default()
-        };
+        let options =
+            SelectionOptions { min_confirmations: 10, current_height: 0, ..Default::default() };
         let result =
             select_utxos_with_options(&candidates, 50, 0, SelectionStrategy::Default, &options);
         assert!(result.is_some());
@@ -461,10 +433,7 @@ mod tests {
     #[test]
     fn test_options_all_filtered() {
         let candidates = make_candidates_with_heights(&[(5, 100), (3, 200)]);
-        let options = SelectionOptions {
-            dust_threshold: 10,
-            ..Default::default()
-        };
+        let options = SelectionOptions { dust_threshold: 10, ..Default::default() };
         let result =
             select_utxos_with_options(&candidates, 1, 0, SelectionStrategy::Default, &options);
         assert!(result.is_none());
@@ -473,10 +442,7 @@ mod tests {
     #[test]
     fn test_select_with_options_largest_first() {
         let candidates = make_candidates(&[10, 50, 100, 200]);
-        let options = SelectionOptions {
-            dust_threshold: 20,
-            ..Default::default()
-        };
+        let options = SelectionOptions { dust_threshold: 20, ..Default::default() };
         let result = select_utxos_with_options(
             &candidates,
             100,
@@ -508,10 +474,7 @@ mod tests {
     fn test_options_max_inputs_reselection() {
         // 5 candidates: SmallestFirst would pick many small ones.
         let candidates = make_candidates(&[10, 20, 30, 40, 50]);
-        let options = SelectionOptions {
-            max_inputs: 3,
-            ..Default::default()
-        };
+        let options = SelectionOptions { max_inputs: 3, ..Default::default() };
         // Target 80: SmallestFirst picks 10+20+30+40=100 (4 inputs > max 3).
         // Re-select: top 3 by amount [50,40,30], then SmallestFirst: 30+40=70 < 80, 30+40+50=120 >= 80.
         let result = select_utxos_with_options(

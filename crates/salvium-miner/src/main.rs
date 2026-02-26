@@ -111,11 +111,7 @@ fn run_benchmark(args: &Args) {
     eprintln!("Threads: {}", args.threads);
     eprintln!(
         "Mode:    {}",
-        if args.light {
-            "light (256MB shared cache)"
-        } else {
-            "full (2GB shared dataset)"
-        }
+        if args.light { "light (256MB shared cache)" } else { "full (2GB shared dataset)" }
     );
     eprintln!();
 
@@ -149,12 +145,7 @@ fn run_benchmark(args: &Args) {
             let elapsed = start_time.elapsed().as_secs_f64();
             let total = engine.hash_count.load(Ordering::Relaxed);
             let hr = total as f64 / elapsed;
-            eprint!(
-                "\r  {:.0}s  {} ({} hashes)   ",
-                elapsed,
-                format_hashrate(hr),
-                total
-            );
+            eprint!("\r  {:.0}s  {} ({} hashes)   ", elapsed, format_hashrate(hr), total);
             last_print = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -173,11 +164,7 @@ fn run_benchmark(args: &Args) {
     eprintln!("Mode:     {}", if args.light { "light" } else { "full" });
     eprintln!("Duration: {:.1}s", elapsed);
     eprintln!("Hashes:   {}", total);
-    eprintln!(
-        "Hashrate: {} ({:.1} H/s per thread)",
-        format_hashrate(hr),
-        hr / args.threads as f64
-    );
+    eprintln!("Hashrate: {} ({:.1} H/s per thread)", format_hashrate(hr), hr / args.threads as f64);
 }
 
 fn maybe_start_background(args: &Args, engine: &MiningEngine) -> Option<BackgroundMonitor> {
@@ -191,11 +178,7 @@ fn maybe_start_background(args: &Args, engine: &MiningEngine) -> Option<Backgrou
             "[bg-monitor] Background mining enabled (idle_threshold={}%, target={}%)",
             config.idle_threshold, config.mining_target_pct
         );
-        Some(BackgroundMonitor::start(
-            engine.throttle.clone(),
-            engine.running.clone(),
-            config,
-        ))
+        Some(BackgroundMonitor::start(engine.throttle.clone(), engine.running.clone(), config))
     } else {
         None
     }
@@ -240,11 +223,7 @@ fn run_stratum(args: &Args) {
     eprintln!("Threads: {}", args.threads);
     eprintln!(
         "Mode:    {}",
-        if args.light {
-            "light (256MB shared)"
-        } else {
-            "full (2GB shared dataset)"
-        }
+        if args.light { "light (256MB shared)" } else { "full (2GB shared dataset)" }
     );
     eprintln!();
 
@@ -301,10 +280,7 @@ fn run_stratum(args: &Args) {
             // Initialize or reinitialize engine if seed changed
             if job.seed_hash != current_seed_hash {
                 let seed_bytes = hex::decode(&job.seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
-                eprintln!(
-                    "[stratum] Seed hash: {:.16}... — initializing RandomX",
-                    job.seed_hash
-                );
+                eprintln!("[stratum] Seed hash: {:.16}... — initializing RandomX", job.seed_hash);
                 // Drop old engine and monitor first to free memory
                 _bg_monitor = None;
                 drop(engine.take());
@@ -459,19 +435,13 @@ fn run_stratum(args: &Args) {
 
     // Final stats
     let elapsed = start_time.elapsed().as_secs_f64();
-    let total = engine
-        .as_ref()
-        .map(|e| e.hash_count.load(Ordering::Relaxed))
-        .unwrap_or(0);
+    let total = engine.as_ref().map(|e| e.hash_count.load(Ordering::Relaxed)).unwrap_or(0);
     eprintln!();
     eprintln!("Shutting down...");
     eprintln!("Total hashes:    {}", total);
     eprintln!("Shares accepted: {}", shares_accepted);
     eprintln!("Shares rejected: {}", shares_rejected);
-    eprintln!(
-        "Avg hashrate:    {}",
-        format_hashrate(total as f64 / elapsed)
-    );
+    eprintln!("Avg hashrate:    {}", format_hashrate(total as f64 / elapsed));
 
     if let Some(eng) = engine {
         eng.stop();
@@ -492,11 +462,7 @@ fn run_daemon(args: &Args) {
     eprintln!("Threads: {}", args.threads);
     eprintln!(
         "Mode:    {}",
-        if args.light {
-            "light (256MB shared)"
-        } else {
-            "full (2GB shared dataset)"
-        }
+        if args.light { "light (256MB shared)" } else { "full (2GB shared dataset)" }
     );
     eprintln!();
 
@@ -515,10 +481,7 @@ fn run_daemon(args: &Args) {
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!(
-                            "Cannot connect to daemon (attempt {}/5): {}",
-                            attempt, last_err
-                        );
+                        eprintln!("Cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -533,10 +496,7 @@ fn run_daemon(args: &Args) {
         }
     };
 
-    eprintln!(
-        "Daemon height: {}, difficulty: {}",
-        info.height, info.difficulty
-    );
+    eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
 
     // Get initial block template (retry up to 5 times for transient daemon errors)
     let template = {
@@ -563,10 +523,7 @@ fn run_daemon(args: &Args) {
         match tmpl {
             Some(t) => t,
             None => {
-                eprintln!(
-                    "Failed to get block template after 5 attempts: {}",
-                    last_err
-                );
+                eprintln!("Failed to get block template after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -577,10 +534,7 @@ fn run_daemon(args: &Args) {
         template.wide_difficulty.as_deref(),
     );
 
-    eprintln!(
-        "Template: height={}, difficulty={}",
-        template.height, difficulty
-    );
+    eprintln!("Template: height={}, difficulty={}", template.height, difficulty);
 
     let seed_bytes = hex::decode(&template.seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
@@ -641,10 +595,7 @@ fn run_daemon(args: &Args) {
             }
 
             eprintln!();
-            eprintln!(
-                "*** BLOCK FOUND at height {}! nonce={} ***",
-                current_height, block.nonce
-            );
+            eprintln!("*** BLOCK FOUND at height {}! nonce={} ***", current_height, block.nonce);
 
             match client.submit_block(&block.blob_hex) {
                 Ok(()) => {
@@ -783,10 +734,7 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 
     #[cfg(unix)]
     unsafe {
-        libc::signal(
-            libc::SIGINT,
-            handle_sigint as *const () as libc::sighandler_t,
-        );
+        libc::signal(libc::SIGINT, handle_sigint as *const () as libc::sighandler_t);
         RUNNING_FLAG.store(running.as_ref() as *const _ as usize, Ordering::SeqCst);
     }
 }

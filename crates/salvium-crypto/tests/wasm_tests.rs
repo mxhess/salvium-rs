@@ -13,19 +13,11 @@ fn test_parse_address_roundtrip() {
 
     let address = wasm_create_address(1, 1, 0, &spend_key, &view_key);
     // Should not be an error JSON
-    assert!(
-        !address.starts_with('{'),
-        "wasm_create_address returned error: {}",
-        address
-    );
+    assert!(!address.starts_with('{'), "wasm_create_address returned error: {}", address);
 
     // Parse it back
     let json = wasm_parse_address(&address);
-    assert!(
-        !json.contains("\"error\""),
-        "wasm_parse_address returned error: {}",
-        json
-    );
+    assert!(!json.contains("\"error\""), "wasm_parse_address returned error: {}", json);
 
     // Verify fields
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -81,10 +73,7 @@ fn test_integrated_address() {
 fn test_integrated_address_wrong_payment_id_size() {
     let standard = wasm_create_address(0, 0, 0, &[0x07u8; 32], &[0x08u8; 32]);
     let result = wasm_to_integrated_address(&standard, &[0xBB; 4]);
-    assert!(
-        result.contains("error"),
-        "expected error for 4-byte payment_id"
-    );
+    assert!(result.contains("error"), "expected error for 4-byte payment_id");
 }
 
 #[test]
@@ -102,22 +91,12 @@ fn test_tx_type_names() {
         (8, "AUDIT"),
     ];
     for (code, name) in &expected {
-        assert_eq!(
-            wasm_tx_type_name(*code),
-            *name,
-            "tx_type {} should be {}",
-            code,
-            name
-        );
+        assert_eq!(wasm_tx_type_name(*code), *name, "tx_type {} should be {}", code, name);
     }
 
     // Unknown code
     let unknown = wasm_tx_type_name(255);
-    assert!(
-        unknown.starts_with("UNKNOWN"),
-        "255 should be UNKNOWN, got: {}",
-        unknown
-    );
+    assert!(unknown.starts_with("UNKNOWN"), "255 should be UNKNOWN, got: {}", unknown);
 }
 
 #[test]
@@ -135,13 +114,7 @@ fn test_rct_type_names() {
         (9, "SalviumOne"),
     ];
     for (code, name) in &expected {
-        assert_eq!(
-            wasm_rct_type_name(*code),
-            *name,
-            "rct_type {} should be {}",
-            code,
-            name
-        );
+        assert_eq!(wasm_rct_type_name(*code), *name, "rct_type {} should be {}", code, name);
     }
 
     let unknown = wasm_rct_type_name(255);
@@ -172,11 +145,7 @@ fn test_mnemonic_roundtrip() {
     ];
 
     let mnemonic = wasm_mnemonic_from_seed(&seed);
-    assert!(
-        !mnemonic.starts_with('{'),
-        "expected mnemonic words, got error: {}",
-        mnemonic
-    );
+    assert!(!mnemonic.starts_with('{'), "expected mnemonic words, got error: {}", mnemonic);
 
     let words: Vec<&str> = mnemonic.split_whitespace().collect();
     assert_eq!(words.len(), 25, "mnemonic should have 25 words");

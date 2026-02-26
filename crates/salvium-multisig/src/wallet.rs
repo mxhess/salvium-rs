@@ -15,10 +15,7 @@ pub struct MultisigWallet {
 impl MultisigWallet {
     /// Create a new MultisigWallet from a pre-validated MultisigAccount.
     pub fn new(account: MultisigAccount) -> Self {
-        Self {
-            account,
-            first_kex_message: None,
-        }
+        Self { account, first_kex_message: None }
     }
 
     /// Return the signing threshold.

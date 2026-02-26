@@ -86,15 +86,14 @@ fn run_stratum(args: &Args) {
     eprintln!();
 
     // Create mining loop
-    let mining_loop = match MiningLoop::new(args.threads, |_worker_id| {
-        Ok(Box::new(GhostRiderEngine::new()))
-    }) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("Failed to create mining loop: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let mining_loop =
+        match MiningLoop::new(args.threads, |_worker_id| Ok(Box::new(GhostRiderEngine::new()))) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Failed to create mining loop: {}", e);
+                std::process::exit(1);
+            }
+        };
 
     // Set up SIGINT handler
     let running = mining_loop.running.clone();
@@ -255,10 +254,7 @@ fn run_stratum(args: &Args) {
     eprintln!("Total hashes:    {}", total);
     eprintln!("Shares accepted: {}", shares_accepted);
     eprintln!("Shares rejected: {}", shares_rejected);
-    eprintln!(
-        "Avg hashrate:    {}",
-        format_hashrate(total as f64 / elapsed)
-    );
+    eprintln!("Avg hashrate:    {}", format_hashrate(total as f64 / elapsed));
 
     mining_loop.stop();
 }
@@ -292,10 +288,7 @@ fn run_daemon(args: &Args) {
                 Err(e) => {
                     last_err = e;
                     if attempt < 5 {
-                        eprintln!(
-                            "Cannot connect to daemon (attempt {}/5): {}",
-                            attempt, last_err
-                        );
+                        eprintln!("Cannot connect to daemon (attempt {}/5): {}", attempt, last_err);
                         std::thread::sleep(Duration::from_secs(2));
                     }
                 }
@@ -310,10 +303,7 @@ fn run_daemon(args: &Args) {
         }
     };
 
-    eprintln!(
-        "Daemon height: {}, difficulty: {}",
-        info.height, info.difficulty
-    );
+    eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
 
     // Get initial block template
     let template = {
@@ -340,10 +330,7 @@ fn run_daemon(args: &Args) {
         match tmpl {
             Some(t) => t,
             None => {
-                eprintln!(
-                    "Failed to get block template after 5 attempts: {}",
-                    last_err
-                );
+                eprintln!("Failed to get block template after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -351,18 +338,14 @@ fn run_daemon(args: &Args) {
 
     let difficulty = parse_difficulty(template.difficulty, template.wide_difficulty.as_deref());
 
-    eprintln!(
-        "Template: height={}, difficulty={}",
-        template.height, difficulty
-    );
+    eprintln!("Template: height={}, difficulty={}", template.height, difficulty);
 
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
     let template_blob = hex::decode(&template.blocktemplate_blob).expect("Invalid template blob");
 
     // Create mining loop
-    let mining_loop = MiningLoop::new(args.threads, |_worker_id| {
-        Ok(Box::new(GhostRiderEngine::new()))
-    });
+    let mining_loop =
+        MiningLoop::new(args.threads, |_worker_id| Ok(Box::new(GhostRiderEngine::new())));
 
     let mining_loop = match mining_loop {
         Ok(m) => m,
@@ -418,10 +401,7 @@ fn run_daemon(args: &Args) {
             }
 
             eprintln!();
-            eprintln!(
-                "*** BLOCK FOUND at height {}! nonce={} ***",
-                current_height, block.nonce
-            );
+            eprintln!("*** BLOCK FOUND at height {}! nonce={} ***", current_height, block.nonce);
 
             match client.submit_block(&block.blob_hex) {
                 Ok(()) => {
@@ -554,10 +534,7 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 
     #[cfg(unix)]
     unsafe {
-        libc::signal(
-            libc::SIGINT,
-            handle_sigint as *const () as libc::sighandler_t,
-        );
+        libc::signal(libc::SIGINT, handle_sigint as *const () as libc::sighandler_t);
         RUNNING_FLAG.store(running.as_ref() as *const _ as usize, Ordering::SeqCst);
     }
 }

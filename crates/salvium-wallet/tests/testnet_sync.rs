@@ -44,13 +44,9 @@ async fn test_full_sync_balance() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
     let info = d.get_info().await.unwrap();
@@ -128,14 +124,8 @@ async fn test_view_only_sync() {
         Network::Testnet,
     );
 
-    assert!(
-        !view_keys.can_spend(),
-        "view-only wallet should not be able to spend"
-    );
-    assert!(
-        view_keys.can_view(),
-        "view-only wallet should be able to view"
-    );
+    assert!(!view_keys.can_spend(), "view-only wallet should not be able to spend");
+    assert!(view_keys.can_view(), "view-only wallet should be able to view");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("view-only.db");
@@ -191,18 +181,9 @@ async fn test_carrot_view_only_sync() {
         Network::Testnet,
     );
 
-    assert!(
-        !view_keys.can_spend(),
-        "CARROT view-only should not be able to spend"
-    );
-    assert!(
-        view_keys.can_view(),
-        "CARROT view-only should be able to view"
-    );
-    assert!(
-        !view_keys.carrot.is_empty(),
-        "CARROT keys should be populated"
-    );
+    assert!(!view_keys.can_spend(), "CARROT view-only should not be able to spend");
+    assert!(view_keys.can_view(), "CARROT view-only should be able to view");
+    assert!(!view_keys.carrot.is_empty(), "CARROT keys should be populated");
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("carrot-view-only.db");
@@ -211,10 +192,8 @@ async fn test_carrot_view_only_sync() {
 
     let d = daemon();
     let no_cancel = std::sync::atomic::AtomicBool::new(false);
-    let sync_height = wallet
-        .sync(&d, None, &no_cancel)
-        .await
-        .expect("CARROT view-only sync failed");
+    let sync_height =
+        wallet.sync(&d, None, &no_cancel).await.expect("CARROT view-only sync failed");
     println!("CARROT view-only synced to height: {}", sync_height);
 
     let all_balances = wallet.get_all_balances(0).unwrap();
@@ -227,10 +206,7 @@ async fn test_carrot_view_only_sync() {
     // CARROT view-only should detect CARROT outputs
     let sal_bal = wallet.get_balance("SAL", 0).unwrap();
     let sal_total: u64 = sal_bal.balance.parse().unwrap_or(0);
-    println!(
-        "\nSAL total (CARROT view-only): {:.9}",
-        sal_total as f64 / 1e9
-    );
+    println!("\nSAL total (CARROT view-only): {:.9}", sal_total as f64 / 1e9);
 
     println!("\n=== CARROT View-Only Wallet Sync Test PASSED ===");
 }
@@ -255,13 +231,9 @@ async fn test_sync_idempotent() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("wallet-a.db");
-    let mut wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .expect("create wallet");
+    let mut wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .expect("create wallet");
 
     let d = daemon();
 
@@ -305,18 +277,12 @@ async fn test_sync_idempotent() {
 
     // Total balance should be the same (no new blocks changing our wallet in between)
     // Allow small difference if a new block arrives with outputs for us
-    assert_eq!(
-        total_1, total_2,
-        "total balance should be consistent between syncs"
-    );
+    assert_eq!(total_1, total_2, "total balance should be consistent between syncs");
     println!("Balance consistent across syncs: OK");
 
     // Verify sync height is persisted
     let stored_height = wallet.sync_height().unwrap();
-    assert_eq!(
-        stored_height, height_2,
-        "stored sync height should match last sync"
-    );
+    assert_eq!(stored_height, height_2, "stored sync height should match last sync");
     println!("Sync height persisted: OK");
 
     println!("\n=== Sync Idempotency Test PASSED ===");

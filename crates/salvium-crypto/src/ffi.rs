@@ -584,15 +584,11 @@ pub unsafe extern "C" fn salvium_clsag_sign(
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let sk = crate::to32(slice::from_raw_parts(secret_key, 32));
     let cm = crate::to32(slice::from_raw_parts(commitment_mask, 32));
@@ -639,15 +635,11 @@ pub unsafe extern "C" fn salvium_clsag_verify(
     let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
@@ -664,12 +656,7 @@ pub unsafe extern "C" fn salvium_clsag_verify(
         offset += 32;
         let commitment_image = crate::to32(&sig_data[offset..offset + 32]);
 
-        let sig_struct = crate::clsag::ClsagSignature {
-            s,
-            c1,
-            key_image,
-            commitment_image,
-        };
+        let sig_struct = crate::clsag::ClsagSignature { s, c1, key_image, commitment_image };
         if crate::clsag::clsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) {
             1
         } else {
@@ -700,15 +687,11 @@ pub unsafe extern "C" fn salvium_tclsag_sign(
     let msg = crate::to32(slice::from_raw_parts(message, 32));
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let skx = crate::to32(slice::from_raw_parts(secret_key_x, 32));
     let sky = crate::to32(slice::from_raw_parts(secret_key_y, 32));
@@ -760,15 +743,11 @@ pub unsafe extern "C" fn salvium_tclsag_verify(
     let sig_data = slice::from_raw_parts(sig, sig_len).to_vec();
     let ring_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(ring, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let comms_arr: Vec<[u8; 32]> = {
         let flat = slice::from_raw_parts(commitments, n * 32);
-        (0..n)
-            .map(|i| crate::to32(&flat[i * 32..(i + 1) * 32]))
-            .collect()
+        (0..n).map(|i| crate::to32(&flat[i * 32..(i + 1) * 32])).collect()
     };
     let po = crate::to32(slice::from_raw_parts(pseudo_output, 32));
 
@@ -790,13 +769,7 @@ pub unsafe extern "C" fn salvium_tclsag_verify(
         offset += 32;
         let commitment_image = crate::to32(&sig_data[offset..offset + 32]);
 
-        let sig_struct = crate::tclsag::TclsagSignature {
-            sx,
-            sy,
-            c1,
-            key_image,
-            commitment_image,
-        };
+        let sig_struct = crate::tclsag::TclsagSignature { sx, sy, c1, key_image, commitment_image };
         if crate::tclsag::tclsag_verify(&msg, &sig_struct, &ring_arr, &comms_arr, &po) {
             1
         } else {
@@ -1037,19 +1010,11 @@ pub unsafe extern "C" fn salvium_carrot_scan_output(
         let k_vi_arr = crate::to32(slice::from_raw_parts(k_vi, 32));
         let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
         let ic = slice::from_raw_parts(input_context, input_context_len);
-        let ct_amount = if clear_text_amount == u64::MAX {
-            None
-        } else {
-            Some(clear_text_amount)
-        };
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
 
         // Parse subaddress map: each entry is 40 bytes (32 key + 4 major + 4 minor)
         let n = n_sub as usize;
-        let sub_slice = if n > 0 {
-            slice::from_raw_parts(subaddr_data, n * 40)
-        } else {
-            &[]
-        };
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
         let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
             .map(|i| {
                 let base = i * 40;
@@ -1137,18 +1102,10 @@ pub unsafe extern "C" fn salvium_carrot_scan_internal(
         let vbs_arr = crate::to32(slice::from_raw_parts(view_balance_secret, 32));
         let ks_arr = crate::to32(slice::from_raw_parts(account_spend_pubkey, 32));
         let ic = slice::from_raw_parts(input_context, input_context_len);
-        let ct_amount = if clear_text_amount == u64::MAX {
-            None
-        } else {
-            Some(clear_text_amount)
-        };
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
 
         let n = n_sub as usize;
-        let sub_slice = if n > 0 {
-            slice::from_raw_parts(subaddr_data, n * 40)
-        } else {
-            &[]
-        };
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
         let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
             .map(|i| {
                 let base = i * 40;
@@ -1235,17 +1192,9 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
         let ko_arr = crate::to32(slice::from_raw_parts(output_pubkey, 32));
         let deriv_arr = crate::to32(slice::from_raw_parts(derivation, 32));
 
-        let vt_opt = if view_tag < 0 {
-            None
-        } else {
-            Some(view_tag as u8)
-        };
+        let vt_opt = if view_tag < 0 { None } else { Some(view_tag as u8) };
 
-        let ct_amount = if clear_text_amount == u64::MAX {
-            None
-        } else {
-            Some(clear_text_amount)
-        };
+        let ct_amount = if clear_text_amount == u64::MAX { None } else { Some(clear_text_amount) };
 
         let enc_amt: [u8; 8] = {
             let s = slice::from_raw_parts(ecdh_encrypted_amount, 8);
@@ -1270,11 +1219,7 @@ pub unsafe extern "C" fn salvium_cn_scan_output(
 
         // Parse subaddress map
         let n = n_sub as usize;
-        let sub_slice = if n > 0 {
-            slice::from_raw_parts(subaddr_data, n * 40)
-        } else {
-            &[]
-        };
+        let sub_slice = if n > 0 { slice::from_raw_parts(subaddr_data, n * 40) } else { &[] };
         let subaddrs: Vec<([u8; 32], u32, u32)> = (0..n)
             .map(|i| {
                 let base = i * 40;
@@ -1973,12 +1918,10 @@ pub unsafe extern "C" fn salvium_storage_get_sync_height(handle: u32) -> i64 {
 /// Set sync height.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_set_sync_height(handle: u32, height: i64) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.set_sync_height(height)) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.set_sync_height(height)) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    })
 }
 
 /// Store a block hash for a given height.
@@ -2009,32 +1952,28 @@ pub unsafe extern "C" fn salvium_storage_get_block_hash(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.get_block_hash(height)) {
-            Ok(Some(hash)) => {
-                let bytes = hash.into_bytes().into_boxed_slice();
-                let len = bytes.len();
-                let raw = Box::into_raw(bytes);
-                *out_ptr = (*raw).as_mut_ptr();
-                *out_len = len;
-                0
-            }
-            Ok(None) => -1,
-            Err(_) => -1,
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.get_block_hash(height)) {
+        Ok(Some(hash)) => {
+            let bytes = hash.into_bytes().into_boxed_slice();
+            let len = bytes.len();
+            let raw = Box::into_raw(bytes);
+            *out_ptr = (*raw).as_mut_ptr();
+            *out_len = len;
+            0
+        }
+        Ok(None) => -1,
+        Err(_) => -1,
+    })
 }
 
 /// Atomic rollback: deletes outputs/txs/block_hashes above height,
 /// unspends outputs spent above height. All in one transaction.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_rollback(handle: u32, height: i64) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.rollback(height)) {
-            Ok(()) => 0,
-            Err(_) => -1,
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.rollback(height)) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    })
 }
 
 /// Get distinct asset types present in the wallet. Returns JSON array: ["SAL","SAL1"]
@@ -2044,20 +1983,18 @@ pub unsafe extern "C" fn salvium_storage_get_asset_types(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.get_asset_types()) {
-            Ok(types) => {
-                let json = serde_json::to_vec(&types).unwrap();
-                let len = json.len();
-                let buf = json.into_boxed_slice();
-                let raw = Box::into_raw(buf);
-                *out_ptr = (*raw).as_mut_ptr();
-                *out_len = len;
-                0
-            }
-            Err(_) => -1,
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.get_asset_types()) {
+        Ok(types) => {
+            let json = serde_json::to_vec(&types).unwrap();
+            let len = json.len();
+            let buf = json.into_boxed_slice();
+            let raw = Box::into_raw(buf);
+            *out_ptr = (*raw).as_mut_ptr();
+            *out_len = len;
+            0
+        }
+        Err(_) => -1,
+    })
 }
 
 /// Compute balance in Rust. Returns JSON: {"balance":"...","unlockedBalance":"...","lockedBalance":"..."}
@@ -2072,9 +2009,8 @@ pub unsafe extern "C" fn salvium_storage_get_balance(
     out_len: *mut usize,
 ) -> i32 {
     catch_ffi(|| {
-        let at_str = std::str::from_utf8(slice::from_raw_parts(asset_type, at_len))
-            .map_err(|_| ())
-            .unwrap();
+        let at_str =
+            std::str::from_utf8(slice::from_raw_parts(asset_type, at_len)).map_err(|_| ()).unwrap();
         match crate::storage::with_db(handle, |db| {
             db.get_balance(current_height, at_str, account_index)
         }) {
@@ -2306,15 +2242,13 @@ pub unsafe extern "C" fn salvium_storage_mark_stake_returned(
 
 #[no_mangle]
 pub unsafe extern "C" fn salvium_storage_delete_stakes_above(handle: u32, height: i64) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.delete_stakes_above(height)) {
-            Ok(()) => 0,
-            Err(e) => {
-                log::error!("salvium_storage_delete_stakes_above: DB error: {e}");
-                -1
-            }
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.delete_stakes_above(height)) {
+        Ok(()) => 0,
+        Err(e) => {
+            log::error!("salvium_storage_delete_stakes_above: DB error: {e}");
+            -1
+        }
+    })
 }
 
 // ─── Storage: Output Freeze / Thaw / Unspend ────────────────────────────────
@@ -2541,26 +2475,24 @@ pub unsafe extern "C" fn salvium_storage_get_address_book(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.get_address_book()) {
-            Ok(entries) => {
-                let json = match serde_json::to_vec(&entries) {
-                    Ok(j) => j,
-                    Err(_) => return -1,
-                };
-                let len = json.len();
-                let buf = json.into_boxed_slice();
-                let raw = Box::into_raw(buf);
-                *out_ptr = (*raw).as_mut_ptr();
-                *out_len = len;
-                0
-            }
-            Err(e) => {
-                log::error!("salvium_storage_get_address_book: {e}");
-                -1
-            }
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.get_address_book()) {
+        Ok(entries) => {
+            let json = match serde_json::to_vec(&entries) {
+                Ok(j) => j,
+                Err(_) => return -1,
+            };
+            let len = json.len();
+            let buf = json.into_boxed_slice();
+            let raw = Box::into_raw(buf);
+            *out_ptr = (*raw).as_mut_ptr();
+            *out_len = len;
+            0
+        }
+        Err(e) => {
+            log::error!("salvium_storage_get_address_book: {e}");
+            -1
+        }
+    })
 }
 
 /// Get a single address book entry by row_id. Returns JSON object or -1 if not found.
@@ -2571,27 +2503,25 @@ pub unsafe extern "C" fn salvium_storage_get_address_book_entry(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.get_address_book_entry(row_id)) {
-            Ok(Some(entry)) => {
-                let json = match serde_json::to_vec(&entry) {
-                    Ok(j) => j,
-                    Err(_) => return -1,
-                };
-                let len = json.len();
-                let buf = json.into_boxed_slice();
-                let raw = Box::into_raw(buf);
-                *out_ptr = (*raw).as_mut_ptr();
-                *out_len = len;
-                0
-            }
-            Ok(None) => -1,
-            Err(e) => {
-                log::error!("salvium_storage_get_address_book_entry: {e}");
-                -1
-            }
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.get_address_book_entry(row_id)) {
+        Ok(Some(entry)) => {
+            let json = match serde_json::to_vec(&entry) {
+                Ok(j) => j,
+                Err(_) => return -1,
+            };
+            let len = json.len();
+            let buf = json.into_boxed_slice();
+            let raw = Box::into_raw(buf);
+            *out_ptr = (*raw).as_mut_ptr();
+            *out_len = len;
+            0
+        }
+        Ok(None) => -1,
+        Err(e) => {
+            log::error!("salvium_storage_get_address_book_entry: {e}");
+            -1
+        }
+    })
 }
 
 /// Edit an address book entry. Input: JSON with "rowId" and optional "address","label","description","paymentId".
@@ -2638,16 +2568,14 @@ pub unsafe extern "C" fn salvium_storage_delete_address_book_entry(
     handle: u32,
     row_id: i64,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.delete_address_book_entry(row_id)) {
-            Ok(true) => 1,
-            Ok(false) => 0,
-            Err(e) => {
-                log::error!("salvium_storage_delete_address_book_entry: {e}");
-                -1
-            }
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.delete_address_book_entry(row_id)) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(e) => {
+            log::error!("salvium_storage_delete_address_book_entry: {e}");
+            -1
+        }
+    })
 }
 
 // ─── Storage: Key-Value Attributes ──────────────────────────────────────────
@@ -2756,27 +2684,23 @@ pub unsafe extern "C" fn salvium_storage_get_all_staked_balances(
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
 ) -> i32 {
-    catch_ffi(
-        || match crate::storage::with_db(handle, |db| db.get_all_staked_balances()) {
-            Ok(balances) => {
-                let string_map: std::collections::HashMap<String, String> = balances
-                    .into_iter()
-                    .map(|(k, v)| (k, v.to_string()))
-                    .collect();
-                let json = serde_json::to_vec(&string_map).unwrap();
-                let len = json.len();
-                let buf = json.into_boxed_slice();
-                let raw = Box::into_raw(buf);
-                *out_ptr = (*raw).as_mut_ptr();
-                *out_len = len;
-                0
-            }
-            Err(e) => {
-                log::error!("salvium_storage_get_all_staked_balances: {e}");
-                -1
-            }
-        },
-    )
+    catch_ffi(|| match crate::storage::with_db(handle, |db| db.get_all_staked_balances()) {
+        Ok(balances) => {
+            let string_map: std::collections::HashMap<String, String> =
+                balances.into_iter().map(|(k, v)| (k, v.to_string())).collect();
+            let json = serde_json::to_vec(&string_map).unwrap();
+            let len = json.len();
+            let buf = json.into_boxed_slice();
+            let raw = Box::into_raw(buf);
+            *out_ptr = (*raw).as_mut_ptr();
+            *out_len = len;
+            0
+        }
+        Err(e) => {
+            log::error!("salvium_storage_get_all_staked_balances: {e}");
+            -1
+        }
+    })
 }
 
 /// Look up a locked stake by its expected return output key.
@@ -3092,11 +3016,7 @@ mod tests {
 
     /// Helper: call FFI function, compare output to direct Rust call
     fn assert_ffi_matches(ffi_out: &[u8; 32], rust_result: &[u8]) {
-        assert_eq!(
-            &ffi_out[..],
-            rust_result,
-            "FFI output != direct Rust output"
-        );
+        assert_eq!(&ffi_out[..], rust_result, "FFI output != direct Rust output");
     }
 
     #[test]
@@ -3175,12 +3095,7 @@ mod tests {
         };
         let mut out = [0u8; 32];
         let rc = unsafe {
-            salvium_sc_mul_add(
-                SEC_A.as_ptr(),
-                SEC_B.as_ptr(),
-                three.as_ptr(),
-                out.as_mut_ptr(),
-            )
+            salvium_sc_mul_add(SEC_A.as_ptr(), SEC_B.as_ptr(), three.as_ptr(), out.as_mut_ptr())
         };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::sc_mul_add(&SEC_A, &SEC_B, &three));
@@ -3197,12 +3112,7 @@ mod tests {
         };
         let mut out = [0u8; 32];
         let rc = unsafe {
-            salvium_sc_mul_sub(
-                SEC_A.as_ptr(),
-                SEC_B.as_ptr(),
-                five.as_ptr(),
-                out.as_mut_ptr(),
-            )
+            salvium_sc_mul_sub(SEC_A.as_ptr(), SEC_B.as_ptr(), five.as_ptr(), out.as_mut_ptr())
         };
         assert_eq!(rc, 0);
         assert_ffi_matches(&out, &crate::sc_mul_sub(&SEC_A, &SEC_B, &five));

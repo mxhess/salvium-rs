@@ -41,12 +41,7 @@ fn build_domain_transcript(domain: &[u8]) -> Vec<u8> {
 
 /// Keyed blake2b.
 fn blake2b_keyed(transcript: &[u8], out_len: usize, key: &[u8]) -> Vec<u8> {
-    blake2b_simd::Params::new()
-        .hash_length(out_len)
-        .key(key)
-        .hash(transcript)
-        .as_bytes()
-        .to_vec()
+    blake2b_simd::Params::new().hash_length(out_len).key(key).hash(transcript).as_bytes().to_vec()
 }
 
 /// H_32: blake2b 32 bytes keyed with domain separator.
@@ -94,10 +89,7 @@ pub fn derive_carrot_keys(master_secret: &[u8; 32]) -> [u8; 288] {
     let t_point = CompressedEdwardsY(T_BYTES).decompress().expect("invalid T");
     let account_spend_pubkey = EdwardsPoint::vartime_multiscalar_mul(
         &[generate_image_key, prove_spend_key],
-        &[
-            curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
-            t_point,
-        ],
+        &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, t_point],
     );
 
     // K^0_v = k_vi*G (primary address view pubkey)

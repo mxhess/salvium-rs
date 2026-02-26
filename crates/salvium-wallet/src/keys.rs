@@ -18,10 +18,7 @@ pub enum WalletType {
     /// Watch-only: public keys only, no scanning.
     Watch,
     /// Multisig wallet: M-of-N threshold signing.
-    Multisig {
-        threshold: usize,
-        signer_count: usize,
-    },
+    Multisig { threshold: usize, signer_count: usize },
 }
 
 /// CryptoNote (legacy) key set.
@@ -74,9 +71,8 @@ impl WalletKeys {
         //   view_public  = view_secret * G
         let spend_secret_key = to_32(&salvium_crypto::sc_reduce32(&seed));
         let spend_public_key = to_32(&salvium_crypto::scalar_mult_base(&spend_secret_key));
-        let view_secret_key = to_32(&salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(
-            &spend_secret_key,
-        )));
+        let view_secret_key =
+            to_32(&salvium_crypto::sc_reduce32(&salvium_crypto::keccak256(&spend_secret_key)));
         let view_public_key = to_32(&salvium_crypto::scalar_mult_base(&view_secret_key));
 
         // CARROT key hierarchy (9 keys from 32-byte master secret = seed).
@@ -201,10 +197,7 @@ impl WalletKeys {
     }
 
     pub fn can_spend(&self) -> bool {
-        matches!(
-            self.wallet_type,
-            WalletType::Full | WalletType::Multisig { .. }
-        )
+        matches!(self.wallet_type, WalletType::Full | WalletType::Multisig { .. })
     }
 
     pub fn can_view(&self) -> bool {
@@ -299,10 +292,7 @@ mod tests {
 
         assert_eq!(keys1.cn.spend_public_key, keys2.cn.spend_public_key);
         assert_eq!(keys1.cn.view_public_key, keys2.cn.view_public_key);
-        assert_eq!(
-            keys1.carrot.account_spend_pubkey,
-            keys2.carrot.account_spend_pubkey
-        );
+        assert_eq!(keys1.carrot.account_spend_pubkey, keys2.carrot.account_spend_pubkey);
     }
 
     #[test]
@@ -367,9 +357,7 @@ mod tests {
     #[test]
     fn test_carrot_address_generation() {
         let keys = WalletKeys::from_seed([99u8; 32], Network::Testnet);
-        let addr = keys
-            .carrot_address()
-            .expect("should generate CARROT address");
+        let addr = keys.carrot_address().expect("should generate CARROT address");
         assert!(addr.len() > 90);
     }
 

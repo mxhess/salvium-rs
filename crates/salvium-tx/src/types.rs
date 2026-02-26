@@ -87,32 +87,16 @@ pub enum TxInput {
     /// Coinbase (generation) input.
     Gen { height: u64 },
     /// Key input (spending a previous output).
-    Key {
-        amount: u64,
-        asset_type: String,
-        key_offsets: Vec<u64>,
-        key_image: [u8; 32],
-    },
+    Key { amount: u64, asset_type: String, key_offsets: Vec<u64>, key_image: [u8; 32] },
 }
 
 /// Transaction output.
 #[derive(Debug, Clone)]
 pub enum TxOutput {
     /// Legacy key output (pre-view-tag).
-    Key {
-        amount: u64,
-        key: [u8; 32],
-        asset_type: String,
-        unlock_time: u64,
-    },
+    Key { amount: u64, key: [u8; 32], asset_type: String, unlock_time: u64 },
     /// Tagged key output (with 1-byte view tag).
-    TaggedKey {
-        amount: u64,
-        key: [u8; 32],
-        asset_type: String,
-        unlock_time: u64,
-        view_tag: u8,
-    },
+    TaggedKey { amount: u64, key: [u8; 32], asset_type: String, unlock_time: u64, view_tag: u8 },
     /// CARROT v1 output (3-byte view tag + Janus anchor).
     CarrotV1 {
         amount: u64,
@@ -227,9 +211,7 @@ impl Transaction {
 
     /// Parse from the JSON structure returned by salvium-crypto's tx_parse.
     pub fn from_json(json: &Value) -> Result<Self, TxError> {
-        let prefix_json = json
-            .get("prefix")
-            .ok_or(TxError::Parse("missing prefix".into()))?;
+        let prefix_json = json.get("prefix").ok_or(TxError::Parse("missing prefix".into()))?;
         let prefix = TxPrefix::from_json(prefix_json)?;
 
         let rct = json.get("rct").and_then(|v| {
@@ -306,62 +288,35 @@ impl TxPrefix {
         let inputs = v
             .get("vin")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|i| TxInput::from_json(i).ok())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|i| TxInput::from_json(i).ok()).collect())
             .unwrap_or_default();
 
         let outputs = v
             .get("vout")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|o| TxOutput::from_json(o).ok())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|o| TxOutput::from_json(o).ok()).collect())
             .unwrap_or_default();
 
         let extra = v
             .get("extra")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|x| x.as_u64().map(|n| n as u8))
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect())
             .unwrap_or_default();
 
         let amount_burnt = parse_amount_str(v.get("amount_burnt"));
-        let source_asset_type = v
-            .get("source_asset_type")
-            .and_then(|s| s.as_str())
-            .unwrap_or("SAL")
-            .to_string();
-        let destination_asset_type = v
-            .get("destination_asset_type")
-            .and_then(|s| s.as_str())
-            .unwrap_or("SAL")
-            .to_string();
+        let source_asset_type =
+            v.get("source_asset_type").and_then(|s| s.as_str()).unwrap_or("SAL").to_string();
+        let destination_asset_type =
+            v.get("destination_asset_type").and_then(|s| s.as_str()).unwrap_or("SAL").to_string();
         let amount_slippage_limit = parse_amount_str(v.get("amount_slippage_limit"));
 
-        let return_address = v
-            .get("return_address")
-            .and_then(|s| s.as_str())
-            .and_then(|s| hex::decode(s).ok());
-        let return_pubkey = v
-            .get("return_pubkey")
-            .and_then(|s| s.as_str())
-            .and_then(hex_to_32);
+        let return_address =
+            v.get("return_address").and_then(|s| s.as_str()).and_then(|s| hex::decode(s).ok());
+        let return_pubkey = v.get("return_pubkey").and_then(|s| s.as_str()).and_then(hex_to_32);
         let return_address_list =
-            v.get("return_address_list")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| s.as_str().and_then(|h| hex::decode(h).ok()))
-                        .collect()
-                });
+            v.get("return_address_list").and_then(|a| a.as_array()).map(|arr| {
+                arr.iter().filter_map(|s| s.as_str().and_then(|h| hex::decode(h).ok())).collect()
+            });
         let return_address_change_mask = v
             .get("return_address_change_mask")
             .and_then(|s| s.as_str())
@@ -372,14 +327,8 @@ impl TxPrefix {
                 return None;
             }
             let ver = ptd.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
-            let ra = ptd
-                .get("return_address")
-                .and_then(|s| s.as_str())
-                .and_then(hex_to_32)?;
-            let rp = ptd
-                .get("return_pubkey")
-                .and_then(|s| s.as_str())
-                .and_then(hex_to_32)?;
+            let ra = ptd.get("return_address").and_then(|s| s.as_str()).and_then(hex_to_32)?;
+            let rp = ptd.get("return_pubkey").and_then(|s| s.as_str()).and_then(hex_to_32)?;
             let vt_hex = ptd.get("return_view_tag").and_then(|s| s.as_str())?;
             let vt_bytes = hex::decode(vt_hex).ok()?;
             if vt_bytes.len() < 3 {
@@ -477,11 +426,8 @@ impl TxInput {
             }
             0x02 => {
                 let amount = parse_amount_str(v.get("amount"));
-                let asset_type = v
-                    .get("assetType")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("SAL")
-                    .to_string();
+                let asset_type =
+                    v.get("assetType").and_then(|s| s.as_str()).unwrap_or("SAL").to_string();
                 let key_offsets = v
                     .get("keyOffsets")
                     .and_then(|a| a.as_array())
@@ -492,12 +438,7 @@ impl TxInput {
                     .and_then(|s| s.as_str())
                     .and_then(hex_to_32)
                     .ok_or(TxError::Parse("missing keyImage".into()))?;
-                Ok(Self::Key {
-                    amount,
-                    asset_type,
-                    key_offsets,
-                    key_image,
-                })
+                Ok(Self::Key { amount, asset_type, key_offsets, key_image })
             }
             _ => Err(TxError::Parse(format!("unknown input type: {}", type_tag))),
         }
@@ -509,12 +450,7 @@ impl TxInput {
                 "type": 0xff_u64,
                 "height": height,
             }),
-            Self::Key {
-                amount,
-                asset_type,
-                key_offsets,
-                key_image,
-            } => serde_json::json!({
+            Self::Key { amount, asset_type, key_offsets, key_image } => serde_json::json!({
                 "type": 0x02_u64,
                 "amount": amount.to_string(),
                 "assetType": asset_type,
@@ -541,113 +477,68 @@ impl TxOutput {
             .and_then(|s| s.as_str())
             .and_then(hex_to_32)
             .ok_or(TxError::Parse("missing output key".into()))?;
-        let asset_type = v
-            .get("assetType")
-            .and_then(|s| s.as_str())
-            .unwrap_or("SAL")
-            .to_string();
+        let asset_type = v.get("assetType").and_then(|s| s.as_str()).unwrap_or("SAL").to_string();
 
         match type_tag {
             output_type::KEY => {
                 let unlock_time = v.get("unlockTime").and_then(|u| u.as_u64()).unwrap_or(0);
-                Ok(Self::Key {
-                    amount,
-                    key,
-                    asset_type,
-                    unlock_time,
-                })
+                Ok(Self::Key { amount, key, asset_type, unlock_time })
             }
             output_type::TAGGED_KEY => {
                 let unlock_time = v.get("unlockTime").and_then(|u| u.as_u64()).unwrap_or(0);
                 let view_tag = v.get("viewTag").and_then(|t| t.as_u64()).unwrap_or(0) as u8;
-                Ok(Self::TaggedKey {
-                    amount,
-                    key,
-                    asset_type,
-                    unlock_time,
-                    view_tag,
-                })
+                Ok(Self::TaggedKey { amount, key, asset_type, unlock_time, view_tag })
             }
             output_type::CARROT_V1 => {
                 let view_tag = v
                     .get("viewTag")
                     .and_then(|s| s.as_str())
                     .and_then(|s| hex::decode(s).ok())
-                    .and_then(|b| {
-                        if b.len() >= 3 {
-                            Some([b[0], b[1], b[2]])
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(|b| if b.len() >= 3 { Some([b[0], b[1], b[2]]) } else { None })
                     .unwrap_or([0; 3]);
                 let encrypted_janus_anchor = v
                     .get("encryptedJanusAnchor")
                     .and_then(|s| s.as_str())
                     .and_then(|s| hex::decode(s).ok())
                     .unwrap_or_default();
-                Ok(Self::CarrotV1 {
-                    amount,
-                    key,
-                    asset_type,
-                    view_tag,
-                    encrypted_janus_anchor,
-                })
+                Ok(Self::CarrotV1 { amount, key, asset_type, view_tag, encrypted_janus_anchor })
             }
             _ => {
                 // Default to Key for unknown types.
-                Ok(Self::Key {
-                    amount,
-                    key,
-                    asset_type,
-                    unlock_time: 0,
-                })
+                Ok(Self::Key { amount, key, asset_type, unlock_time: 0 })
             }
         }
     }
 
     pub fn to_json(&self) -> Value {
         match self {
-            Self::Key {
-                amount,
-                key,
-                asset_type,
-                unlock_time,
-            } => serde_json::json!({
+            Self::Key { amount, key, asset_type, unlock_time } => serde_json::json!({
                 "type": output_type::KEY as u64,
                 "amount": amount.to_string(),
                 "key": hex::encode(key),
                 "assetType": asset_type,
                 "unlockTime": unlock_time,
             }),
-            Self::TaggedKey {
-                amount,
-                key,
-                asset_type,
-                unlock_time,
-                view_tag,
-            } => serde_json::json!({
-                "type": output_type::TAGGED_KEY as u64,
-                "amount": amount.to_string(),
-                "key": hex::encode(key),
-                "assetType": asset_type,
-                "unlockTime": unlock_time,
-                "viewTag": *view_tag as u64,
-            }),
-            Self::CarrotV1 {
-                amount,
-                key,
-                asset_type,
-                view_tag,
-                encrypted_janus_anchor,
-            } => serde_json::json!({
-                "type": output_type::CARROT_V1 as u64,
-                "amount": amount.to_string(),
-                "key": hex::encode(key),
-                "assetType": asset_type,
-                "viewTag": hex::encode(view_tag),
-                "encryptedJanusAnchor": hex::encode(encrypted_janus_anchor),
-            }),
+            Self::TaggedKey { amount, key, asset_type, unlock_time, view_tag } => {
+                serde_json::json!({
+                    "type": output_type::TAGGED_KEY as u64,
+                    "amount": amount.to_string(),
+                    "key": hex::encode(key),
+                    "assetType": asset_type,
+                    "unlockTime": unlock_time,
+                    "viewTag": *view_tag as u64,
+                })
+            }
+            Self::CarrotV1 { amount, key, asset_type, view_tag, encrypted_janus_anchor } => {
+                serde_json::json!({
+                    "type": output_type::CARROT_V1 as u64,
+                    "amount": amount.to_string(),
+                    "key": hex::encode(key),
+                    "assetType": asset_type,
+                    "viewTag": hex::encode(view_tag),
+                    "encryptedJanusAnchor": hex::encode(encrypted_janus_anchor),
+                })
+            }
         }
     }
 }
@@ -692,31 +583,19 @@ impl RctSignatures {
         let bulletproof_plus = v
             .get("bulletproofPlus")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|p| BpPlusData::from_json(p).ok())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|p| BpPlusData::from_json(p).ok()).collect())
             .unwrap_or_default();
 
         let clsags = v
             .get("CLSAGs")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| ClsagData::from_json(s).ok())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|s| ClsagData::from_json(s).ok()).collect())
             .unwrap_or_default();
 
         let tclsags = v
             .get("TCLSAGs")
             .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| TclsagData::from_json(s).ok())
-                    .collect()
-            })
+            .map(|arr| arr.iter().filter_map(|s| TclsagData::from_json(s).ok()).collect())
             .unwrap_or_default();
 
         Ok(Self {
@@ -739,16 +618,10 @@ impl RctSignatures {
             .iter()
             .map(|e| serde_json::json!({ "amount": hex::encode(e.amount) }))
             .collect();
-        let out_pk: Vec<Value> = self
-            .out_pk
-            .iter()
-            .map(|p| Value::String(hex::encode(p)))
-            .collect();
-        let pseudo: Vec<Value> = self
-            .pseudo_outs
-            .iter()
-            .map(|p| Value::String(hex::encode(p)))
-            .collect();
+        let out_pk: Vec<Value> =
+            self.out_pk.iter().map(|p| Value::String(hex::encode(p))).collect();
+        let pseudo: Vec<Value> =
+            self.pseudo_outs.iter().map(|p| Value::String(hex::encode(p))).collect();
 
         let mut obj = serde_json::json!({
             "type": self.rct_type as u64,
@@ -796,11 +669,7 @@ impl ClsagData {
     }
 
     pub fn to_json(&self) -> Value {
-        let s: Vec<Value> = self
-            .s
-            .iter()
-            .map(|x| Value::String(hex::encode(x)))
-            .collect();
+        let s: Vec<Value> = self.s.iter().map(|x| Value::String(hex::encode(x))).collect();
         serde_json::json!({
             "s": s,
             "c1": hex::encode(self.c1),
@@ -827,16 +696,8 @@ impl TclsagData {
     }
 
     pub fn to_json(&self) -> Value {
-        let sx: Vec<Value> = self
-            .sx
-            .iter()
-            .map(|x| Value::String(hex::encode(x)))
-            .collect();
-        let sy: Vec<Value> = self
-            .sy
-            .iter()
-            .map(|x| Value::String(hex::encode(x)))
-            .collect();
+        let sx: Vec<Value> = self.sx.iter().map(|x| Value::String(hex::encode(x))).collect();
+        let sy: Vec<Value> = self.sy.iter().map(|x| Value::String(hex::encode(x))).collect();
         serde_json::json!({
             "sx": sx,
             "sy": sy,
@@ -868,16 +729,8 @@ impl BpPlusData {
     }
 
     pub fn to_json(&self) -> Value {
-        let l: Vec<Value> = self
-            .l_vec
-            .iter()
-            .map(|x| Value::String(hex::encode(x)))
-            .collect();
-        let r: Vec<Value> = self
-            .r_vec
-            .iter()
-            .map(|x| Value::String(hex::encode(x)))
-            .collect();
+        let l: Vec<Value> = self.l_vec.iter().map(|x| Value::String(hex::encode(x))).collect();
+        let r: Vec<Value> = self.r_vec.iter().map(|x| Value::String(hex::encode(x))).collect();
         serde_json::json!({
             "A": hex::encode(self.a),
             "A1": hex::encode(self.a1),
@@ -910,11 +763,7 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
 
 fn parse_hex_array_32(v: Option<&Value>) -> Vec<[u8; 32]> {
     v.and_then(|a| a.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.as_str().and_then(hex_to_32))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|s| s.as_str().and_then(hex_to_32)).collect())
         .unwrap_or_default()
 }
 
@@ -955,11 +804,7 @@ mod tests {
         let json = input.to_json();
         let parsed = TxInput::from_json(&json).unwrap();
         match parsed {
-            TxInput::Key {
-                key_image,
-                key_offsets,
-                ..
-            } => {
+            TxInput::Key { key_image, key_offsets, .. } => {
                 assert_eq!(key_image, [0xAA; 32]);
                 assert_eq!(key_offsets, vec![100, 200, 50]);
             }
@@ -999,12 +844,7 @@ mod tests {
         let json = output.to_json();
         let parsed = TxOutput::from_json(&json).unwrap();
         match parsed {
-            TxOutput::CarrotV1 {
-                key,
-                view_tag,
-                encrypted_janus_anchor,
-                ..
-            } => {
+            TxOutput::CarrotV1 { key, view_tag, encrypted_janus_anchor, .. } => {
                 assert_eq!(key, [0xCC; 32]);
                 assert_eq!(view_tag, [1, 2, 3]);
                 assert_eq!(encrypted_janus_anchor.len(), 16);
@@ -1032,9 +872,7 @@ mod tests {
         let rct = RctSignatures {
             rct_type: rct_type::SALVIUM_ONE,
             txn_fee: 30000000,
-            ecdh_info: vec![EcdhInfo {
-                amount: [1, 2, 3, 4, 5, 6, 7, 8],
-            }],
+            ecdh_info: vec![EcdhInfo { amount: [1, 2, 3, 4, 5, 6, 7, 8] }],
             out_pk: vec![[0xEE; 32]],
             p_r: Some([0xFF; 32]),
             salvium_data: None,
@@ -1053,11 +891,7 @@ mod tests {
 
     #[test]
     fn test_clsag_data_roundtrip() {
-        let clsag = ClsagData {
-            s: vec![[1u8; 32], [2u8; 32]],
-            c1: [3u8; 32],
-            d: [4u8; 32],
-        };
+        let clsag = ClsagData { s: vec![[1u8; 32], [2u8; 32]], c1: [3u8; 32], d: [4u8; 32] };
         let json = clsag.to_json();
         let parsed = ClsagData::from_json(&json).unwrap();
         assert_eq!(parsed.s.len(), 2);
@@ -1066,12 +900,8 @@ mod tests {
 
     #[test]
     fn test_tclsag_data_roundtrip() {
-        let tclsag = TclsagData {
-            sx: vec![[5u8; 32]],
-            sy: vec![[6u8; 32]],
-            c1: [7u8; 32],
-            d: [8u8; 32],
-        };
+        let tclsag =
+            TclsagData { sx: vec![[5u8; 32]], sy: vec![[6u8; 32]], c1: [7u8; 32], d: [8u8; 32] };
         let json = tclsag.to_json();
         let parsed = TclsagData::from_json(&json).unwrap();
         assert_eq!(parsed.sx[0], [5u8; 32]);
@@ -1100,10 +930,7 @@ mod tests {
     #[test]
     fn test_parse_amount_str() {
         assert_eq!(parse_amount_str(Some(&Value::from(42u64))), 42);
-        assert_eq!(
-            parse_amount_str(Some(&Value::String("1000000".into()))),
-            1000000
-        );
+        assert_eq!(parse_amount_str(Some(&Value::String("1000000".into()))), 1000000);
         assert_eq!(parse_amount_str(None), 0);
     }
 

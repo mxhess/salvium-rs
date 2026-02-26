@@ -46,11 +46,7 @@ pub fn keccak256(data: &[u8]) -> Vec<u8> {
 /// Matches Salvium C++ blake2b(out, outLen, data, dataLen, NULL, 0)
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn blake2b_hash(data: &[u8], out_len: usize) -> Vec<u8> {
-    blake2b_simd::Params::new()
-        .hash_length(out_len)
-        .hash(data)
-        .as_bytes()
-        .to_vec()
+    blake2b_simd::Params::new().hash_length(out_len).hash(data).as_bytes().to_vec()
 }
 
 /// Blake2b with key (keyed variant per RFC 7693)
@@ -58,12 +54,7 @@ pub fn blake2b_hash(data: &[u8], out_len: usize) -> Vec<u8> {
 /// Used by CARROT protocol for domain-separated hashing
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn blake2b_keyed(data: &[u8], out_len: usize, key: &[u8]) -> Vec<u8> {
-    blake2b_simd::Params::new()
-        .hash_length(out_len)
-        .key(key)
-        .hash(data)
-        .as_bytes()
-        .to_vec()
+    blake2b_simd::Params::new().hash_length(out_len).key(key).hash(data).as_bytes().to_vec()
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -128,17 +119,12 @@ pub fn sc_reduce32(s: &[u8]) -> Vec<u8> {
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_reduce64(s: &[u8]) -> Vec<u8> {
-    Scalar::from_bytes_mod_order_wide(&to64(s))
-        .to_bytes()
-        .to_vec()
+    Scalar::from_bytes_mod_order_wide(&to64(s)).to_bytes().to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn sc_invert(a: &[u8]) -> Vec<u8> {
-    Scalar::from_bytes_mod_order(to32(a))
-        .invert()
-        .to_bytes()
-        .to_vec()
+    Scalar::from_bytes_mod_order(to32(a)).invert().to_bytes().to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -172,10 +158,7 @@ pub fn is_in_main_subgroup(point: &[u8]) -> bool {
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn scalar_mult_base(s: &[u8]) -> Vec<u8> {
     let scalar = Scalar::from_bytes_mod_order(to32(s));
-    (ED25519_BASEPOINT_TABLE * &scalar)
-        .compress()
-        .to_bytes()
-        .to_vec()
+    (ED25519_BASEPOINT_TABLE * &scalar).compress().to_bytes().to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -186,10 +169,7 @@ pub fn scalar_mult_point(s: &[u8], p: &[u8]) -> Vec<u8> {
         None => return Vec::new(),
     };
     // Use variable-time Straus/wNAF — much faster than constant-time mul
-    EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[point])
-        .compress()
-        .to_bytes()
-        .to_vec()
+    EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[point]).compress().to_bytes().to_vec()
 }
 
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
@@ -300,10 +280,7 @@ pub fn generate_key_image(pub_key: &[u8], sec_key: &[u8]) -> Vec<u8> {
         t + t
     };
     let scalar = Scalar::from_bytes_mod_order(to32(sec_key));
-    EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[hp8])
-        .compress()
-        .to_bytes()
-        .to_vec()
+    EdwardsPoint::vartime_multiscalar_mul(&[scalar], &[hp8]).compress().to_bytes().to_vec()
 }
 
 /// Generate key derivation: D = 8 * (sec * pub)
@@ -347,9 +324,7 @@ pub fn derive_secret_key(derivation: &[u8], output_index: u32, base_sec: &[u8]) 
 /// Derivation to scalar (bytes): H_s(derivation || varint(index))
 /// Returns the 32-byte little-endian scalar used in CryptoNote key derivation.
 pub fn derivation_to_scalar_bytes(derivation: &[u8], output_index: u32) -> Vec<u8> {
-    derivation_to_scalar(derivation, output_index)
-        .to_bytes()
-        .to_vec()
+    derivation_to_scalar(derivation, output_index).to_bytes().to_vec()
 }
 
 // ─── Phase 4: Pedersen Commitments ──────────────────────────────────────────
@@ -366,9 +341,7 @@ pub(crate) const H_POINT_BYTES: [u8; 32] = [
 pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::from_bytes_mod_order(to32(mask));
-    let h = CompressedEdwardsY(H_POINT_BYTES)
-        .decompress()
-        .expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
     // mask*G + amount*H
     EdwardsPoint::vartime_multiscalar_mul(
         &[mask_scalar, amount_scalar],
@@ -385,9 +358,7 @@ pub fn pedersen_commit(amount: &[u8], mask: &[u8]) -> Vec<u8> {
 pub fn zero_commit(amount: &[u8]) -> Vec<u8> {
     let amount_scalar = Scalar::from_bytes_mod_order(to32(amount));
     let mask_scalar = Scalar::ONE;
-    let h = CompressedEdwardsY(H_POINT_BYTES)
-        .decompress()
-        .expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
     // 1*G + amount*H
     EdwardsPoint::vartime_multiscalar_mul(
         &[mask_scalar, amount_scalar],
@@ -895,10 +866,7 @@ pub fn wasm_create_address(
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]
 pub fn wasm_to_integrated_address(address: &str, payment_id: &[u8]) -> String {
     if payment_id.len() != 8 {
-        return format!(
-            r#"{{"error":"payment_id must be 8 bytes, got {}"}}"#,
-            payment_id.len()
-        );
+        return format!(r#"{{"error":"payment_id must be 8 bytes, got {}"}}"#, payment_id.len());
     }
     let mut pid = [0u8; 8];
     pid.copy_from_slice(payment_id);
@@ -993,9 +961,7 @@ mod tests {
     #[test]
     fn test_is_in_main_subgroup() {
         // The basepoint is in the main subgroup
-        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT
-            .compress()
-            .to_bytes();
+        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT.compress().to_bytes();
         assert!(is_in_main_subgroup(&basepoint));
 
         // A random valid pubkey (scalar * G) is in the main subgroup
@@ -1069,13 +1035,8 @@ mod tests {
     #[test]
     fn test_is_valid_key_image_basepoint() {
         // The Ed25519 basepoint compressed form
-        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT
-            .compress()
-            .to_bytes();
-        assert!(
-            is_valid_key_image(&basepoint),
-            "Ed25519 basepoint must be a valid key image"
-        );
+        let basepoint = curve25519_dalek::constants::ED25519_BASEPOINT_POINT.compress().to_bytes();
+        assert!(is_valid_key_image(&basepoint), "Ed25519 basepoint must be a valid key image");
     }
 
     #[test]
@@ -1090,25 +1051,16 @@ mod tests {
         // Determine sign bit from original key image
         let sign = (ki[31] & 0x80) != 0;
         let reconstructed = key_image_from_y(&y, sign);
-        assert_eq!(
-            reconstructed, ki,
-            "to_y then from_y must recover the original key image"
-        );
+        assert_eq!(reconstructed, ki, "to_y then from_y must recover the original key image");
     }
 
     #[test]
     fn test_key_image_from_y_invalid() {
         // Wrong length should fail
         let short = [0u8; 16];
-        assert!(
-            key_image_from_y(&short, false).is_empty(),
-            "short input should fail"
-        );
+        assert!(key_image_from_y(&short, false).is_empty(), "short input should fail");
         // Empty input should fail
-        assert!(
-            key_image_from_y(&[], false).is_empty(),
-            "empty input should fail"
-        );
+        assert!(key_image_from_y(&[], false).is_empty(), "empty input should fail");
     }
 
     #[test]
@@ -1123,10 +1075,7 @@ mod tests {
     fn test_hash_to_point_different_inputs() {
         let hp1 = hash_to_point(b"input_one");
         let hp2 = hash_to_point(b"input_two");
-        assert_ne!(
-            hp1, hp2,
-            "different inputs must give different hash-to-point outputs"
-        );
+        assert_ne!(hp1, hp2, "different inputs must give different hash-to-point outputs");
     }
 
     #[test]
@@ -1143,10 +1092,7 @@ mod tests {
 
         let ki = generate_key_image(&pub_key, &sec);
         assert_eq!(ki.len(), 32, "key image must be 32 bytes");
-        assert!(
-            is_valid_key_image(&ki),
-            "key image from known keys must be valid"
-        );
+        assert!(is_valid_key_image(&ki), "key image from known keys must be valid");
     }
 
     #[test]
@@ -1197,10 +1143,7 @@ mod tests {
         // a different key image
         let wrong_sign = key_image_from_y(&y, !sign);
         if !wrong_sign.is_empty() {
-            assert_ne!(
-                wrong_sign, ki,
-                "wrong sign bit must produce a different key image"
-            );
+            assert_ne!(wrong_sign, ki, "wrong sign bit must produce a different key image");
         }
     }
 
@@ -1209,10 +1152,7 @@ mod tests {
         let sec = test_secret_key();
         let pub_key = test_public_key(&sec);
         let ki = generate_key_image(&pub_key, &sec);
-        assert!(
-            !ki.is_empty(),
-            "key image must never be empty for valid inputs"
-        );
+        assert!(!ki.is_empty(), "key image must never be empty for valid inputs");
         assert_eq!(ki.len(), 32);
     }
 
@@ -1231,10 +1171,6 @@ mod tests {
         );
 
         // Byte 31: only the high bit may differ
-        assert_eq!(
-            ki[31] & 0x7F,
-            y[31] & 0x7F,
-            "low 7 bits of byte 31 must match"
-        );
+        assert_eq!(ki[31] & 0x7F, y[31] & 0x7F, "low 7 bits of byte 31 must match");
     }
 }

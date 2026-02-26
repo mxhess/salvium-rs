@@ -32,10 +32,7 @@ pub fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json
         Some(v) => v,
         None => return,
     };
-    let dt = sd
-        .get("salvium_data_type")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let dt = sd.get("salvium_data_type").and_then(|v| v.as_u64()).unwrap_or(0);
     write_varint(buf, dt);
 
     // pr_proof
@@ -60,10 +57,7 @@ pub fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json
                 write_varint(buf, amount);
                 let i_val = item.get("i").and_then(|v| v.as_u64()).unwrap_or(0);
                 write_varint(buf, i_val);
-                let origin = item
-                    .get("origin_tx_type")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let origin = item.get("origin_tx_type").and_then(|v| v.as_u64()).unwrap_or(0);
                 write_varint(buf, origin);
                 if origin != 0 {
                     let ar_stake = item.get("aR_stake").and_then(|v| v.as_str()).unwrap_or("");
@@ -81,10 +75,7 @@ pub fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json
         }
 
         // spend_pubkey
-        let spk = sd
-            .get("spend_pubkey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let spk = sd.get("spend_pubkey").and_then(|v| v.as_str()).unwrap_or("");
         if let Ok(bytes) = hex::decode(spk) {
             buf.extend_from_slice(&bytes);
         } else {
@@ -92,10 +83,7 @@ pub fn serialize_salvium_data_for_hash(buf: &mut Vec<u8>, sd: &Option<serde_json
         }
 
         // enc_view_privkey_str
-        let evp = sd
-            .get("enc_view_privkey_str")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let evp = sd.get("enc_view_privkey_str").and_then(|v| v.as_str()).unwrap_or("");
         let evp_bytes = evp.as_bytes();
         write_varint(buf, evp_bytes.len() as u64);
         buf.extend_from_slice(evp_bytes);
@@ -141,10 +129,7 @@ pub struct VerificationData {
 
 /// Fetch a transaction by hash and parse it.
 pub async fn fetch_and_parse_tx(d: &DaemonRpc, tx_hash: &str) -> (Transaction, Vec<u8>) {
-    let entries = d
-        .get_transactions(&[tx_hash], true)
-        .await
-        .expect("get_transactions failed");
+    let entries = d.get_transactions(&[tx_hash], true).await.expect("get_transactions failed");
     let entry = &entries[0];
     assert!(!entry.as_hex.is_empty(), "TX {} has no hex data", tx_hash);
 
@@ -161,34 +146,18 @@ pub async fn fetch_mix_ring(d: &DaemonRpc, tx: &Transaction) -> Vec<Vec<([u8; 32
     for input in &tx.prefix.inputs {
         match input {
             TxInput::Gen { .. } => continue,
-            TxInput::Key {
-                key_offsets,
-                asset_type,
-                ..
-            } => {
+            TxInput::Key { key_offsets, asset_type, .. } => {
                 let abs_indices = relative_to_absolute(key_offsets);
                 let requests: Vec<OutputRequest> = abs_indices
                     .iter()
-                    .map(|&idx| OutputRequest {
-                        amount: 0,
-                        index: idx,
-                    })
+                    .map(|&idx| OutputRequest { amount: 0, index: idx })
                     .collect();
 
-                let outs = d
-                    .get_outs(&requests, false, asset_type)
-                    .await
-                    .expect("get_outs failed");
-                assert_eq!(
-                    outs.len(),
-                    abs_indices.len(),
-                    "get_outs returned wrong count"
-                );
+                let outs = d.get_outs(&requests, false, asset_type).await.expect("get_outs failed");
+                assert_eq!(outs.len(), abs_indices.len(), "get_outs returned wrong count");
 
-                let ring: Vec<([u8; 32], [u8; 32])> = outs
-                    .iter()
-                    .map(|out| (hex_to_32(&out.key), hex_to_32(&out.mask)))
-                    .collect();
+                let ring: Vec<([u8; 32], [u8; 32])> =
+                    outs.iter().map(|out| (hex_to_32(&out.key), hex_to_32(&out.mask))).collect();
                 mix_ring.push(ring);
             }
         }
@@ -250,19 +219,11 @@ pub fn prepare_verification_data(
         salvium_crypto::rct_verify::compute_rct_message(&prefix_hash, &rct_base, &bp_bytes);
 
     // Collect key images from prefix inputs.
-    let key_images: Vec<[u8; 32]> = tx
-        .prefix
-        .inputs
-        .iter()
-        .filter_map(|i| i.key_image().copied())
-        .collect();
+    let key_images: Vec<[u8; 32]> =
+        tx.prefix.inputs.iter().filter_map(|i| i.key_image().copied()).collect();
 
     // Flatten ring data.
-    let ring_size = if !mix_ring.is_empty() {
-        mix_ring[0].len()
-    } else {
-        0
-    };
+    let ring_size = if !mix_ring.is_empty() { mix_ring[0].len() } else { 0 };
     let mut ring_pubkeys = Vec::new();
     let mut ring_commitments = Vec::new();
     for ring in mix_ring {

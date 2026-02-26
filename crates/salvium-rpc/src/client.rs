@@ -93,11 +93,7 @@ impl RpcClient {
             .build()
             .expect("failed to create HTTP client");
 
-        Self {
-            client,
-            config,
-            request_id: Arc::new(AtomicU64::new(0)),
-        }
+        Self { client, config, request_id: Arc::new(AtomicU64::new(0)) }
     }
 
     /// Get the configured base URL.
@@ -132,17 +128,10 @@ impl RpcClient {
     /// Call a JSON-RPC 2.0 method (POST to `/json_rpc`).
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
         let url = format!("{}/json_rpc", self.config.url);
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id: self.next_id(),
-            method,
-            params,
-        };
+        let req = JsonRpcRequest { jsonrpc: "2.0", id: self.next_id(), method, params };
 
         let attempts = self.config.retries + 1;
-        let mut last_err = RpcError::NoResult {
-            context: method.to_string(),
-        };
+        let mut last_err = RpcError::NoResult { context: method.to_string() };
 
         for attempt in 0..attempts {
             if attempt > 0 {
@@ -171,25 +160,15 @@ impl RpcClient {
         req: &JsonRpcRequest<'_>,
         method: &str,
     ) -> Result<Value, RpcError> {
-        let resp = self
-            .client
-            .post(url)
-            .headers(self.build_headers())
-            .json(req)
-            .send()
-            .await
-            .map_err(|e| RpcError::Http {
-                method: method.to_string(),
-                url: url.to_string(),
-                source: e,
-            })?;
+        let resp =
+            self.client.post(url).headers(self.build_headers()).json(req).send().await.map_err(
+                |e| RpcError::Http { method: method.to_string(), url: url.to_string(), source: e },
+            )?;
 
         let status = resp.status().as_u16();
 
         if status == 401 {
-            return Err(RpcError::AuthFailed {
-                url: url.to_string(),
-            });
+            return Err(RpcError::AuthFailed { url: url.to_string() });
         }
 
         if status >= 400 {
@@ -210,9 +189,7 @@ impl RpcClient {
 
         if let Some(err) = body.error {
             if err.message == "BUSY" {
-                return Err(RpcError::Busy {
-                    context: method.to_string(),
-                });
+                return Err(RpcError::Busy { context: method.to_string() });
             }
             return Err(RpcError::Rpc {
                 code: err.code,
@@ -221,9 +198,7 @@ impl RpcClient {
             });
         }
 
-        body.result.ok_or(RpcError::NoResult {
-            context: method.to_string(),
-        })
+        body.result.ok_or(RpcError::NoResult { context: method.to_string() })
     }
 
     /// POST JSON to a raw endpoint (not JSON-RPC).
@@ -231,9 +206,7 @@ impl RpcClient {
         let url = format!("{}{}", self.config.url, endpoint);
 
         let attempts = self.config.retries + 1;
-        let mut last_err = RpcError::NoResult {
-            context: endpoint.to_string(),
-        };
+        let mut last_err = RpcError::NoResult { context: endpoint.to_string() };
 
         for attempt in 0..attempts {
             if attempt > 0 {
@@ -257,25 +230,19 @@ impl RpcClient {
     }
 
     async fn do_post(&self, url: &str, body: &Value, endpoint: &str) -> Result<Value, RpcError> {
-        let resp = self
-            .client
-            .post(url)
-            .headers(self.build_headers())
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| RpcError::Http {
-                method: endpoint.to_string(),
-                url: url.to_string(),
-                source: e,
-            })?;
+        let resp =
+            self.client.post(url).headers(self.build_headers()).json(body).send().await.map_err(
+                |e| RpcError::Http {
+                    method: endpoint.to_string(),
+                    url: url.to_string(),
+                    source: e,
+                },
+            )?;
 
         let status = resp.status().as_u16();
 
         if status == 401 {
-            return Err(RpcError::AuthFailed {
-                url: url.to_string(),
-            });
+            return Err(RpcError::AuthFailed { url: url.to_string() });
         }
 
         if status >= 400 {
@@ -301,33 +268,20 @@ impl RpcClient {
     pub async fn post_binary(&self, endpoint: &str, body: Vec<u8>) -> Result<Vec<u8>, RpcError> {
         let url = format!("{}{}", self.config.url, endpoint);
         let mut headers = HeaderMap::new();
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
         if let Some(auth) = self.auth_header() {
             headers.insert(AUTHORIZATION, auth);
         }
 
-        let resp = self
-            .client
-            .post(&url)
-            .headers(headers)
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| RpcError::Http {
-                method: endpoint.to_string(),
-                url: url.to_string(),
-                source: e,
+        let resp =
+            self.client.post(&url).headers(headers).body(body).send().await.map_err(|e| {
+                RpcError::Http { method: endpoint.to_string(), url: url.to_string(), source: e }
             })?;
 
         let status = resp.status().as_u16();
 
         if status == 401 {
-            return Err(RpcError::AuthFailed {
-                url: url.to_string(),
-            });
+            return Err(RpcError::AuthFailed { url: url.to_string() });
         }
 
         if status >= 400 {

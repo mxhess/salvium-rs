@@ -46,11 +46,7 @@ impl SharedDataset {
         };
         log::info!(
             "RandomX v2 large pages: {}",
-            if using_large_pages {
-                "YES"
-            } else {
-                "NO (falling back)"
-            }
+            if using_large_pages { "YES" } else { "NO (falling back)" }
         );
         log::debug!("RandomX v2 flags: 0x{:x}", flags);
 
@@ -74,10 +70,7 @@ impl SharedDataset {
         }
 
         let item_count = unsafe { ffi::randomx_dataset_item_count() };
-        log::info!(
-            "generating RandomX v2 dataset ({} items, ~2GB)...",
-            item_count
-        );
+        log::info!("generating RandomX v2 dataset ({} items, ~2GB)...", item_count);
         let start = std::time::Instant::now();
 
         // Multi-threaded dataset init
@@ -89,11 +82,8 @@ impl SharedDataset {
             let ds = Arc::clone(&ds_shared);
             let ca = Arc::clone(&ca_shared);
             let start_item = i as u64 * items_per_thread;
-            let count = if i == num_init_threads - 1 {
-                item_count - start_item
-            } else {
-                items_per_thread
-            };
+            let count =
+                if i == num_init_threads - 1 { item_count - start_item } else { items_per_thread };
             init_handles.push(std::thread::spawn(move || unsafe {
                 ffi::randomx_init_dataset(ds.0, ca.0, start_item, count);
             }));
@@ -101,10 +91,7 @@ impl SharedDataset {
         for h in init_handles {
             let _ = h.join();
         }
-        log::info!(
-            "RandomX v2 dataset ready in {:.1}s",
-            start.elapsed().as_secs_f64()
-        );
+        log::info!("RandomX v2 dataset ready in {:.1}s", start.elapsed().as_secs_f64());
 
         // Release cache (dataset is self-contained after init)
         unsafe {
@@ -202,22 +189,14 @@ impl RandomXV2Engine {
     /// Create a full-mode engine (shared 2GB dataset).
     pub fn new(dataset: Arc<SharedDataset>) -> Result<Self, String> {
         let vm_ptr = dataset.create_vm()?;
-        Ok(Self {
-            vm_ptr,
-            _dataset: Some(dataset),
-            _cache: None,
-        })
+        Ok(Self { vm_ptr, _dataset: Some(dataset), _cache: None })
     }
 
     /// Create a light-mode engine (256MB cache, slower but less memory).
     #[allow(dead_code)]
     pub fn new_light(cache: Arc<LightCache>) -> Result<Self, String> {
         let vm_ptr = cache.create_vm()?;
-        Ok(Self {
-            vm_ptr,
-            _dataset: None,
-            _cache: Some(cache),
-        })
+        Ok(Self { vm_ptr, _dataset: None, _cache: Some(cache) })
     }
 }
 
@@ -266,10 +245,7 @@ mod tests {
         let mut engine = make_light_engine();
         let input = b"test input for RandomX v2 hash verification";
         let hash = engine.hash(input);
-        assert!(
-            !hash.iter().all(|&b| b == 0),
-            "hash should not be all zeros"
-        );
+        assert!(!hash.iter().all(|&b| b == 0), "hash should not be all zeros");
     }
 
     #[test]
@@ -286,10 +262,7 @@ mod tests {
         let mut engine = make_light_engine();
         let hash1 = engine.hash(b"input A for randomx v2 testing");
         let hash2 = engine.hash(b"input B for randomx v2 testing");
-        assert_ne!(
-            hash1, hash2,
-            "different inputs should produce different hashes"
-        );
+        assert_ne!(hash1, hash2, "different inputs should produce different hashes");
     }
 
     #[test]
@@ -451,16 +424,10 @@ mod tests {
 
         // With difficulty=1, every hash should be a valid block
         let block = mining_loop.try_recv_block();
-        assert!(
-            block.is_some(),
-            "should have found a block with difficulty=1"
-        );
+        assert!(block.is_some(), "should have found a block with difficulty=1");
 
         let block = block.unwrap();
-        assert!(
-            !block.hash.iter().all(|&b| b == 0),
-            "found block hash should be non-zero"
-        );
+        assert!(!block.hash.iter().all(|&b| b == 0), "found block hash should be non-zero");
 
         mining_loop.stop();
     }

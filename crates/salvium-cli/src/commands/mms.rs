@@ -29,10 +29,7 @@ pub async fn mms_init(
         wallet.mms_update_signer(0, Some(own_label), None, Some(&addr))?;
     }
 
-    println!(
-        "MMS initialized: {}-of-{} multisig",
-        threshold, signer_count
-    );
+    println!("MMS initialized: {}-of-{} multisig", threshold, signer_count);
     println!("Use 'mms signer' to configure other signers.");
     Ok(())
 }
@@ -51,10 +48,7 @@ pub async fn mms_info(ctx: &AppContext) -> Result {
     println!("  Threshold:    {}", config.threshold);
     println!("  Signers:      {}", config.signer_count);
     println!("  Own index:    {}", config.own_index);
-    println!(
-        "  Auto-send:    {}",
-        if config.auto_send { "on" } else { "off" }
-    );
+    println!("  Auto-send:    {}", if config.auto_send { "on" } else { "off" });
 
     let signers = wallet.mms_get_signers()?;
     if !signers.is_empty() {
@@ -66,16 +60,8 @@ pub async fn mms_info(ctx: &AppContext) -> Result {
                 s.index,
                 s.label,
                 if s.is_me { "(me)" } else { "" },
-                if s.transport_address.is_empty() {
-                    "<not set>"
-                } else {
-                    &s.transport_address
-                },
-                if s.monero_address.is_empty() {
-                    "<not set>"
-                } else {
-                    &s.monero_address
-                },
+                if s.transport_address.is_empty() { "<not set>" } else { &s.transport_address },
+                if s.monero_address.is_empty() { "<not set>" } else { &s.monero_address },
             );
         }
     }
@@ -192,10 +178,7 @@ pub async fn mms_sync(ctx: &AppContext) -> Result {
         wallet.mms_create_message(MessageType::MultisigSyncData, signer.index as i64, &info, 0)?;
     }
 
-    println!(
-        "Created sync data messages for {} signers.",
-        signers.len() - 1
-    );
+    println!("Created sync data messages for {} signers.", signers.len() - 1);
     println!("Use 'mms send' to transmit them.");
 
     Ok(())
@@ -226,10 +209,7 @@ pub async fn mms_transfer(ctx: &AppContext, address: &str, amount: &str) -> Resu
         )?;
     }
 
-    println!(
-        "Created transfer messages for {} signers.",
-        signers.len() - 1
-    );
+    println!("Created transfer messages for {} signers.", signers.len() - 1);
     println!("Use 'mms send' to transmit them.");
 
     Ok(())
@@ -279,15 +259,10 @@ pub async fn mms_send(ctx: &AppContext) -> Result {
             }
 
             let our_signer = signers.iter().find(|s| s.is_me);
-            let from = our_signer
-                .map(|s| s.transport_address.as_str())
-                .unwrap_or("");
+            let from = our_signer.map(|s| s.transport_address.as_str()).unwrap_or("");
 
             let subject = format!("mms:{}:{}", msg.msg_type.name(), msg.round);
-            match transport
-                .send(from, &signer.transport_address, &subject, &msg.content)
-                .await
-            {
+            match transport.send(from, &signer.transport_address, &subject, &msg.content).await {
                 Ok(transport_id) => {
                     println!(
                         "Sent message {} to signer #{} (transport: {})",
@@ -307,10 +282,7 @@ pub async fn mms_send(ctx: &AppContext) -> Result {
 
     #[cfg(not(feature = "transport"))]
     {
-        println!(
-            "{} messages ready to send, but transport is not available.",
-            ready.len()
-        );
+        println!("{} messages ready to send, but transport is not available.", ready.len());
         println!("Build with --features transport to enable Bitmessage transport.");
     }
 
@@ -323,10 +295,8 @@ pub async fn mms_receive(ctx: &AppContext) -> Result {
     #[cfg(feature = "transport")]
     {
         let transport = salvium_wallet::mms::BitmessageTransport::new();
-        let received = transport
-            .receive()
-            .await
-            .map_err(|e| format!("failed to receive messages: {}", e))?;
+        let received =
+            transport.receive().await.map_err(|e| format!("failed to receive messages: {}", e))?;
 
         let mut count = 0u32;
         for msg in &received {
@@ -362,17 +332,10 @@ pub async fn mms_receive(ctx: &AppContext) -> Result {
 
 pub async fn mms_export(ctx: &AppContext, id: i64, output: &str) -> Result {
     let wallet = open_wallet(ctx)?;
-    let msg = wallet
-        .mms_get_message(id)?
-        .ok_or_else(|| format!("message {} not found", id))?;
+    let msg = wallet.mms_get_message(id)?.ok_or_else(|| format!("message {} not found", id))?;
 
     std::fs::write(output, &msg.content)?;
-    println!(
-        "Exported message {} ({} bytes) to {}",
-        id,
-        msg.content.len(),
-        output
-    );
+    println!("Exported message {} ({} bytes) to {}", id, msg.content.len(), output);
     Ok(())
 }
 
@@ -385,9 +348,7 @@ pub async fn mms_note(ctx: &AppContext, signer_index: i64, text: &str) -> Result
 
 pub async fn mms_show(ctx: &AppContext, id: i64) -> Result {
     let wallet = open_wallet(ctx)?;
-    let msg = wallet
-        .mms_get_message(id)?
-        .ok_or_else(|| format!("message {} not found", id))?;
+    let msg = wallet.mms_get_message(id)?.ok_or_else(|| format!("message {} not found", id))?;
 
     println!("Message #{}:", msg.id);
     println!("  Type:       {}", msg.msg_type.name());

@@ -96,40 +96,22 @@ async fn send_message(stream: &mut TcpStream, msg: &WireMessage) -> Result<(), S
         .write_all(&len.to_le_bytes())
         .await
         .map_err(|e| format!("write length failed: {}", e))?;
-    stream
-        .write_u8(msg.msg_type as u8)
-        .await
-        .map_err(|e| format!("write type failed: {}", e))?;
-    stream
-        .write_all(&msg.payload)
-        .await
-        .map_err(|e| format!("write payload failed: {}", e))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| format!("flush failed: {}", e))?;
+    stream.write_u8(msg.msg_type as u8).await.map_err(|e| format!("write type failed: {}", e))?;
+    stream.write_all(&msg.payload).await.map_err(|e| format!("write payload failed: {}", e))?;
+    stream.flush().await.map_err(|e| format!("flush failed: {}", e))?;
     Ok(())
 }
 
 /// Receive a framed message from a TCP stream.
 async fn recv_message(stream: &mut TcpStream) -> Result<WireMessage, String> {
-    let len = stream
-        .read_u32_le()
-        .await
-        .map_err(|e| format!("read length failed: {}", e))?;
+    let len = stream.read_u32_le().await.map_err(|e| format!("read length failed: {}", e))?;
     if len > MAX_PAYLOAD {
         return Err(format!("payload too large: {} bytes", len));
     }
-    let type_byte = stream
-        .read_u8()
-        .await
-        .map_err(|e| format!("read type failed: {}", e))?;
+    let type_byte = stream.read_u8().await.map_err(|e| format!("read type failed: {}", e))?;
     let msg_type = MsgType::from_u8(type_byte)?;
     let mut payload = vec![0u8; len as usize];
-    stream
-        .read_exact(&mut payload)
-        .await
-        .map_err(|e| format!("read payload failed: {}", e))?;
+    stream.read_exact(&mut payload).await.map_err(|e| format!("read payload failed: {}", e))?;
     Ok(WireMessage { msg_type, payload })
 }
 
@@ -169,10 +151,8 @@ impl Coordinator {
 
         let accept_all = async {
             for _ in 0..needed {
-                let (stream, _addr) = listener
-                    .accept()
-                    .await
-                    .map_err(|e| format!("accept failed: {}", e))?;
+                let (stream, _addr) =
+                    listener.accept().await.map_err(|e| format!("accept failed: {}", e))?;
                 streams.push(stream);
             }
             Ok::<_, String>(())
@@ -223,10 +203,8 @@ impl Coordinator {
         // Broadcast all collected messages to each signer
         for stream in streams.iter_mut() {
             // Send count then each message
-            let count_msg = WireMessage::new(
-                MsgType::Ready,
-                (messages.len() as u32).to_le_bytes().to_vec(),
-            );
+            let count_msg =
+                WireMessage::new(MsgType::Ready, (messages.len() as u32).to_le_bytes().to_vec());
             send_message(stream, &count_msg).await?;
             for msg_payload in &messages {
                 let wire = WireMessage::new(MsgType::Kex, msg_payload.clone());
@@ -266,10 +244,7 @@ impl Coordinator {
         let collect = async {
             let wire_msg = recv_message(&mut streams[proposer_index]).await?;
             if wire_msg.msg_type != MsgType::TxSet {
-                return Err(format!(
-                    "expected TxSet message, got {:?}",
-                    wire_msg.msg_type
-                ));
+                return Err(format!("expected TxSet message, got {:?}", wire_msg.msg_type));
             }
             Ok::<_, String>(wire_msg.payload)
         };
@@ -331,9 +306,8 @@ pub struct SignerClient {
 impl SignerClient {
     /// Connect to a coordinator at the given address.
     pub async fn connect(addr: &str) -> Result<Self, String> {
-        let stream = TcpStream::connect(addr)
-            .await
-            .map_err(|e| format!("connect failed: {}", e))?;
+        let stream =
+            TcpStream::connect(addr).await.map_err(|e| format!("connect failed: {}", e))?;
         Ok(Self { stream })
     }
 
@@ -386,10 +360,7 @@ impl SignerClient {
     pub async fn receive_tx_set(&mut self) -> Result<Vec<u8>, String> {
         let wire_msg = recv_message(&mut self.stream).await?;
         if wire_msg.msg_type != MsgType::TxSet {
-            return Err(format!(
-                "expected TxSet message, got {:?}",
-                wire_msg.msg_type
-            ));
+            return Err(format!("expected TxSet message, got {:?}", wire_msg.msg_type));
         }
         Ok(wire_msg.payload)
     }
@@ -549,10 +520,7 @@ mod tests {
             let addr = addr_str.clone();
             async move {
                 let mut client = SignerClient::connect(&addr).await.unwrap();
-                client
-                    .send_tx_set(b"test_tx_set_binary_data")
-                    .await
-                    .unwrap();
+                client.send_tx_set(b"test_tx_set_binary_data").await.unwrap();
                 // Proposer also receives the broadcast
                 let received = client.receive_tx_set().await.unwrap();
                 assert_eq!(received, b"test_tx_set_binary_data");

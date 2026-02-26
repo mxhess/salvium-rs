@@ -199,8 +199,7 @@ impl MultisigAccount {
 
             // Store processor state
             for (key, origins) in &processor.kex_keys_to_origins {
-                self.kex_keys_to_origins
-                    .insert(hex::encode(key), origins.clone());
+                self.kex_keys_to_origins.insert(hex::encode(key), origins.clone());
             }
 
             // Persist round_keys from processor
@@ -280,8 +279,7 @@ impl MultisigAccount {
 
             // Merge kex_keys_to_origins
             for (key, origins) in &processor.kex_keys_to_origins {
-                self.kex_keys_to_origins
-                    .insert(hex::encode(key), origins.clone());
+                self.kex_keys_to_origins.insert(hex::encode(key), origins.clone());
             }
 
             // Persist updated round_keys
@@ -312,19 +310,13 @@ impl MultisigAccount {
         } else {
             // Verification round
             // Parse our aggregate key from stored state
-            let agg_hex = self
-                .multisig_pubkey
-                .as_ref()
-                .ok_or("multisig_pubkey not set")?;
+            let agg_hex = self.multisig_pubkey.as_ref().ok_or("multisig_pubkey not set")?;
             let agg_bytes =
                 hex::decode(agg_hex).map_err(|e| format!("invalid multisig_pubkey hex: {}", e))?;
             let mut agg = [0u8; 32];
             agg.copy_from_slice(&agg_bytes[..32]);
 
-            let view_hex = self
-                .common_privkey
-                .as_ref()
-                .ok_or("common_privkey not set")?;
+            let view_hex = self.common_privkey.as_ref().ok_or("common_privkey not set")?;
             let view_bytes =
                 hex::decode(view_hex).map_err(|e| format!("invalid common_privkey hex: {}", e))?;
             let mut view = [0u8; 32];
@@ -350,20 +342,14 @@ impl MultisigAccount {
     pub fn register_signers(&mut self, messages: &[KexMessage]) -> Result<(), String> {
         self.signers.clear();
         for msg in messages {
-            let spend_key = msg
-                .keys
-                .first()
-                .filter(|k| !k.is_empty())
-                .cloned()
-                .ok_or_else(|| {
+            let spend_key =
+                msg.keys.first().filter(|k| !k.is_empty()).cloned().ok_or_else(|| {
                     format!("signer {} has missing/empty spend key", msg.signer_index)
                 })?;
-            let view_key = msg
-                .keys
-                .get(1)
-                .filter(|k| !k.is_empty())
-                .cloned()
-                .ok_or_else(|| format!("signer {} has missing/empty view key", msg.signer_index))?;
+            let view_key =
+                msg.keys.get(1).filter(|k| !k.is_empty()).cloned().ok_or_else(|| {
+                    format!("signer {} has missing/empty view key", msg.signer_index)
+                })?;
             self.signers.push(MultisigSigner::with_config(
                 msg.signer_index,
                 spend_key,

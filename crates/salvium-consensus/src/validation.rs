@@ -35,11 +35,7 @@ pub enum ValidationError {
     InvalidTxVersion { version: u8, hf_version: u8 },
 
     #[error("TX type {tx_type} requires version {required} at HF {hf_version}")]
-    TxVersionMismatch {
-        tx_type: String,
-        required: u8,
-        hf_version: u8,
-    },
+    TxVersionMismatch { tx_type: String, required: u8, hf_version: u8 },
 
     #[error("CONVERT transactions not enabled before oracle HF")]
     ConvertNotEnabled,
@@ -65,29 +61,16 @@ pub enum ValidationError {
     #[error(
         "source asset ({src_asset}) must match destination ({dest_asset}) for TX type {tx_type}"
     )]
-    AssetMismatch {
-        src_asset: String,
-        dest_asset: String,
-        tx_type: String,
-    },
+    AssetMismatch { src_asset: String, dest_asset: String, tx_type: String },
 
     #[error("must spend {expected} coins at HF {hf_version}, got {actual}")]
-    WrongSourceAssetForHf {
-        expected: String,
-        actual: String,
-        hf_version: u8,
-    },
+    WrongSourceAssetForHf { expected: String, actual: String, hf_version: u8 },
 
     #[error("MINER/PROTOCOL must have RCTTypeNull")]
     CoinbaseRctNotNull,
 
     #[error("TX type {tx_type} must use {required} at HF {hf_version}, got {actual}")]
-    WrongRctType {
-        tx_type: String,
-        required: String,
-        actual: String,
-        hf_version: u8,
-    },
+    WrongRctType { tx_type: String, required: String, actual: String, hf_version: u8 },
 
     #[error("MINER/PROTOCOL must have exactly 1 input")]
     CoinbaseInputCount,
@@ -96,11 +79,7 @@ pub enum ValidationError {
     NoInputs,
 
     #[error("input {index} ring size must be {expected}, got {actual}")]
-    WrongRingSize {
-        index: usize,
-        expected: usize,
-        actual: usize,
-    },
+    WrongRingSize { index: usize, expected: usize, actual: usize },
 
     #[error("ring sizes must be consistent: got {min} and {max}")]
     InconsistentRingSizes { min: usize, max: usize },
@@ -139,10 +118,7 @@ pub enum ValidationError {
     WeightExceeded { weight: u64, limit: u64 },
 
     #[error("miner TX input height {input_height} != block height {block_height}")]
-    CoinbaseHeightMismatch {
-        input_height: u64,
-        block_height: u64,
-    },
+    CoinbaseHeightMismatch { input_height: u64, block_height: u64 },
 
     #[error("miner TX version must be > 1")]
     CoinbaseVersionTooLow,
@@ -214,10 +190,7 @@ pub fn validate_tx_type_and_version(
 
     // Before ENABLE_N_OUTS: only TX v2 allowed
     if hf_version < HfVersion::ENABLE_N_OUTS && version != TRANSACTION_VERSION_2_OUTS {
-        return Err(ValidationError::InvalidTxVersion {
-            version,
-            hf_version,
-        });
+        return Err(ValidationError::InvalidTxVersion { version, hf_version });
     }
 
     // Carrot fork requirements
@@ -269,9 +242,7 @@ pub fn validate_asset_types(
     hf_version: u8,
 ) -> Result<(), ValidationError> {
     if !is_valid_asset(source_asset) {
-        return Err(ValidationError::InvalidSourceAsset(
-            source_asset.to_string(),
-        ));
+        return Err(ValidationError::InvalidSourceAsset(source_asset.to_string()));
     }
     if !is_valid_asset(dest_asset) {
         return Err(ValidationError::InvalidDestAsset(dest_asset.to_string()));
@@ -316,11 +287,7 @@ pub fn validate_asset_types(
 
     // Non-AUDIT: enforce SAL before HF6, SAL1 from HF6+
     if tx_type != TxType::Miner && tx_type != TxType::Protocol {
-        let expected = if hf_version >= HfVersion::SALVIUM_ONE_PROOFS {
-            "SAL1"
-        } else {
-            "SAL"
-        };
+        let expected = if hf_version >= HfVersion::SALVIUM_ONE_PROOFS { "SAL1" } else { "SAL" };
         if source_asset != expected {
             return Err(ValidationError::WrongSourceAssetForHf {
                 expected: expected.to_string(),
@@ -441,10 +408,7 @@ pub fn validate_input_ring_sizes(
     let min_size = *ring_sizes.iter().min().unwrap();
     let max_size = *ring_sizes.iter().max().unwrap();
     if min_size != max_size {
-        return Err(ValidationError::InconsistentRingSizes {
-            min: min_size,
-            max: max_size,
-        });
+        return Err(ValidationError::InconsistentRingSizes { min: min_size, max: max_size });
     }
 
     let actual_mixin = min_size.saturating_sub(1);
@@ -452,9 +416,7 @@ pub fn validate_input_ring_sizes(
     if actual_mixin < MINIMUM_MIXIN {
         // Low ring size: only allowed for unmixable outputs
         if n_unmixable == 0 {
-            return Err(ValidationError::LowRingSizeNoUnmixable {
-                ring_size: min_size,
-            });
+            return Err(ValidationError::LowRingSizeNoUnmixable { ring_size: min_size });
         }
         if n_mixable > 1 {
             return Err(ValidationError::LowRingSizeTooManyMixable {
@@ -638,9 +600,7 @@ pub fn validate_audit_tx(
 pub fn validate_output_amounts_overflow(amounts: &[u64]) -> Result<(), ValidationError> {
     let mut total: u64 = 0;
     for &amount in amounts {
-        total = total
-            .checked_add(amount)
-            .ok_or(ValidationError::OutputOverflow)?;
+        total = total.checked_add(amount).ok_or(ValidationError::OutputOverflow)?;
     }
     Ok(())
 }
@@ -694,10 +654,7 @@ pub fn validate_fee(
     let min_fee = needed - (needed / 50);
 
     if fee < min_fee {
-        return Err(ValidationError::InsufficientFee {
-            fee,
-            required: needed,
-        });
+        return Err(ValidationError::InsufficientFee { fee, required: needed });
     }
 
     Ok(())
@@ -723,10 +680,7 @@ pub fn max_tx_weight(hf_version: u8) -> u64 {
 pub fn validate_tx_weight(tx_weight: u64, hf_version: u8) -> Result<(), ValidationError> {
     let limit = max_tx_weight(hf_version);
     if tx_weight > limit {
-        return Err(ValidationError::WeightExceeded {
-            weight: tx_weight,
-            limit,
-        });
+        return Err(ValidationError::WeightExceeded { weight: tx_weight, limit });
     }
     Ok(())
 }
@@ -747,10 +701,7 @@ pub fn validate_miner_tx_structure(
 ) -> Result<(), ValidationError> {
     // Input height must match block height
     if input_height != block_height {
-        return Err(ValidationError::CoinbaseHeightMismatch {
-            input_height,
-            block_height,
-        });
+        return Err(ValidationError::CoinbaseHeightMismatch { input_height, block_height });
     }
 
     // Version must be > 1
@@ -761,10 +712,7 @@ pub fn validate_miner_tx_structure(
     // Carrot fork: must use CARROT version and MINER type
     if hf_version >= HfVersion::CARROT {
         if tx_version != TRANSACTION_VERSION_CARROT {
-            return Err(ValidationError::InvalidTxVersion {
-                version: tx_version,
-                hf_version,
-            });
+            return Err(ValidationError::InvalidTxVersion { version: tx_version, hf_version });
         }
         if tx_type != TxType::Miner {
             return Err(ValidationError::TxVersionMismatch {
@@ -786,10 +734,7 @@ pub fn validate_miner_tx_reward(
 ) -> Result<(), ValidationError> {
     let allowed = base_reward + total_fees;
     if output_total > allowed {
-        return Err(ValidationError::CoinbaseRewardTooHigh {
-            reward: output_total,
-            allowed,
-        });
+        return Err(ValidationError::CoinbaseRewardTooHigh { reward: output_total, allowed });
     }
     Ok(())
 }
@@ -1094,10 +1039,7 @@ mod tests {
         // SAL -> SAL is rejected because dest must be SAL1
         let result = validate_audit_tx("SAL", "SAL", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::InvalidDestAsset(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
     }
 
     #[test]
@@ -1105,10 +1047,7 @@ mod tests {
         // BURN source is rejected
         let result = validate_audit_tx("BURN", "SAL1", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::InvalidSourceAsset(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::InvalidSourceAsset(_)));
     }
 
     #[test]
@@ -1116,10 +1055,7 @@ mod tests {
         // dest SAL rejected (must be SAL1)
         let result = validate_audit_tx("SAL", "SAL", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::InvalidDestAsset(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
     }
 
     #[test]
@@ -1127,10 +1063,7 @@ mod tests {
         // dest BURN rejected
         let result = validate_audit_tx("SAL", "BURN", "SaLvAddress123", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::InvalidDestAsset(_)
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::InvalidDestAsset(_)));
     }
 
     #[test]
@@ -1138,10 +1071,7 @@ mod tests {
         // Empty return address rejected
         let result = validate_audit_tx("SAL", "SAL1", "", 0, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::AuditReturnRequired
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::AuditReturnRequired));
     }
 
     #[test]
@@ -1149,10 +1079,7 @@ mod tests {
         // Nonzero change rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 1000, 500000, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::AuditNonZeroChange(1000)
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::AuditNonZeroChange(1000)));
     }
 
     #[test]
@@ -1160,10 +1087,7 @@ mod tests {
         // Zero unlock height rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 0, 0, 0, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::AuditZeroUnlockHeight
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::AuditZeroUnlockHeight));
     }
 
     #[test]
@@ -1171,10 +1095,7 @@ mod tests {
         // output_count > 0 rejected
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 0, 500000, 2, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ValidationError::AuditOutputCount
-        ));
+        assert!(matches!(result.unwrap_err(), ValidationError::AuditOutputCount));
     }
 
     #[test]

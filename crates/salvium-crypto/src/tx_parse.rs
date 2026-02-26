@@ -72,13 +72,8 @@ impl<'a> Cursor<'a> {
             return Ok(String::new());
         }
         let bytes = self.read_bytes(len)?;
-        String::from_utf8(bytes.to_vec()).map_err(|e| {
-            format!(
-                "Invalid UTF-8 string at offset {}: {}",
-                self.offset - len,
-                e
-            )
-        })
+        String::from_utf8(bytes.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 string at offset {}: {}", self.offset - len, e))
     }
 }
 
@@ -325,11 +320,7 @@ fn parse_ringct_signature(
 
     // Validate type
     if !(RCT_TYPE_BULLETPROOF_PLUS..=RCT_TYPE_SALVIUM_ONE).contains(&rct_type) {
-        return Err(format!(
-            "Invalid RCT type: {} at offset {}",
-            rct_type,
-            c.offset - 1
-        ));
+        return Err(format!("Invalid RCT type: {} at offset {}", rct_type, c.offset - 1));
     }
 
     // Fee
@@ -604,11 +595,7 @@ fn parse_pricing_record(c: &mut Cursor) -> Result<(Value, usize), String> {
 
     // signature (vector of bytes)
     let sig_len = c.read_varint()? as usize;
-    let signature = if sig_len > 0 {
-        to_hex(c.read_bytes(sig_len)?)
-    } else {
-        String::new()
-    };
+    let signature = if sig_len > 0 { to_hex(c.read_bytes(sig_len)?) } else { String::new() };
 
     let bytes_read = c.offset - start;
 

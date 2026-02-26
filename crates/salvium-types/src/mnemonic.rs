@@ -48,11 +48,7 @@ fn crc32(data: &str) -> u32 {
     for byte in data.bytes() {
         crc ^= byte as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xEDB8_8320
-            } else {
-                crc >> 1
-            };
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
         }
     }
     crc ^ 0xFFFF_FFFF
@@ -80,10 +76,7 @@ pub fn detect_language(mnemonic: &str) -> Result<&'static WordList, MnemonicErro
     }
 
     if candidates.is_empty() {
-        return Err(MnemonicError::UnknownWord {
-            word: words[0].to_string(),
-            position: 0,
-        });
+        return Err(MnemonicError::UnknownWord { word: words[0].to_string(), position: 0 });
     }
 
     if candidates.len() == 1 {
@@ -107,10 +100,7 @@ pub fn detect_language(mnemonic: &str) -> Result<&'static WordList, MnemonicErro
 /// Get a language by name.
 pub fn get_language(name: &str) -> Option<&'static WordList> {
     let normalized = name.to_lowercase();
-    ALL_LANGUAGES
-        .iter()
-        .find(|l| l.english_name == normalized)
-        .copied()
+    ALL_LANGUAGES.iter().find(|l| l.english_name == normalized).copied()
 }
 
 /// Decode a 25-word mnemonic to a 256-bit seed.
@@ -118,11 +108,8 @@ pub fn mnemonic_to_seed(
     mnemonic: &str,
     language: Option<&str>,
 ) -> Result<MnemonicResult, MnemonicError> {
-    let words: Vec<String> = mnemonic
-        .to_lowercase()
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let words: Vec<String> =
+        mnemonic.to_lowercase().split_whitespace().map(|s| s.to_string()).collect();
 
     if words.len() != 25 {
         return Err(MnemonicError::WrongWordCount(words.len()));
@@ -139,20 +126,15 @@ pub fn mnemonic_to_seed(
     // Convert words to indices
     let mut indices = Vec::with_capacity(25);
     for (i, word) in words.iter().enumerate() {
-        let idx = find_word(word_list, word).ok_or_else(|| MnemonicError::UnknownWord {
-            word: word.clone(),
-            position: i + 1,
-        })?;
+        let idx = find_word(word_list, word)
+            .ok_or_else(|| MnemonicError::UnknownWord { word: word.clone(), position: i + 1 })?;
         indices.push(idx as u32);
     }
 
     // Verify checksum
     let prefix_len = word_list.prefix_length;
-    let checksum_data: String = words[..24]
-        .iter()
-        .map(|w| &w[..w.len().min(prefix_len)])
-        .collect::<Vec<_>>()
-        .join("");
+    let checksum_data: String =
+        words[..24].iter().map(|w| &w[..w.len().min(prefix_len)]).collect::<Vec<_>>().join("");
     let checksum_index = (crc32(&checksum_data) % 24) as usize;
 
     let expected_prefix = &words[checksum_index][..words[checksum_index].len().min(prefix_len)];
@@ -188,10 +170,7 @@ pub fn mnemonic_to_seed(
         seed[i * 4 + 3] = ((val >> 24) & 0xFF) as u8;
     }
 
-    Ok(MnemonicResult {
-        seed,
-        language: word_list,
-    })
+    Ok(MnemonicResult { seed, language: word_list })
 }
 
 /// Encode a 256-bit seed to a 25-word mnemonic.
@@ -223,11 +202,8 @@ pub fn seed_to_mnemonic(seed: &[u8; 32], language: Option<&str>) -> Result<Strin
 
     // Calculate checksum word
     let prefix_len = word_list.prefix_length;
-    let checksum_data: String = words
-        .iter()
-        .map(|w| &w[..w.len().min(prefix_len)])
-        .collect::<Vec<_>>()
-        .join("");
+    let checksum_data: String =
+        words.iter().map(|w| &w[..w.len().min(prefix_len)]).collect::<Vec<_>>().join("");
     let checksum_index = (crc32(&checksum_data) % 24) as usize;
     words.push(words[checksum_index]);
 

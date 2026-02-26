@@ -113,13 +113,7 @@ pub fn verify_rct_signatures(
             offset += 32;
             let commitment_image = to32(&sig_data[offset..offset + 32]);
 
-            let sig = TclsagSignature {
-                sx,
-                sy,
-                c1,
-                key_image: key_images[i],
-                commitment_image,
-            };
+            let sig = TclsagSignature { sx, sy, c1, key_image: key_images[i], commitment_image };
             tclsag_verify(message, &sig, ring, commitments, &pseudo_outs[i])
         } else {
             // Parse CLSAG sig: [s_0..s_{n-1}][c1][D]
@@ -133,12 +127,7 @@ pub fn verify_rct_signatures(
             offset += 32;
             let commitment_image = to32(&sig_data[offset..offset + 32]);
 
-            let sig = ClsagSignature {
-                s,
-                c1,
-                key_image: key_images[i],
-                commitment_image,
-            };
+            let sig = ClsagSignature { s, c1, key_image: key_images[i], commitment_image };
             clsag_verify(message, &sig, ring, commitments, &pseudo_outs[i])
         };
 
@@ -203,19 +192,15 @@ pub fn verify_rct_signatures_wasm(
     let message = compute_rct_message(&prefix_hash, rct_base_bytes, bp_components);
 
     // Parse flat arrays into [u8; 32] slices
-    let key_images: Vec<[u8; 32]> = (0..ic)
-        .map(|i| to32(&key_images_flat[i * 32..(i + 1) * 32]))
-        .collect();
-    let pseudo_outs: Vec<[u8; 32]> = (0..ic)
-        .map(|i| to32(&pseudo_outs_flat[i * 32..(i + 1) * 32]))
-        .collect();
+    let key_images: Vec<[u8; 32]> =
+        (0..ic).map(|i| to32(&key_images_flat[i * 32..(i + 1) * 32])).collect();
+    let pseudo_outs: Vec<[u8; 32]> =
+        (0..ic).map(|i| to32(&pseudo_outs_flat[i * 32..(i + 1) * 32])).collect();
     let total_ring = ic * rs;
-    let ring_pubkeys: Vec<[u8; 32]> = (0..total_ring)
-        .map(|i| to32(&ring_pubkeys_flat[i * 32..(i + 1) * 32]))
-        .collect();
-    let ring_commitments: Vec<[u8; 32]> = (0..total_ring)
-        .map(|i| to32(&ring_commitments_flat[i * 32..(i + 1) * 32]))
-        .collect();
+    let ring_pubkeys: Vec<[u8; 32]> =
+        (0..total_ring).map(|i| to32(&ring_pubkeys_flat[i * 32..(i + 1) * 32])).collect();
+    let ring_commitments: Vec<[u8; 32]> =
+        (0..total_ring).map(|i| to32(&ring_commitments_flat[i * 32..(i + 1) * 32])).collect();
 
     // Catch panics from invalid curve points (decompress failures)
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
@@ -284,9 +269,7 @@ pub fn expand_transaction(
     };
 
     let sigs = p.get_mut(sig_key).unwrap();
-    let arr = sigs
-        .as_array_mut()
-        .ok_or(format!("{} not an array", sig_key))?;
+    let arr = sigs.as_array_mut().ok_or(format!("{} not an array", sig_key))?;
     if arr.len() != key_images.len() {
         return Err(format!(
             "{} count {} != key image count {}",
@@ -343,9 +326,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -397,9 +379,7 @@ mod tests {
             0x84, 0x5f, 0x5f, 0x40, 0x88, 0x78, 0xd1, 0x56, 0x1e, 0x00, 0xd3, 0xd7, 0xde, 0xd2,
             0x79, 0x4d, 0x09, 0x4f,
         ];
-        let t_gen = curve25519_dalek::edwards::CompressedEdwardsY(T_BYTES)
-            .decompress()
-            .unwrap();
+        let t_gen = curve25519_dalek::edwards::CompressedEdwardsY(T_BYTES).decompress().unwrap();
 
         let x = random_scalar();
         let y = random_scalar();
@@ -414,9 +394,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -471,9 +450,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -525,9 +503,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -582,9 +559,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -655,9 +631,7 @@ mod tests {
         );
 
         // Use a WRONG key image (different from the one produced by sign)
-        let wrong_ki = (&random_scalar() * ED25519_BASEPOINT_TABLE)
-            .compress()
-            .to_bytes();
+        let wrong_ki = (&random_scalar() * ED25519_BASEPOINT_TABLE).compress().to_bytes();
 
         let mut sigs_flat = Vec::new();
         for s in &sig.s {
@@ -760,10 +734,7 @@ mod tests {
         let mut rct = make_clsag_rct_json(2);
 
         let result = expand_transaction(&key_images, &mut rct);
-        assert!(
-            result.is_ok(),
-            "expand_transaction should succeed for CLSAGs"
-        );
+        assert!(result.is_ok(), "expand_transaction should succeed for CLSAGs");
 
         let clsags = rct["p"]["CLSAGs"].as_array().unwrap();
         assert_eq!(clsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
@@ -778,10 +749,7 @@ mod tests {
         let mut rct = make_tclsag_rct_json(2);
 
         let result = expand_transaction(&key_images, &mut rct);
-        assert!(
-            result.is_ok(),
-            "expand_transaction should succeed for TCLSAGs"
-        );
+        assert!(result.is_ok(), "expand_transaction should succeed for TCLSAGs");
 
         let tclsags = rct["p"]["TCLSAGs"].as_array().unwrap();
         assert_eq!(tclsags[0]["I"].as_str().unwrap(), hex::encode(ki1));
@@ -819,10 +787,7 @@ mod tests {
         let mut rct = make_clsag_rct_json(0);
 
         let result = expand_transaction(key_images, &mut rct);
-        assert!(
-            result.is_ok(),
-            "empty key images with empty sigs should succeed"
-        );
+        assert!(result.is_ok(), "empty key images with empty sigs should succeed");
     }
 
     #[test]
@@ -881,10 +846,7 @@ mod tests {
 
         let result = expand_transaction(&[ki], &mut rct);
         assert!(result.is_ok());
-        assert_eq!(
-            rct["p"]["TCLSAGs"][0]["I"].as_str().unwrap(),
-            hex::encode(ki)
-        );
+        assert_eq!(rct["p"]["TCLSAGs"][0]["I"].as_str().unwrap(), hex::encode(ki));
     }
 
     #[test]

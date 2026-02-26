@@ -27,9 +27,7 @@ pub unsafe extern "C" fn salvium_multisig_prepare(
 ) -> *mut c_char {
     ffi_try_string(|| {
         let wallet = unsafe { borrow_handle_mut::<Wallet>(handle) }?;
-        wallet
-            .create_multisig(threshold, signer_count)
-            .map_err(|e| e.to_string())
+        wallet.create_multisig(threshold, signer_count).map_err(|e| e.to_string())
     })
 }
 
@@ -51,10 +49,7 @@ pub unsafe extern "C" fn salvium_multisig_make(
         let messages: Vec<String> =
             serde_json::from_str(json_str).map_err(|e| format!("invalid JSON array: {e}"))?;
 
-        match wallet
-            .process_multisig_kex(&messages)
-            .map_err(|e| e.to_string())?
-        {
+        match wallet.process_multisig_kex(&messages).map_err(|e| e.to_string())? {
             Some(msg) => Ok(msg),
             None => Ok("null".to_string()),
         }
@@ -109,10 +104,7 @@ pub unsafe extern "C" fn salvium_multisig_import_info(
             .map(|h| hex::decode(h).map_err(|e| format!("invalid hex: {e}")))
             .collect::<Result<Vec<_>, _>>()?;
 
-        wallet
-            .import_multisig_info(&infos)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        wallet.import_multisig_info(&infos).map(|_| ()).map_err(|e| e.to_string())
     })
 }
 
@@ -137,9 +129,7 @@ pub unsafe extern "C" fn salvium_multisig_sign_tx(
         let mut tx_set: salvium_multisig::tx_set::MultisigTxSet =
             serde_json::from_str(json_str).map_err(|e| format!("invalid tx set JSON: {e}"))?;
 
-        wallet
-            .sign_multisig_tx(&mut tx_set)
-            .map_err(|e| e.to_string())?;
+        wallet.sign_multisig_tx(&mut tx_set).map_err(|e| e.to_string())?;
 
         serde_json::to_string(&tx_set).map_err(|e| e.to_string())
     })

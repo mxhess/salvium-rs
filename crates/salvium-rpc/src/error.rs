@@ -15,41 +15,21 @@ pub mod codes {
 pub enum RpcError {
     /// HTTP transport error (includes reqwest errors).
     #[error("HTTP error on {method} {url}: {source}")]
-    Http {
-        method: String,
-        url: String,
-        source: reqwest::Error,
-    },
+    Http { method: String, url: String, source: reqwest::Error },
 
     /// Daemon returned a non-2xx HTTP status code.
     #[error("{method} {url} returned HTTP {status}: {body}")]
-    HttpStatus {
-        method: String,
-        url: String,
-        status: u16,
-        body: String,
-    },
+    HttpStatus { method: String, url: String, status: u16, body: String },
 
     #[error("JSON parse error on {context}: {source}")]
-    Json {
-        context: String,
-        source: serde_json::Error,
-    },
+    Json { context: String, source: serde_json::Error },
 
     #[error("RPC error {code} on {method}: {message}")]
-    Rpc {
-        code: i64,
-        message: String,
-        method: String,
-    },
+    Rpc { code: i64, message: String, method: String },
 
     /// Daemon returned status != "OK" in a raw endpoint response.
     #[error("{endpoint} returned status={status}: {reason}")]
-    DaemonError {
-        endpoint: String,
-        status: String,
-        reason: String,
-    },
+    DaemonError { endpoint: String, status: String, reason: String },
 
     #[error("no result in {context} response")]
     NoResult { context: String },
@@ -94,9 +74,6 @@ impl RpcError {
 // Keep From<serde_json::Error> for backwards compat in simple cases
 impl From<serde_json::Error> for RpcError {
     fn from(e: serde_json::Error) -> Self {
-        RpcError::Json {
-            context: "unknown".to_string(),
-            source: e,
-        }
+        RpcError::Json { context: "unknown".to_string(), source: e }
     }
 }

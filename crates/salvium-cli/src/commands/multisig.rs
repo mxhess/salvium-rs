@@ -15,10 +15,7 @@ pub async fn prepare_multisig(ctx: &AppContext) -> Result {
     // We don't know the final signer count yet; use placeholder 2-of-2 to initialize KEX.
     // The actual threshold/count will be set in `make_multisig`.
     let keys = wallet.keys();
-    let spend_secret = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key")?;
+    let spend_secret = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
 
     // Use the multisig library's blinding function.
     let blinded =
@@ -32,10 +29,7 @@ pub async fn prepare_multisig(ctx: &AppContext) -> Result {
     let mut account = salvium_multisig::account::MultisigAccount::new(2, 2)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     let msg = account
-        .initialize_kex(
-            &hex::encode(spend_secret),
-            &hex::encode(keys.cn.view_secret_key),
-        )
+        .initialize_kex(&hex::encode(spend_secret), &hex::encode(keys.cn.view_secret_key))
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     println!("{}", msg);
@@ -55,17 +49,12 @@ pub async fn make_multisig(ctx: &AppContext, threshold: usize, messages: &[Strin
         return Err("threshold must be at least 2".into());
     }
     if threshold > signer_count {
-        return Err(format!(
-            "threshold ({}) exceeds signer count ({})",
-            threshold, signer_count
-        )
-        .into());
+        return Err(
+            format!("threshold ({}) exceeds signer count ({})", threshold, signer_count).into()
+        );
     }
 
-    println!(
-        "Creating {}-of-{} multisig wallet...",
-        threshold, signer_count
-    );
+    println!("Creating {}-of-{} multisig wallet...", threshold, signer_count);
 
     // Initialize multisig via the wallet library.
     let first_msg = wallet
@@ -107,10 +96,7 @@ pub async fn make_multisig(ctx: &AppContext, threshold: usize, messages: &[Strin
 pub async fn exchange_multisig_keys(ctx: &AppContext, messages: &[String]) -> Result {
     let mut wallet = open_wallet(ctx)?;
 
-    println!(
-        "Processing {} KEX messages for next round...",
-        messages.len()
-    );
+    println!("Processing {} KEX messages for next round...", messages.len());
 
     let next = wallet
         .process_multisig_kex(messages)
@@ -217,11 +203,7 @@ pub async fn submit_multisig(ctx: &AppContext, input_file: &str) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
 
     for (i, tx_hex) in tx_set.transactions.iter().enumerate() {
-        println!(
-            "Submitting multisig transaction {}/{}...",
-            i + 1,
-            tx_set.transactions.len()
-        );
+        println!("Submitting multisig transaction {}/{}...", i + 1, tx_set.transactions.len());
         let result = daemon
             .send_raw_transaction(tx_hex, false)
             .await
@@ -230,12 +212,9 @@ pub async fn submit_multisig(ctx: &AppContext, input_file: &str) -> Result {
         if result.status == "OK" {
             println!("  Transaction {} submitted successfully!", i + 1);
         } else {
-            return Err(format!(
-                "daemon rejected transaction {}: status={}",
-                i + 1,
-                result.status
-            )
-            .into());
+            return Err(
+                format!("daemon rejected transaction {}: status={}", i + 1, result.status).into()
+            );
         }
     }
 
@@ -325,9 +304,7 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     // 3. Compute per-input key offsets, key images, and y keys.
     //    key_offset = full_secret_key - weighted_share
     //    The weighted_share is obtained from the multisig account.
-    let multisig_account = wallet
-        .multisig_account()
-        .ok_or("multisig account not found")?;
+    let multisig_account = wallet.multisig_account().ok_or("multisig account not found")?;
     let weighted_share = multisig_account
         .get_weighted_spend_key_share()
         .map_err(|e| format!("weighted key share: {}", e))?;
@@ -394,10 +371,7 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_fee(actual_fee);
 

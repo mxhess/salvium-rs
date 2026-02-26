@@ -31,10 +31,7 @@ impl TrezorDevice {
         for device_info in api.device_list() {
             if device_info.vendor_id() == TREZOR_VENDOR_ID {
                 if let Ok(device) = api.open_path(device_info.path()) {
-                    return Some(Self {
-                        device,
-                        connected: true,
-                    });
+                    return Some(Self { device, connected: true });
                 }
             }
         }
@@ -77,9 +74,7 @@ impl TrezorDevice {
             .map_err(|e| WalletError::Device(format!("USB read failed: {}", e)))?;
 
         if n < 9 || header_buf[0] != b'#' || header_buf[1] != b'#' {
-            return Err(WalletError::Device(
-                "invalid Trezor response header".to_string(),
-            ));
+            return Err(WalletError::Device("invalid Trezor response header".to_string()));
         }
 
         let resp_type = ((header_buf[2] as u16) << 8) | header_buf[3] as u16;
@@ -142,9 +137,7 @@ impl HwDevice for TrezorDevice {
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
-        Err(WalletError::Device(
-            "hardware wallet support not compiled".to_string(),
-        ))
+        Err(WalletError::Device("hardware wallet support not compiled".to_string()))
     }
 
     fn get_view_key(&self) -> Result<[u8; 32], WalletError> {
@@ -163,9 +156,7 @@ impl HwDevice for TrezorDevice {
             // Parse protobuf response: field 1 = watch_key (bytes).
             // Simple protobuf parsing for a single bytes field.
             if response.len() < 34 {
-                return Err(WalletError::Device(
-                    "view key response too short".to_string(),
-                ));
+                return Err(WalletError::Device("view key response too short".to_string()));
             }
 
             // Skip protobuf field header (tag + length) to get raw key bytes.
@@ -177,9 +168,7 @@ impl HwDevice for TrezorDevice {
                 }
                 2
             } else {
-                return Err(WalletError::Device(
-                    "unexpected protobuf format".to_string(),
-                ));
+                return Err(WalletError::Device("unexpected protobuf format".to_string()));
             };
 
             let mut key = [0u8; 32];
@@ -188,9 +177,7 @@ impl HwDevice for TrezorDevice {
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
-        Err(WalletError::Device(
-            "hardware wallet support not compiled".to_string(),
-        ))
+        Err(WalletError::Device("hardware wallet support not compiled".to_string()))
     }
 
     fn export_key_images(
@@ -208,9 +195,7 @@ impl HwDevice for TrezorDevice {
 
             let (resp_type, _) = self.exchange(MSG_MONERO_KEY_IMAGE_EXPORT_INIT, &init_data)?;
             if resp_type != MSG_MONERO_KEY_IMAGE_EXPORT_INIT + 1 {
-                return Err(WalletError::Device(
-                    "key image export init failed".to_string(),
-                ));
+                return Err(WalletError::Device("key image export init failed".to_string()));
             }
 
             // Step 2: Sync each output.
@@ -250,18 +235,13 @@ impl HwDevice for TrezorDevice {
             let _ = self.exchange(MSG_MONERO_KEY_IMAGE_SYNC_FINAL, &[]);
 
             let num_exported = key_images.len();
-            Ok(KeyImageSyncResult {
-                key_images,
-                num_exported,
-            })
+            Ok(KeyImageSyncResult { key_images, num_exported })
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
         {
             let _ = outputs;
-            Err(WalletError::Device(
-                "hardware wallet support not compiled".to_string(),
-            ))
+            Err(WalletError::Device("hardware wallet support not compiled".to_string()))
         }
     }
 
@@ -303,9 +283,7 @@ impl HwDevice for TrezorDevice {
         #[cfg(not(feature = "hardware-wallet"))]
         {
             let _ = (major, minor, payment_id);
-            Err(WalletError::Device(
-                "hardware wallet support not compiled".to_string(),
-            ))
+            Err(WalletError::Device("hardware wallet support not compiled".to_string()))
         }
     }
 }

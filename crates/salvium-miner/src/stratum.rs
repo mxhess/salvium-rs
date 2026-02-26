@@ -180,10 +180,7 @@ impl StratumClient {
     fn read_line(&mut self) -> io::Result<Option<String>> {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
-            Ok(0) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "connection closed",
-            )),
+            Ok(0) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "connection closed")),
             Ok(_) => {
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
@@ -204,8 +201,7 @@ impl StratumClient {
     /// Read a line, blocking until one arrives (with a longer timeout).
     fn read_line_blocking(&mut self) -> io::Result<String> {
         // Temporarily set a longer timeout for blocking reads
-        self.stream
-            .set_read_timeout(Some(Duration::from_secs(30)))?;
+        self.stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         let result = loop {
             match self.read_line()? {
                 Some(line) => break Ok(line),
@@ -213,8 +209,7 @@ impl StratumClient {
             }
         };
         // Restore short timeout for non-blocking polling
-        self.stream
-            .set_read_timeout(Some(Duration::from_millis(100)))?;
+        self.stream.set_read_timeout(Some(Duration::from_millis(100)))?;
         result
     }
 
@@ -532,12 +527,7 @@ impl CryptoNoteStratum {
 
         let reader = BufReader::new(stream.try_clone()?);
 
-        Ok(Self {
-            stream,
-            reader,
-            worker_id: String::new(),
-            next_id: 1,
-        })
+        Ok(Self { stream, reader, worker_id: String::new(), next_id: 1 })
     }
 
     /// Send a JSON-RPC request and return the assigned ID.
@@ -563,10 +553,7 @@ impl CryptoNoteStratum {
     fn read_line(&mut self) -> io::Result<Option<String>> {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
-            Ok(0) => Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "connection closed",
-            )),
+            Ok(0) => Err(io::Error::new(io::ErrorKind::ConnectionAborted, "connection closed")),
             Ok(_) => {
                 let trimmed = line.trim().to_string();
                 if trimmed.is_empty() {
@@ -586,16 +573,14 @@ impl CryptoNoteStratum {
 
     /// Read a line, blocking until one arrives.
     fn read_line_blocking(&mut self) -> io::Result<String> {
-        self.stream
-            .set_read_timeout(Some(Duration::from_secs(30)))?;
+        self.stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         let result = loop {
             match self.read_line()? {
                 Some(line) => break Ok(line),
                 None => continue,
             }
         };
-        self.stream
-            .set_read_timeout(Some(Duration::from_millis(100)))?;
+        self.stream.set_read_timeout(Some(Duration::from_millis(100)))?;
         result
     }
 
@@ -695,11 +680,7 @@ impl CryptoNoteStratum {
         let job_id = value.get("job_id").and_then(|v| v.as_str())?.to_string();
         let blob_hex = value.get("blob").and_then(|v| v.as_str())?;
         let target_hex = value.get("target").and_then(|v| v.as_str())?;
-        let seed_hash = value
-            .get("seed_hash")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let seed_hash = value.get("seed_hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let height = value.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
 
         let blob = hex_decode(blob_hex);
@@ -709,13 +690,7 @@ impl CryptoNoteStratum {
 
         let difficulty = target_to_difficulty(target_hex);
 
-        Some(CryptoNoteJob {
-            job_id,
-            blob,
-            difficulty,
-            seed_hash,
-            height,
-        })
+        Some(CryptoNoteJob { job_id, blob, difficulty, seed_hash, height })
     }
 
     /// Submit a share to the pool.
@@ -816,9 +791,7 @@ mod tests {
         // Check prevhash
         assert_eq!(&header[4..36], &[0xAA; 32]);
         // Merkle root should be SHA256d of coinbase (since no branches)
-        let coinbase = vec![
-            0x01, 0x02, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x01, 0x03, 0x04,
-        ];
+        let coinbase = vec![0x01, 0x02, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x01, 0x03, 0x04];
         let expected_root = sha256d(&coinbase);
         assert_eq!(&header[36..68], &expected_root);
         // Check ntime (LE)

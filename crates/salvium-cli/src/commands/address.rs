@@ -13,9 +13,7 @@ pub async fn account_new(ctx: &AppContext, label: &str) -> Result {
 
     // Track account labels via wallet attributes.
     // In the full C++ implementation, accounts map to subaddress major indices.
-    let next_idx_str = wallet
-        .get_attribute("account_count")?
-        .unwrap_or_else(|| "1".to_string());
+    let next_idx_str = wallet.get_attribute("account_count")?.unwrap_or_else(|| "1".to_string());
     let next_idx: u32 = next_idx_str.parse().unwrap_or(1);
 
     wallet.set_attribute(&format!("account_label:{}", next_idx), label)?;
@@ -43,27 +41,20 @@ pub async fn account_label(ctx: &AppContext, index: u32, label: &str) -> Result 
 pub async fn account_list(ctx: &AppContext) -> Result {
     let wallet = open_wallet(ctx)?;
 
-    let count_str = wallet
-        .get_attribute("account_count")?
-        .unwrap_or_else(|| "1".to_string());
+    let count_str = wallet.get_attribute("account_count")?.unwrap_or_else(|| "1".to_string());
     let count: u32 = count_str.parse().unwrap_or(1);
 
-    println!(
-        "{:<6} {:<20} {:>20} {:>20}",
-        "Index", "Label", "Balance", "Unlocked"
-    );
+    println!("{:<6} {:<20} {:>20} {:>20}", "Index", "Label", "Balance", "Unlocked");
     println!("{}", "-".repeat(70));
 
     for i in 0..count {
-        let label = wallet
-            .get_attribute(&format!("account_label:{}", i))?
-            .unwrap_or_else(|| {
-                if i == 0 {
-                    "Primary".to_string()
-                } else {
-                    format!("Account #{}", i)
-                }
-            });
+        let label = wallet.get_attribute(&format!("account_label:{}", i))?.unwrap_or_else(|| {
+            if i == 0 {
+                "Primary".to_string()
+            } else {
+                format!("Account #{}", i)
+            }
+        });
         let bal = wallet.get_balance("SAL", i as i32)?;
         println!(
             "{:<6} {:<20} {:>20} {:>20}",
@@ -105,9 +96,7 @@ pub async fn address_new(ctx: &AppContext, _account: u32, label: &str) -> Result
     let spend_pub = &keys.cn.spend_public_key;
 
     let count_key = format!("subaddr_count:{}", _account);
-    let count_str = wallet
-        .get_attribute(&count_key)?
-        .unwrap_or_else(|| "1".to_string());
+    let count_str = wallet.get_attribute(&count_key)?.unwrap_or_else(|| "1".to_string());
     let next_idx: u32 = count_str.parse().unwrap_or(1);
 
     // CryptoNote subaddress derivation:
@@ -153,9 +142,7 @@ pub async fn address_all(ctx: &AppContext, account: u32) -> Result {
     let wallet = open_wallet(ctx)?;
 
     let count_key = format!("subaddr_count:{}", account);
-    let count_str = wallet
-        .get_attribute(&count_key)?
-        .unwrap_or_else(|| "1".to_string());
+    let count_str = wallet.get_attribute(&count_key)?.unwrap_or_else(|| "1".to_string());
     let count: u32 = count_str.parse().unwrap_or(1);
 
     println!("Account #{} addresses:", account);
@@ -168,9 +155,8 @@ pub async fn address_all(ctx: &AppContext, account: u32) -> Result {
 
     // Show any additional subaddresses.
     for i in if account == 0 { 1 } else { 0 }..count {
-        let label = wallet
-            .get_attribute(&format!("subaddr_label:{}:{}", account, i))?
-            .unwrap_or_default();
+        let label =
+            wallet.get_attribute(&format!("subaddr_label:{}:{}", account, i))?.unwrap_or_default();
 
         println!("  [{}/{}] (subaddress)", account, i);
         if !label.is_empty() {
@@ -237,10 +223,7 @@ pub async fn address_book_list(ctx: &AppContext) -> Result {
     println!("{}", "-".repeat(70));
 
     for entry in &entries {
-        println!(
-            "{:<4} {:<20} {}",
-            entry.row_id, &entry.label, &entry.address
-        );
+        println!("{:<4} {:<20} {}", entry.row_id, &entry.label, &entry.address);
         if !entry.description.is_empty() {
             println!("     {}", &entry.description);
         }

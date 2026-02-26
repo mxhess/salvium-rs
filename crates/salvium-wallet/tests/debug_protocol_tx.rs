@@ -26,11 +26,7 @@ async fn debug_protocol_tx_content() {
         // Post-CARROT transition
         (417800, 417850, "HF10 CARROT transition"),
         // Recent blocks (known to work)
-        (
-            top.saturating_sub(10),
-            top.saturating_sub(1),
-            "recent blocks",
-        ),
+        (top.saturating_sub(10), top.saturating_sub(1), "recent blocks"),
     ];
 
     for (start, end, label) in &check_ranges {
@@ -77,8 +73,7 @@ async fn debug_protocol_tx_content() {
                         .get("extra")
                         .and_then(|v| v.as_array())
                         .map(|arr| {
-                            arr.iter()
-                                .any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(1))
+                            arr.iter().any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(1))
                         })
                         .unwrap_or(false);
 
@@ -86,8 +81,7 @@ async fn debug_protocol_tx_content() {
                         .get("extra")
                         .and_then(|v| v.as_array())
                         .map(|arr| {
-                            arr.iter()
-                                .any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(4))
+                            arr.iter().any(|e| e.get("type").and_then(|v| v.as_u64()) == Some(4))
                         })
                         .unwrap_or(false);
 
@@ -122,9 +116,6 @@ async fn debug_protocol_tx_content() {
         }
 
         let total_blocks = heights.len();
-        println!(
-            "  {}/{} blocks had protocol_tx outputs\n",
-            found_with_outputs, total_blocks
-        );
+        println!("  {}/{} blocks had protocol_tx outputs\n", found_with_outputs, total_blocks);
     }
 }

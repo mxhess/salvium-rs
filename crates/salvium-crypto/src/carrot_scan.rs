@@ -80,12 +80,7 @@ pub fn build_transcript(domain: &[u8], data: &[&[u8]]) -> Vec<u8> {
 
 /// Keyed blake2b with given output length.
 fn blake2b_keyed(transcript: &[u8], out_len: usize, key: &[u8]) -> Vec<u8> {
-    blake2b_simd::Params::new()
-        .hash_length(out_len)
-        .key(key)
-        .hash(transcript)
-        .as_bytes()
-        .to_vec()
+    blake2b_simd::Params::new().hash_length(out_len).key(key).hash(transcript).as_bytes().to_vec()
 }
 
 /// H_n: blake2b 64 bytes keyed, then sc_reduce to 32-byte scalar.
@@ -128,11 +123,7 @@ fn make_sender_receiver_secret(
     d_e: &[u8; 32],
     input_context: &[u8],
 ) -> [u8; 32] {
-    derive_bytes_32(
-        s_sr_unctx,
-        DOMAIN_SENDER_RECEIVER_SECRET,
-        &[d_e, input_context],
-    )
+    derive_bytes_32(s_sr_unctx, DOMAIN_SENDER_RECEIVER_SECRET, &[d_e, input_context])
 }
 
 /// Step 4a: k^o_g = H_n[s_sr_ctx]("Carrot key extension G", C_a)
@@ -161,10 +152,7 @@ pub fn recover_address_spend_pubkey(
     // K^o_ext = k_g * G + k_t * T
     let ext = EdwardsPoint::vartime_multiscalar_mul(
         &[k_g, k_t],
-        &[
-            curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
-            t_point,
-        ],
+        &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, t_point],
     );
 
     // K^j_s = Ko - ext
@@ -200,9 +188,7 @@ pub fn derive_commitment_mask(
 
 /// Step 7b: Compute Pedersen commitment and compare.
 fn pedersen_commit(amount: u64, mask: &Scalar) -> [u8; 32] {
-    let h = CompressedEdwardsY(H_POINT_BYTES)
-        .decompress()
-        .expect("invalid H");
+    let h = CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H");
     let mut amount_bytes = [0u8; 32];
     let le = amount.to_le_bytes();
     amount_bytes[..8].copy_from_slice(&le);
@@ -442,9 +428,7 @@ fn derive_bytes_16(key: &[u8], domain: &[u8], data: &[&[u8]]) -> [u8; 16] {
 /// C++ ref: carrot_core/hash_functions.cpp derive_scalar()
 fn derive_secret_unkeyed(domain: &[u8], data: &[&[u8]]) -> Scalar {
     let transcript = build_transcript(domain, data);
-    let hash64 = blake2b_simd::Params::new()
-        .hash_length(64)
-        .hash(&transcript);
+    let hash64 = blake2b_simd::Params::new().hash_length(64).hash(&transcript);
     let mut wide = [0u8; 64];
     wide.copy_from_slice(hash64.as_bytes());
     Scalar::from_bytes_mod_order_wide(&wide)
@@ -498,12 +482,7 @@ fn verify_normal_janus(
     // d_e' = derive_secret("Carrot sending key normal", anchor || input_context || K_s || pid)
     let d_e_scalar = derive_secret_unkeyed(
         DOMAIN_SENDING_KEY_NORMAL,
-        &[
-            decrypted_anchor,
-            input_context,
-            address_spend_pubkey,
-            payment_id,
-        ],
+        &[decrypted_anchor, input_context, address_spend_pubkey, payment_id],
     );
 
     // Apply Salvium clamping (only clear bit 255)

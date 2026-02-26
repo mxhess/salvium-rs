@@ -766,11 +766,7 @@ mod tests {
             0,
             "SAL",
             false,
-            &[(
-                "some_different_key".into(),
-                Some("carrot_origin_key".into()),
-                51_000_000_000,
-            )],
+            &[("some_different_key".into(), Some("carrot_origin_key".into()), 51_000_000_000)],
         );
 
         let stake = store.get_stake("orig_stake").unwrap();

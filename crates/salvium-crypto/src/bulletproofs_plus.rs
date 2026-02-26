@@ -27,9 +27,7 @@ fn inv_eight() -> Scalar {
 }
 
 fn h_point() -> EdwardsPoint {
-    CompressedEdwardsY(H_POINT_BYTES)
-        .decompress()
-        .expect("invalid H")
+    CompressedEdwardsY(H_POINT_BYTES).decompress().expect("invalid H")
 }
 
 // ─── Generator computation ──────────────────────────────────────────────────
@@ -586,11 +584,7 @@ pub fn bulletproof_plus_verify_batch(proofs: &[(&[EdwardsPoint], &BulletproofPlu
     let gens = compute_generators(max_mn);
 
     for data in &proof_data_vec {
-        let w = if proofs.len() == 1 {
-            Scalar::ONE
-        } else {
-            random_scalar()
-        };
+        let w = if proofs.len() == 1 { Scalar::ONE } else { random_scalar() };
 
         let e2 = data.e * data.e;
 
@@ -994,10 +988,7 @@ mod tests {
         let proof1 = bulletproof_plus_prove(&[100u64], &[random_scalar()]);
         let proof2 = bulletproof_plus_prove(&[200u64, 300u64], &[random_scalar(), random_scalar()]);
 
-        let batch = vec![
-            (proof1.v.as_slice(), &proof1),
-            (proof2.v.as_slice(), &proof2),
-        ];
+        let batch = vec![(proof1.v.as_slice(), &proof1), (proof2.v.as_slice(), &proof2)];
         assert!(bulletproof_plus_verify_batch(&batch));
     }
 }

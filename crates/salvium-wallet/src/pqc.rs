@@ -94,9 +94,7 @@ pub fn derive_keys(
     // 1. Classical key: argon2id(pin, kdfSalt) -> 32 bytes.
     let classical_key = salvium_crypto::argon2id_hash(pin, kdf_salt, t, m, p, 32);
     if classical_key.len() != 32 {
-        return Err(WalletError::KeyDerivation(
-            "argon2id classical key derivation failed".into(),
-        ));
+        return Err(WalletError::KeyDerivation("argon2id classical key derivation failed".into()));
     }
 
     // 2. KEM seed: argon2id(pin, kemSalt || KEM_DOMAIN) -> 64 bytes.
@@ -106,15 +104,10 @@ pub fn derive_keys(
 
     let kem_seed = salvium_crypto::argon2id_hash(pin, &kem_salt_with_domain, t, m, p, 64);
     if kem_seed.len() != 64 {
-        return Err(WalletError::KeyDerivation(
-            "argon2id KEM seed derivation failed".into(),
-        ));
+        return Err(WalletError::KeyDerivation("argon2id KEM seed derivation failed".into()));
     }
 
-    Ok(DerivedKeys {
-        classical_key: classical_key[..32].try_into().unwrap(),
-        kem_seed,
-    })
+    Ok(DerivedKeys { classical_key: classical_key[..32].try_into().unwrap(), kem_seed })
 }
 
 /// Combine classical + quantum keys via HKDF-SHA256 into a 32-byte AES key.
@@ -125,8 +118,7 @@ fn derive_aes_key(classical_key: &[u8; 32], quantum_key: &[u8]) -> Result<[u8; 3
 
     let hk = Hkdf::<Sha256>::new(None, &ikm);
     let mut aes_key = [0u8; 32];
-    hk.expand(HKDF_INFO, &mut aes_key)
-        .map_err(|e| WalletError::KeyDerivation(e.to_string()))?;
+    hk.expand(HKDF_INFO, &mut aes_key).map_err(|e| WalletError::KeyDerivation(e.to_string()))?;
     Ok(aes_key)
 }
 
@@ -194,11 +186,7 @@ pub fn encrypt_envelope(secrets: &WalletSecrets, pin: &str) -> Result<Vec<u8>, W
         kyber_ciphertext: hex::encode(kyber_ct.as_slice()),
         iv: hex::encode(nonce_bytes),
         ciphertext: hex::encode(ciphertext),
-        argon2: Argon2Params {
-            t: DEFAULT_T_COST,
-            m: DEFAULT_M_COST,
-            p: DEFAULT_PARALLELISM,
-        },
+        argon2: Argon2Params { t: DEFAULT_T_COST, m: DEFAULT_M_COST, p: DEFAULT_PARALLELISM },
     };
 
     serde_json::to_vec_pretty(&envelope).map_err(|e| WalletError::Encryption(e.to_string()))
@@ -246,9 +234,7 @@ pub fn decrypt_envelope(envelope_bytes: &[u8], pin: &str) -> Result<WalletSecret
         .as_slice()
         .try_into()
         .map_err(|_| WalletError::InvalidFile("invalid kyber ciphertext length".into()))?;
-    let quantum_key = dk
-        .decapsulate(&ct_array)
-        .map_err(|_| WalletError::DecryptionFailed)?;
+    let quantum_key = dk.decapsulate(&ct_array).map_err(|_| WalletError::DecryptionFailed)?;
 
     // 5. HKDF to combine classical + quantum -> AES key.
     let aes_key = derive_aes_key(&keys.classical_key, quantum_key.as_slice())?;
@@ -264,9 +250,8 @@ pub fn decrypt_envelope(envelope_bytes: &[u8], pin: &str) -> Result<WalletSecret
     let key = Key::<Aes256Gcm>::from_slice(&aes_key);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(&iv);
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
-        .map_err(|_| WalletError::DecryptionFailed)?;
+    let plaintext =
+        cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| WalletError::DecryptionFailed)?;
 
     // 7. Parse JSON -> WalletSecrets.
     serde_json::from_slice(&plaintext)
@@ -284,10 +269,7 @@ pub fn hex_to_32(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| WalletError::InvalidFile(format!("invalid hex: {}", e)))?;
     if bytes.len() != 32 {
-        return Err(WalletError::InvalidFile(format!(
-            "expected 32 bytes, got {}",
-            bytes.len()
-        )));
+        return Err(WalletError::InvalidFile(format!("expected 32 bytes, got {}", bytes.len())));
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);

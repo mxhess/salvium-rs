@@ -96,11 +96,8 @@ impl FinalizedTx {
 
         for (i, sig) in self.signatures.iter().enumerate() {
             let c_0 = hex_to_32(&sig.c_0)?;
-            let responses: Vec<[u8; 32]> = sig
-                .responses
-                .iter()
-                .map(|r| hex_to_32(r))
-                .collect::<Result<_, _>>()?;
+            let responses: Vec<[u8; 32]> =
+                sig.responses.iter().map(|r| hex_to_32(r)).collect::<Result<_, _>>()?;
 
             if i < rct.tclsags.len() {
                 // TCLSAG input
@@ -124,8 +121,7 @@ impl FinalizedTx {
             }
         }
 
-        tx.to_bytes()
-            .map_err(|e| format!("failed to serialize TX: {}", e))
+        tx.to_bytes().map_err(|e| format!("failed to serialize TX: {}", e))
     }
 }
 
@@ -182,10 +178,7 @@ impl PendingMultisigTx {
         let tx_bytes =
             hex::decode(&self.tx_blob).unwrap_or_else(|_| self.tx_blob.as_bytes().to_vec());
 
-        Ok(FinalizedTx {
-            tx_blob: tx_bytes,
-            signatures,
-        })
+        Ok(FinalizedTx { tx_blob: tx_bytes, signatures })
     }
 }
 
@@ -225,11 +218,7 @@ impl MultisigTxSet {
 
     /// Create a new transaction set with threshold configuration.
     pub fn with_config(threshold: usize, signer_count: usize) -> Self {
-        Self {
-            threshold,
-            signer_count,
-            ..Self::new()
-        }
+        Self { threshold, signer_count, ..Self::new() }
     }
 
     /// Add a pending multisig transaction.

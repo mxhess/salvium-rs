@@ -174,18 +174,12 @@ impl PricingRecord {
 
     /// Get spot price for a specific asset.
     pub fn spot_price(&self, asset_type: &str) -> u64 {
-        self.assets
-            .iter()
-            .find(|a| a.asset_type == asset_type)
-            .map_or(0, |a| a.spot_price)
+        self.assets.iter().find(|a| a.asset_type == asset_type).map_or(0, |a| a.spot_price)
     }
 
     /// Get moving average price for a specific asset.
     pub fn ma_price(&self, asset_type: &str) -> u64 {
-        self.assets
-            .iter()
-            .find(|a| a.asset_type == asset_type)
-            .map_or(0, |a| a.ma_price)
+        self.assets.iter().find(|a| a.asset_type == asset_type).map_or(0, |a| a.ma_price)
     }
 
     /// Build the JSON message that was signed (compact, no whitespace).
@@ -373,23 +367,13 @@ pub fn calculate_conversion(
 
     // If slippage exceeds limit, trigger refund
     if actual_slippage > slippage_limit {
-        return Ok(ConversionResult {
-            amount_minted: 0,
-            actual_slippage,
-            rate,
-            refund: true,
-        });
+        return Ok(ConversionResult { amount_minted: 0, actual_slippage, rate, refund: true });
     }
 
     let amount_after_slippage = amount_burnt - actual_slippage;
     let minted = converted_amount(rate, amount_after_slippage)?;
 
-    Ok(ConversionResult {
-        amount_minted: minted,
-        actual_slippage,
-        rate,
-        refund: false,
-    })
+    Ok(ConversionResult { amount_minted: minted, actual_slippage, rate, refund: false })
 }
 
 #[cfg(test)]
@@ -400,10 +384,7 @@ mod tests {
         PricingRecord {
             pr_version: 1,
             height: 100,
-            supply: SupplyData {
-                sal: 1_000_000,
-                vsd: 500_000,
-            },
+            supply: SupplyData { sal: 1_000_000, vsd: 500_000 },
             assets: vec![
                 AssetData {
                     asset_type: "SAL".to_string(),

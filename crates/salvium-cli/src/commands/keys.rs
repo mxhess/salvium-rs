@@ -6,10 +6,7 @@ pub async fn show_viewkey(ctx: &AppContext) -> Result {
     let wallet = open_wallet(ctx)?;
 
     println!("View secret key: {}", wallet.view_secret_key_hex());
-    println!(
-        "View public key: {}",
-        hex::encode(wallet.keys().cn.view_public_key)
-    );
+    println!("View public key: {}", hex::encode(wallet.keys().cn.view_public_key));
 
     Ok(())
 }
@@ -40,34 +37,16 @@ pub async fn show_carrot_keys(ctx: &AppContext) -> Result {
     if let Some(ps) = keys.carrot.prove_spend_key {
         println!("  Prove spend key:          {}", hex::encode(ps));
     }
-    println!(
-        "  View balance secret:      {}",
-        hex::encode(keys.carrot.view_balance_secret)
-    );
-    println!(
-        "  Generate image key:       {}",
-        hex::encode(keys.carrot.generate_image_key)
-    );
-    println!(
-        "  View incoming key:        {}",
-        hex::encode(keys.carrot.view_incoming_key)
-    );
-    println!(
-        "  Generate address secret:  {}",
-        hex::encode(keys.carrot.generate_address_secret)
-    );
-    println!(
-        "  Account spend pubkey:     {}",
-        hex::encode(keys.carrot.account_spend_pubkey)
-    );
+    println!("  View balance secret:      {}", hex::encode(keys.carrot.view_balance_secret));
+    println!("  Generate image key:       {}", hex::encode(keys.carrot.generate_image_key));
+    println!("  View incoming key:        {}", hex::encode(keys.carrot.view_incoming_key));
+    println!("  Generate address secret:  {}", hex::encode(keys.carrot.generate_address_secret));
+    println!("  Account spend pubkey:     {}", hex::encode(keys.carrot.account_spend_pubkey));
     println!(
         "  Primary address view pub: {}",
         hex::encode(keys.carrot.primary_address_view_pubkey)
     );
-    println!(
-        "  Account view pubkey:      {}",
-        hex::encode(keys.carrot.account_view_pubkey)
-    );
+    println!("  Account view pubkey:      {}", hex::encode(keys.carrot.account_view_pubkey));
 
     Ok(())
 }
@@ -95,10 +74,7 @@ pub async fn sign_data(ctx: &AppContext, file_path: &str) -> Result {
         .map_err(|e| format!("failed to read file {}: {}", file_path, e))?;
 
     let keys = wallet.keys();
-    let spend_secret = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key")?;
+    let spend_secret = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
 
     // Hash the data, then sign with Ed25519: sig = spend_secret * H(data).
     let hash = salvium_crypto::keccak256(&data);
@@ -162,12 +138,7 @@ pub async fn verify_data(
     let mut r_prime32 = [0u8; 32];
     r_prime32.copy_from_slice(&r_prime);
 
-    let c_check_data = [
-        &r_prime32[..],
-        &parsed_addr.spend_public_key[..],
-        &hash32[..],
-    ]
-    .concat();
+    let c_check_data = [&r_prime32[..], &parsed_addr.spend_public_key[..], &hash32[..]].concat();
     let c_check = salvium_crypto::keccak256(&c_check_data);
     let c_check_reduced = salvium_crypto::sc_reduce32(&c_check);
 

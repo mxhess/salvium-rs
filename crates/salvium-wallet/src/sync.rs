@@ -32,11 +32,7 @@ pub enum SyncEvent {
     /// Error during sync.
     Error(String),
     /// Block parse failure (block blob returned error JSON or empty blob).
-    ParseError {
-        height: u64,
-        blob_len: usize,
-        error: String,
-    },
+    ParseError { height: u64, blob_len: usize, error: String },
     /// Sync cancelled by caller.
     Cancelled { height: u64 },
 }
@@ -123,10 +119,8 @@ impl SyncEngine {
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<u64, WalletError> {
-        let daemon_height = daemon
-            .get_height()
-            .await
-            .map_err(|e| WalletError::Sync(e.to_string()))?;
+        let daemon_height =
+            daemon.get_height().await.map_err(|e| WalletError::Sync(e.to_string()))?;
 
         // daemon_height is the block count, so the last valid block index
         // is daemon_height - 1.
@@ -137,8 +131,7 @@ impl SyncEngine {
             // Persist chain tip so non-sync code (e.g. subaddress creation)
             // can determine the active hardfork without daemon access.
             let _ = db.set_attribute("chain_tip_height", &top_block.to_string());
-            db.get_sync_height()
-                .map_err(|e| WalletError::Storage(e.to_string()))?
+            db.get_sync_height().map_err(|e| WalletError::Storage(e.to_string()))?
         };
 
         if sync_height as u64 >= top_block {
@@ -159,11 +152,7 @@ impl SyncEngine {
         }
 
         if let Some(tx) = event_tx {
-            let _ = tx
-                .send(SyncEvent::Started {
-                    target_height: top_block,
-                })
-                .await;
+            let _ = tx.send(SyncEvent::Started { target_height: top_block }).await;
         }
 
         let mut current = sync_height as u64;
@@ -604,11 +593,8 @@ async fn process_bin_block(
     }
 
     // Build tx hash list from the parsed block blob.
-    let tx_hashes: Vec<String> = parsed
-        .tx_hashes
-        .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-        .collect();
+    let tx_hashes: Vec<String> =
+        parsed.tx_hashes.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
 
     // Scan regular transactions from the binary blobs.
     for (i, tx_blob) in entry.txs.iter().enumerate() {
@@ -720,12 +706,7 @@ async fn process_bin_block(
             }
             Err(e) => {
                 parse_error = true;
-                log::error!(
-                    "tx JSON deserialize failed at height={} tx_idx={}: {}",
-                    height,
-                    i,
-                    e
-                );
+                log::error!("tx JSON deserialize failed at height={} tx_idx={}: {}", height, i, e);
             }
         }
     }
@@ -747,9 +728,8 @@ async fn process_bin_block(
     // TX-ID matching (above) as the primary return detection method.
     if stake_lock_period > 0 {
         let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-        let locked_stakes = db
-            .get_stakes(Some("locked"), None)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let locked_stakes =
+            db.get_stakes(Some("locked"), None).map_err(|e| WalletError::Storage(e.to_string()))?;
         for stake in &locked_stakes {
             // Skip stakes that have return_output_key — they use TX-ID matching.
             if stake.return_output_key.is_some() {
@@ -758,10 +738,8 @@ async fn process_bin_block(
             if let Some(stake_height) = stake.stake_height {
                 let return_height = stake_height as u64 + stake_lock_period + 1;
                 if height >= return_height {
-                    let ptx_hash = header
-                        .protocol_tx_hash
-                        .as_deref()
-                        .unwrap_or("height-based-return");
+                    let ptx_hash =
+                        header.protocol_tx_hash.as_deref().unwrap_or("height-based-return");
                     if let Err(e) = db.mark_stake_returned(
                         &stake.stake_tx_hash,
                         ptx_hash,
@@ -785,10 +763,7 @@ async fn process_bin_block(
         }
     }
 
-    Ok(BlockProcessResult {
-        outputs: outputs_found,
-        parse_error,
-    })
+    Ok(BlockProcessResult { outputs: outputs_found, parse_error })
 }
 
 /// Process an already-fetched block: parse blob, scan miner tx and regular txs.
@@ -857,11 +832,7 @@ fn process_block_data(
 
         // Scan protocol transaction.
         if let Some(protocol_tx_json) = &parsed_block.protocol_tx {
-            let ptx_hash = block
-                .block_header
-                .protocol_tx_hash
-                .as_deref()
-                .filter(|s| !s.is_empty());
+            let ptx_hash = block.block_header.protocol_tx_hash.as_deref().filter(|s| !s.is_empty());
 
             let ptx_hash_str = ptx_hash
                 .map(|s| s.to_string())
@@ -909,12 +880,7 @@ fn process_block_data(
         let tx_bytes = match hex::decode(tx_hex) {
             Ok(b) => b,
             Err(e) => {
-                log::error!(
-                    "tx hex decode failed at height={} tx_idx={}: {}",
-                    height,
-                    i,
-                    e
-                );
+                log::error!("tx hex decode failed at height={} tx_idx={}: {}", height, i, e);
                 continue;
             }
         };
@@ -999,12 +965,7 @@ fn process_block_data(
                 }
             }
             Err(e) => {
-                log::error!(
-                    "tx JSON deserialize failed at height={} tx_idx={}: {}",
-                    height,
-                    i,
-                    e
-                );
+                log::error!("tx JSON deserialize failed at height={} tx_idx={}: {}", height, i, e);
             }
         }
     }
@@ -1089,11 +1050,7 @@ fn parse_tx_for_scanning(
     let tx_pub_key = tx_pub_key_01.or_else(|| additional_pubkeys.first().copied())?;
 
     // Extract first key image (for non-coinbase).
-    let first_key_image = if !is_coinbase {
-        extract_first_key_image(prefix)
-    } else {
-        None
-    };
+    let first_key_image = if !is_coinbase { extract_first_key_image(prefix) } else { None };
 
     // Determine tx_type.
     let tx_type = prefix
@@ -1118,30 +1075,19 @@ fn parse_tx_for_scanning(
         .unwrap_or(0) as u8;
 
     // Parse outputs — try new format (prefix.vout[]) first, then legacy (vout[]).
-    let vout = prefix
-        .get("vout")
-        .or_else(|| tx_json.get("vout"))
-        .and_then(|v| v.as_array())?;
+    let vout = prefix.get("vout").or_else(|| tx_json.get("vout")).and_then(|v| v.as_array())?;
 
     // Legacy ECDH info and output commitments.
     let rct_section = tx_json.get("rct").or_else(|| tx_json.get("rct_signatures"));
-    let ecdh_info = rct_section
-        .and_then(|r| r.get("ecdhInfo"))
-        .and_then(|e| e.as_array());
-    let out_pk = rct_section
-        .and_then(|r| r.get("outPk"))
-        .and_then(|e| e.as_array());
+    let ecdh_info = rct_section.and_then(|r| r.get("ecdhInfo")).and_then(|e| e.as_array());
+    let out_pk = rct_section.and_then(|r| r.get("outPk")).and_then(|e| e.as_array());
 
     let mut outputs = Vec::with_capacity(vout.len());
     for (i, out) in vout.iter().enumerate() {
         // Amount: try string first (new format), then integer (legacy).
         let amount = out
             .get("amount")
-            .and_then(|a| {
-                a.as_str()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .or_else(|| a.as_u64())
-            })
+            .and_then(|a| a.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| a.as_u64()))
             .unwrap_or(0);
 
         // Output public key: try flat "key" (new format), then nested
@@ -1181,10 +1127,8 @@ fn parse_tx_for_scanning(
 
         // CARROT 3-byte view tag (from "viewTag" field, 3 hex bytes = 6 chars).
         let carrot_view_tag = if out_type == 4 {
-            out.get("viewTag")
-                .and_then(|v| v.as_str())
-                .and_then(|s| hex::decode(s).ok())
-                .and_then(|b| {
+            out.get("viewTag").and_then(|v| v.as_str()).and_then(|s| hex::decode(s).ok()).and_then(
+                |b| {
                     if b.len() == 3 {
                         let mut arr = [0u8; 3];
                         arr.copy_from_slice(&b);
@@ -1192,7 +1136,8 @@ fn parse_tx_for_scanning(
                     } else {
                         None
                     }
-                })
+                },
+            )
         } else {
             None
         };
@@ -1211,9 +1156,7 @@ fn parse_tx_for_scanning(
                 additional_pubkeys.get(i).copied()
             }
         } else {
-            out.get("ephemeralPubkey")
-                .and_then(|v| v.as_str())
-                .and_then(hex_to_32)
+            out.get("ephemeralPubkey").and_then(|v| v.as_str()).and_then(hex_to_32)
         };
 
         // ECDH encrypted amount (from ecdhInfo if present).
@@ -1234,10 +1177,8 @@ fn parse_tx_for_scanning(
             .unwrap_or([0u8; 8]);
 
         // Pedersen commitment.
-        let commitment = out_pk
-            .and_then(|pks| pks.get(i))
-            .and_then(|v| v.as_str())
-            .and_then(hex_to_32);
+        let commitment =
+            out_pk.and_then(|pks| pks.get(i)).and_then(|v| v.as_str()).and_then(hex_to_32);
 
         // Asset type from on-chain output (e.g. "SAL", "SAL1").
         // New format: flat field at vout level ("assetType" or "asset_type").
@@ -1329,16 +1270,8 @@ fn extract_tx_pub_key_from_parsed(prefix: &serde_json::Value) -> Option<[u8; 32]
     let extra = prefix.get("extra")?.as_array()?;
     for entry in extra {
         // Match on type == 1 or tag == "tx_pubkey".
-        let is_pubkey = entry
-            .get("type")
-            .and_then(|v| v.as_u64())
-            .map(|t| t == 1)
-            .unwrap_or(false)
-            || entry
-                .get("tag")
-                .and_then(|v| v.as_str())
-                .map(|t| t == "tx_pubkey")
-                .unwrap_or(false);
+        let is_pubkey = entry.get("type").and_then(|v| v.as_u64()).map(|t| t == 1).unwrap_or(false)
+            || entry.get("tag").and_then(|v| v.as_str()).map(|t| t == "tx_pubkey").unwrap_or(false);
 
         if is_pubkey {
             if let Some(key_hex) = entry.get("key").and_then(|v| v.as_str()) {
@@ -1362,10 +1295,7 @@ fn extract_tx_pub_key_from_raw(tx_json: &serde_json::Value) -> Option<[u8; 32]> 
 
     // Try raw byte array.
     if let Some(extra) = tx_json.get("extra").and_then(|v| v.as_array()) {
-        let bytes: Vec<u8> = extra
-            .iter()
-            .filter_map(|v| v.as_u64().map(|n| n as u8))
-            .collect();
+        let bytes: Vec<u8> = extra.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect();
         for i in 0..bytes.len() {
             if bytes[i] == 0x01 && i + 33 <= bytes.len() {
                 let mut key = [0u8; 32];
@@ -1390,23 +1320,17 @@ fn extract_additional_pubkeys(prefix: &serde_json::Value) -> Vec<[u8; 32]> {
     };
 
     for entry in extra {
-        let is_additional = entry
-            .get("type")
-            .and_then(|v| v.as_u64())
-            .map(|t| t == 4)
-            .unwrap_or(false)
-            || entry
-                .get("tag")
-                .and_then(|v| v.as_str())
-                .map(|t| t == "additional_pubkeys")
-                .unwrap_or(false);
+        let is_additional =
+            entry.get("type").and_then(|v| v.as_u64()).map(|t| t == 4).unwrap_or(false)
+                || entry
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .map(|t| t == "additional_pubkeys")
+                    .unwrap_or(false);
 
         if is_additional {
             if let Some(keys) = entry.get("keys").and_then(|v| v.as_array()) {
-                return keys
-                    .iter()
-                    .filter_map(|v| v.as_str().and_then(hex_to_32))
-                    .collect();
+                return keys.iter().filter_map(|v| v.as_str().and_then(hex_to_32)).collect();
             }
         }
     }
@@ -1420,11 +1344,7 @@ fn extract_first_key_image(prefix: &serde_json::Value) -> Option<[u8; 32]> {
     let first = vin.first()?;
 
     // New format: { "keyImage": "hex", ... } or { "key": { "keyImage": "hex" } }
-    if let Some(ki) = first
-        .get("keyImage")
-        .and_then(|v| v.as_str())
-        .and_then(hex_to_32)
-    {
+    if let Some(ki) = first.get("keyImage").and_then(|v| v.as_str()).and_then(hex_to_32) {
         return Some(ki);
     }
 
@@ -1460,10 +1380,8 @@ fn extract_all_key_images(prefix: &serde_json::Value) -> Vec<String> {
         }
         // Legacy format: { "key": { "k_image": "hex" } }
         else if let Some(key) = input.get("key") {
-            if let Some(ki) = key
-                .get("k_image")
-                .or_else(|| key.get("keyImage"))
-                .and_then(|v| v.as_str())
+            if let Some(ki) =
+                key.get("k_image").or_else(|| key.get("keyImage")).and_then(|v| v.as_str())
             {
                 if ki.len() == 64 {
                     key_images.push(ki.to_string());
@@ -1546,11 +1464,7 @@ fn extract_inputs_with_offsets(prefix: &serde_json::Value) -> Vec<ParsedTxInput>
             absolute.push(running);
         }
 
-        inputs.push(ParsedTxInput {
-            key_image: ki_hex,
-            ring_member_indices: absolute,
-            asset_type,
-        });
+        inputs.push(ParsedTxInput { key_image: ki_hex, ring_member_indices: absolute, asset_type });
     }
 
     inputs
@@ -1577,10 +1491,7 @@ fn extract_fee(tx_json: &serde_json::Value) -> u64 {
         .get("rct")
         .or_else(|| tx_json.get("rct_signatures"))
         .and_then(|r| r.get("txnFee").or_else(|| r.get("txn_fee")))
-        .and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        })
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(0)
 }
 
@@ -1679,9 +1590,7 @@ fn detect_spent_outputs(
     let mut matched_key_images = std::collections::HashSet::new();
     for ki_hex in &key_images {
         // Check if this key image belongs to one of our outputs.
-        let output = db
-            .get_output(ki_hex)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let output = db.get_output(ki_hex).map_err(|e| WalletError::Storage(e.to_string()))?;
         if let Some(row) = output {
             // Count all outputs that belong to us, even if already marked spent
             // (e.g. by mark_inputs_spent after TX submission). This ensures
@@ -1744,11 +1653,7 @@ fn detect_spent_outputs(
     if spent_info.count > 0 && (tx_type == 6 || tx_type == 8) {
         let amount_burnt: u64 = prefix
             .get("amount_burnt")
-            .and_then(|v| {
-                v.as_str()
-                    .and_then(|s| s.parse().ok())
-                    .or_else(|| v.as_u64())
-            })
+            .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64()))
             .unwrap_or(0);
 
         let source_asset_type = prefix
@@ -1788,17 +1693,13 @@ fn detect_spent_outputs(
                 created_at: None,
                 updated_at: None,
             };
-            db.put_stake(&stake_row)
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            db.put_stake(&stake_row).map_err(|e| WalletError::Storage(e.to_string()))?;
             log::info!(
                 "stake tracked: tx={} amount_burnt={} asset={} return_key={}",
                 &tx_hash_hex[..16],
                 amount_burnt,
                 source_asset_type,
-                return_output_key
-                    .as_deref()
-                    .map(|k| &k[..k.len().min(16)])
-                    .unwrap_or("none")
+                return_output_key.as_deref().map(|k| &k[..k.len().min(16)]).unwrap_or("none")
             );
         }
     }
@@ -1829,11 +1730,7 @@ fn store_found_outputs(
 
         // Log non-coinbase CARROT matches for diagnostics.
         if output.is_carrot && !tx.is_coinbase {
-            let scan_path = if output.is_carrot_internal {
-                "INTERNAL"
-            } else {
-                "EXTERNAL"
-            };
+            let scan_path = if output.is_carrot_internal { "INTERNAL" } else { "EXTERNAL" };
             log::debug!(
                 "CARROT {} match: height={} tx_type={} out_idx={} amount={} addr=({},{}) asset={}",
                 scan_path,
@@ -1918,8 +1815,7 @@ fn store_found_outputs(
             let synthetic = salvium_crypto::keccak256(&buf);
             row.key_image = Some(format!("vo:{}", hex::encode(synthetic)));
         }
-        db.put_output(&row)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.put_output(&row).map_err(|e| WalletError::Storage(e.to_string()))?;
 
         // Populate salvium_txs for CONVERT(4)/STAKE(6)/AUDIT(8) change outputs.
         // These entries are needed later for pre-CARROT PROTOCOL return key
@@ -1939,11 +1835,7 @@ fn store_found_outputs(
             );
 
             // Add to live CN subaddress map if not already present.
-            if !scan_ctx
-                .cn_subaddress_map
-                .iter()
-                .any(|(k, _, _)| *k == output.output_public_key)
-            {
+            if !scan_ctx.cn_subaddress_map.iter().any(|(k, _, _)| *k == output.output_public_key) {
                 scan_ctx.cn_subaddress_map.push((
                     output.output_public_key,
                     output.subaddress_major,
@@ -1977,10 +1869,7 @@ fn store_found_outputs(
             if let Some(ref spend_secret) = scan_ctx.cn_spend_secret {
                 // Use the derivation pubkey that actually matched this output
                 // (shared tx_pub_key or per-output additional_pubkey).
-                let deriv_pubkey = output
-                    .cn_derivation_pubkey
-                    .as_ref()
-                    .unwrap_or(&tx.tx_pub_key);
+                let deriv_pubkey = output.cn_derivation_pubkey.as_ref().unwrap_or(&tx.tx_pub_key);
                 let derivation =
                     salvium_crypto::generate_key_derivation(deriv_pubkey, &scan_ctx.cn_view_secret);
                 if derivation.len() == 32 {
@@ -2066,10 +1955,7 @@ fn store_found_outputs(
                 output.amount,
                 output.asset_type,
                 output.output_index,
-                origin_stake_tx_hash
-                    .as_deref()
-                    .map(|h| &h[..h.len().min(16)])
-                    .unwrap_or("none")
+                origin_stake_tx_hash.as_deref().map(|h| &h[..h.len().min(16)]).unwrap_or("none")
             );
 
             let tx_hash_hex = hex::encode(tx.tx_hash);
@@ -2199,8 +2085,7 @@ async fn resolve_global_indices(
     // Get outputs that need global_index resolution.
     let pending = {
         let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_outputs_needing_global_index()
-            .map_err(|e| WalletError::Storage(e.to_string()))?
+        db.get_outputs_needing_global_index().map_err(|e| WalletError::Storage(e.to_string()))?
     };
 
     if pending.is_empty() {
@@ -2211,10 +2096,7 @@ async fn resolve_global_indices(
     let mut by_tx: std::collections::HashMap<String, Vec<(String, i64)>> =
         std::collections::HashMap::new();
     for (key_image, tx_hash, output_index) in &pending {
-        by_tx
-            .entry(tx_hash.clone())
-            .or_default()
-            .push((key_image.clone(), *output_index));
+        by_tx.entry(tx_hash.clone()).or_default().push((key_image.clone(), *output_index));
     }
 
     // Fetch transaction entries (which include output_indices).
@@ -2265,8 +2147,7 @@ async fn find_fork_point(
     while height > 0 {
         let stored_hash = {
             let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-            db.get_block_hash(height as i64)
-                .map_err(|e| WalletError::Storage(e.to_string()))?
+            db.get_block_hash(height as i64).map_err(|e| WalletError::Storage(e.to_string()))?
         };
 
         if let Some(stored) = stored_hash {
@@ -2328,9 +2209,7 @@ mod tests {
 
     #[test]
     fn test_sync_event_variants() {
-        let _started = SyncEvent::Started {
-            target_height: 1000,
-        };
+        let _started = SyncEvent::Started { target_height: 1000 };
         let _progress = SyncEvent::Progress {
             current_height: 500,
             target_height: 1000,
@@ -2339,18 +2218,13 @@ mod tests {
             empty_blobs: 0,
         };
         let _complete = SyncEvent::Complete { height: 1000 };
-        let _reorg = SyncEvent::Reorg {
-            from_height: 1000,
-            to_height: 990,
-        };
+        let _reorg = SyncEvent::Reorg { from_height: 1000, to_height: 990 };
     }
 
     #[test]
     fn test_sync_event_all_variants() {
         // Create every SyncEvent variant and verify fields via Debug format.
-        let started = SyncEvent::Started {
-            target_height: 5000,
-        };
+        let started = SyncEvent::Started { target_height: 5000 };
         let debug_str = format!("{:?}", started);
         assert!(debug_str.contains("Started"));
         assert!(debug_str.contains("5000"));
@@ -2373,10 +2247,7 @@ mod tests {
         assert!(debug_str.contains("Complete"));
         assert!(debug_str.contains("5000"));
 
-        let reorg = SyncEvent::Reorg {
-            from_height: 5000,
-            to_height: 4990,
-        };
+        let reorg = SyncEvent::Reorg { from_height: 5000, to_height: 4990 };
         let debug_str = format!("{:?}", reorg);
         assert!(debug_str.contains("Reorg"));
         assert!(debug_str.contains("5000"));

@@ -488,10 +488,7 @@ where
 }
 
 fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
 // ─── WalletDb ───────────────────────────────────────────────────────────────
@@ -531,8 +528,7 @@ impl WalletDb {
     /// password changes don't require rekey.
     pub fn rekey(&self, new_key: &[u8]) -> Result<(), rusqlite::Error> {
         let hex_key = hex::encode(new_key);
-        self.conn
-            .execute_batch(&format!("PRAGMA rekey = \"x'{hex_key}'\";"))
+        self.conn.execute_batch(&format!("PRAGMA rekey = \"x'{hex_key}'\";"))
     }
 
     // ── Output Operations ───────────────────────────────────────────────
@@ -781,10 +777,7 @@ impl WalletDb {
             params![new_key_image, now, old_key_image],
         )?;
         // Remove old synthetic key_images entry and insert the real one
-        self.conn.execute(
-            "DELETE FROM key_images WHERE key_image = ?1",
-            params![old_key_image],
-        )?;
+        self.conn.execute("DELETE FROM key_images WHERE key_image = ?1", params![old_key_image])?;
         self.conn.execute(
             "INSERT OR REPLACE INTO key_images (key_image, tx_hash, output_index, is_spent) VALUES (?1, '', 0, 0)",
             params![new_key_image],
@@ -801,11 +794,7 @@ impl WalletDb {
             "SELECT key_image, tx_hash, output_index FROM outputs WHERE global_index IS NULL",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
         })?;
         rows.collect()
     }
@@ -829,10 +818,8 @@ impl WalletDb {
 
     pub fn put_tx(&self, row: &TransactionRow) -> Result<(), rusqlite::Error> {
         let now = now_millis();
-        let transfers_json = row
-            .transfers
-            .as_ref()
-            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let transfers_json =
+            row.transfers.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
         self.conn.execute(
             "INSERT OR REPLACE INTO transactions (
                 tx_hash, tx_pub_key, block_height, block_timestamp,
@@ -955,11 +942,7 @@ impl WalletDb {
     pub fn get_sync_height(&self) -> Result<i64, rusqlite::Error> {
         let result: Option<String> = self
             .conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'sync_height'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT value FROM meta WHERE key = 'sync_height'", [], |r| r.get(0))
             .optional()?;
         Ok(result.and_then(|s| s.parse().ok()).unwrap_or(0))
     }
@@ -984,11 +967,7 @@ impl WalletDb {
     pub fn get_block_hash(&self, height: i64) -> Result<Option<String>, rusqlite::Error> {
         let meta_key = format!("block:{}", height);
         self.conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = ?1",
-                params![meta_key],
-                |r| r.get(0),
-            )
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![meta_key], |r| r.get(0))
             .optional()
     }
 
@@ -1007,16 +986,10 @@ impl WalletDb {
         )?;
 
         // Delete outputs above height
-        tx.execute(
-            "DELETE FROM outputs WHERE block_height > ?1",
-            params![height],
-        )?;
+        tx.execute("DELETE FROM outputs WHERE block_height > ?1", params![height])?;
 
         // Delete transactions above height
-        tx.execute(
-            "DELETE FROM transactions WHERE block_height > ?1",
-            params![height],
-        )?;
+        tx.execute("DELETE FROM transactions WHERE block_height > ?1", params![height])?;
 
         // Delete block hashes above height
         tx.execute(
@@ -1066,9 +1039,8 @@ impl WalletDb {
 
     /// Returns the distinct asset types present in the outputs table.
     pub fn get_asset_types(&self) -> Result<Vec<String>, rusqlite::Error> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT asset_type FROM outputs ORDER BY asset_type")?;
+        let mut stmt =
+            self.conn.prepare("SELECT DISTINCT asset_type FROM outputs ORDER BY asset_type")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut result = Vec::new();
         for row in rows {
@@ -1112,23 +1084,15 @@ impl WalletDb {
         let mut total: u128 = 0;
         let mut unlocked: u128 = 0;
 
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as u128;
+        let now_secs =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as u128;
 
         for row in rows {
             let (amount_str, block_height, unlock_time_str, tx_type) = row?;
             let amount: u128 = amount_str.parse().unwrap_or(0);
             total += amount;
 
-            if is_unlocked(
-                current_height,
-                block_height,
-                &unlock_time_str,
-                tx_type,
-                now_secs,
-            ) {
+            if is_unlocked(current_height, block_height, &unlock_time_str, tx_type, now_secs) {
                 unlocked += amount;
             }
         }
@@ -1165,10 +1129,8 @@ impl WalletDb {
             param_values.push(Box::new(account_index as i64));
         }
 
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as u128;
+        let now_secs =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as u128;
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|b| b.as_ref()).collect();
@@ -1190,13 +1152,7 @@ impl WalletDb {
             let amount: u128 = amount_str.parse().unwrap_or(0);
             let entry = balances.entry(asset_type).or_insert((0, 0));
             entry.0 += amount;
-            if is_unlocked(
-                current_height,
-                block_height,
-                &unlock_time_str,
-                tx_type,
-                now_secs,
-            ) {
+            if is_unlocked(current_height, block_height, &unlock_time_str, tx_type, now_secs) {
                 entry.1 += amount;
             }
         }
@@ -1470,10 +1426,7 @@ impl WalletDb {
     pub fn delete_stakes_above(&self, height: i64) -> Result<(), rusqlite::Error> {
         let now = now_millis();
         // Delete stakes created above the height
-        self.conn.execute(
-            "DELETE FROM stakes WHERE stake_height > ?1",
-            params![height],
-        )?;
+        self.conn.execute("DELETE FROM stakes WHERE stake_height > ?1", params![height])?;
         // Undo returns above the height (revert to 'locked')
         self.conn.execute(
             "UPDATE stakes SET status = 'locked', return_tx_hash = NULL, return_height = NULL,
@@ -1544,15 +1497,10 @@ impl WalletDb {
     /// Get all salvium_txs entries as (Ko bytes, major, minor) for CN
     /// subaddress map population. Returns decoded 32-byte Kos.
     pub fn get_all_salvium_tx_keys(&self) -> Result<Vec<([u8; 32], u32, u32)>, rusqlite::Error> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT change_ko, subaddr_major, subaddr_minor FROM salvium_txs")?;
+        let mut stmt =
+            self.conn.prepare("SELECT change_ko, subaddr_major, subaddr_minor FROM salvium_txs")?;
         let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
         })?;
         let mut result = Vec::new();
         for row in rows {
@@ -1716,10 +1664,8 @@ impl WalletDb {
 
     /// Delete an address book entry by row_id.
     pub fn delete_address_book_entry(&self, row_id: i64) -> Result<bool, rusqlite::Error> {
-        let changed = self.conn.execute(
-            "DELETE FROM address_book WHERE row_id = ?1",
-            params![row_id],
-        )?;
+        let changed =
+            self.conn.execute("DELETE FROM address_book WHERE row_id = ?1", params![row_id])?;
         Ok(changed > 0)
     }
 
@@ -1844,19 +1790,15 @@ impl WalletDb {
 
     /// Freeze an output (exclude from coin selection).
     pub fn freeze_output(&self, key_image: &str) -> Result<(), rusqlite::Error> {
-        self.conn.execute(
-            "UPDATE outputs SET is_frozen = 1 WHERE key_image = ?1",
-            params![key_image],
-        )?;
+        self.conn
+            .execute("UPDATE outputs SET is_frozen = 1 WHERE key_image = ?1", params![key_image])?;
         Ok(())
     }
 
     /// Thaw a frozen output.
     pub fn thaw_output(&self, key_image: &str) -> Result<(), rusqlite::Error> {
-        self.conn.execute(
-            "UPDATE outputs SET is_frozen = 0 WHERE key_image = ?1",
-            params![key_image],
-        )?;
+        self.conn
+            .execute("UPDATE outputs SET is_frozen = 0 WHERE key_image = ?1", params![key_image])?;
         Ok(())
     }
 
@@ -1904,9 +1846,8 @@ impl WalletDb {
         let mut stmt = self.conn.prepare(
             "SELECT key_image FROM outputs WHERE tx_hash = ?1 AND key_image IS NOT NULL",
         )?;
-        let kis: Vec<String> = stmt
-            .query_map(params![tx_hash], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let kis: Vec<String> =
+            stmt.query_map(params![tx_hash], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
 
         let mut result = HashMap::new();
         for ki in kis {
@@ -1925,10 +1866,7 @@ impl WalletDb {
         members: &[(i64, i64, bool)],
     ) -> Result<(), rusqlite::Error> {
         // Clear existing ring data first.
-        self.conn.execute(
-            "DELETE FROM ring_members WHERE key_image = ?1",
-            params![key_image],
-        )?;
+        self.conn.execute("DELETE FROM ring_members WHERE key_image = ?1", params![key_image])?;
         let mut stmt = self.conn.prepare(
             "INSERT INTO ring_members (key_image, ring_index, global_out, relative) \
              VALUES (?1, ?2, ?3, ?4)",
@@ -1941,10 +1879,9 @@ impl WalletDb {
 
     /// Remove ring data for a key image.
     pub fn unset_ring(&self, key_image: &str) -> Result<bool, rusqlite::Error> {
-        let count = self.conn.execute(
-            "DELETE FROM ring_members WHERE key_image = ?1",
-            params![key_image],
-        )?;
+        let count = self
+            .conn
+            .execute("DELETE FROM ring_members WHERE key_image = ?1", params![key_image])?;
         Ok(count > 0)
     }
 
@@ -1953,9 +1890,8 @@ impl WalletDb {
         let mut stmt = self.conn.prepare(
             "SELECT key_image FROM outputs WHERE tx_hash = ?1 AND key_image IS NOT NULL",
         )?;
-        let kis: Vec<String> = stmt
-            .query_map(params![tx_hash], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let kis: Vec<String> =
+            stmt.query_map(params![tx_hash], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
 
         let mut count = 0;
         for ki in &kis {
@@ -2042,18 +1978,14 @@ impl WalletDb {
 
     /// Update MMS message state.
     pub fn update_mms_message_state(&self, id: i64, state: i64) -> Result<(), rusqlite::Error> {
-        self.conn.execute(
-            "UPDATE mms_messages SET state = ?2 WHERE id = ?1",
-            params![id, state],
-        )?;
+        self.conn
+            .execute("UPDATE mms_messages SET state = ?2 WHERE id = ?1", params![id, state])?;
         Ok(())
     }
 
     /// Delete an MMS message.
     pub fn delete_mms_message(&self, id: i64) -> Result<bool, rusqlite::Error> {
-        let count = self
-            .conn
-            .execute("DELETE FROM mms_messages WHERE id = ?1", params![id])?;
+        let count = self.conn.execute("DELETE FROM mms_messages WHERE id = ?1", params![id])?;
         Ok(count > 0)
     }
 
@@ -2134,13 +2066,7 @@ pub fn is_output_unlocked_ext(
     tx_type: i64,
     now_secs: u128,
 ) -> bool {
-    is_unlocked(
-        current_height,
-        block_height,
-        unlock_time_str,
-        tx_type,
-        now_secs,
-    )
+    is_unlocked(current_height, block_height, unlock_time_str, tx_type, now_secs)
 }
 
 fn is_unlocked(
@@ -2291,11 +2217,7 @@ pub fn storage_open(path: &str, key: &[u8]) -> Result<u32, String> {
 }
 
 pub fn storage_close(handle: u32) -> Result<(), String> {
-    dbs()
-        .lock()
-        .unwrap()
-        .remove(&handle)
-        .ok_or_else(|| "invalid handle".to_string())?;
+    dbs().lock().unwrap().remove(&handle).ok_or_else(|| "invalid handle".to_string())?;
     Ok(())
 }
 
@@ -2304,9 +2226,7 @@ where
     F: FnOnce(&WalletDb) -> Result<R, rusqlite::Error>,
 {
     let map = dbs().lock().unwrap();
-    let db = map
-        .get(&handle)
-        .ok_or_else(|| "invalid handle".to_string())?;
+    let db = map.get(&handle).ok_or_else(|| "invalid handle".to_string())?;
     f(db).map_err(|e| e.to_string())
 }
 
@@ -2423,9 +2343,7 @@ mod tests {
 
         with_db(handle, |db| db.put_output(&output)).unwrap();
         with_db(handle, |db| db.mark_spent("ki_spend", "tx_spend", 600)).unwrap();
-        let got = with_db(handle, |db| db.get_output("ki_spend"))
-            .unwrap()
-            .unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_spend")).unwrap().unwrap();
         assert!(got.is_spent);
         assert_eq!(got.spent_tx_hash, Some("tx_spend".into()));
         assert_eq!(got.spent_height, Some(600));
@@ -2793,11 +2711,7 @@ mod tests {
                 carrot_enote_type: None,
                 is_spent: i == 0, // first one is spent
                 spent_height: if i == 0 { Some(200) } else { None },
-                spent_tx_hash: if i == 0 {
-                    Some("tx_spend".into())
-                } else {
-                    None
-                },
+                spent_tx_hash: if i == 0 { Some("tx_spend".into()) } else { None },
                 unlock_time: "0".into(),
                 tx_type: 3,
                 tx_pub_key: None,
@@ -2926,23 +2840,14 @@ mod tests {
 
         // Height 5 and 10 outputs survive
         let o5 = with_db(handle, |db| db.get_output("ki_h5")).unwrap();
-        assert!(
-            o5.is_some(),
-            "output at height 5 should survive rollback to 10"
-        );
+        assert!(o5.is_some(), "output at height 5 should survive rollback to 10");
 
         let o10 = with_db(handle, |db| db.get_output("ki_h10")).unwrap();
-        assert!(
-            o10.is_some(),
-            "output at height 10 should survive rollback to 10"
-        );
+        assert!(o10.is_some(), "output at height 10 should survive rollback to 10");
 
         // Height 15 output removed
         let o15 = with_db(handle, |db| db.get_output("ki_h15")).unwrap();
-        assert!(
-            o15.is_none(),
-            "output at height 15 should be removed by rollback to 10"
-        );
+        assert!(o15.is_none(), "output at height 15 should be removed by rollback to 10");
 
         cleanup(handle, &path);
     }
@@ -2959,22 +2864,15 @@ mod tests {
         with_db(handle, |db| db.mark_spent("ki_unspend", "spending_tx", 12)).unwrap();
 
         // Verify it is spent
-        let got = with_db(handle, |db| db.get_output("ki_unspend"))
-            .unwrap()
-            .unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_unspend")).unwrap().unwrap();
         assert!(got.is_spent);
         assert_eq!(got.spent_height, Some(12));
 
         // Rollback to height 10 -> spent at 12 should be undone
         with_db(handle, |db| db.rollback(10)).unwrap();
 
-        let got = with_db(handle, |db| db.get_output("ki_unspend"))
-            .unwrap()
-            .unwrap();
-        assert!(
-            !got.is_spent,
-            "output should be unspent after rollback past spent_height"
-        );
+        let got = with_db(handle, |db| db.get_output("ki_unspend")).unwrap().unwrap();
+        assert!(!got.is_spent, "output should be unspent after rollback past spent_height");
         assert_eq!(got.spent_tx_hash, None);
         assert_eq!(got.spent_height, None);
 
@@ -3026,10 +2924,7 @@ mod tests {
         assert!(s5.is_some(), "stake at height 5 should survive");
         // Its return was at height 12 (> 10), so it should be reverted to locked
         let s5 = s5.unwrap();
-        assert_eq!(
-            s5.status, "locked",
-            "stake return above rollback height should be reverted"
-        );
+        assert_eq!(s5.status, "locked", "stake return above rollback height should be reverted");
         assert_eq!(s5.return_tx_hash, None);
         assert_eq!(s5.return_height, None);
         assert_eq!(s5.return_amount, "0");
@@ -3108,22 +3003,13 @@ mod tests {
         let t5 = with_db(handle, |db| db.get_tx("tx_rb_5")).unwrap();
         assert!(t5.is_some(), "tx at height 5 should survive rollback to 12");
         let t10 = with_db(handle, |db| db.get_tx("tx_rb_10")).unwrap();
-        assert!(
-            t10.is_some(),
-            "tx at height 10 should survive rollback to 12"
-        );
+        assert!(t10.is_some(), "tx at height 10 should survive rollback to 12");
 
         // Txs at 15, 20 should be removed
         let t15 = with_db(handle, |db| db.get_tx("tx_rb_15")).unwrap();
-        assert!(
-            t15.is_none(),
-            "tx at height 15 should be removed by rollback to 12"
-        );
+        assert!(t15.is_none(), "tx at height 15 should be removed by rollback to 12");
         let t20 = with_db(handle, |db| db.get_tx("tx_rb_20")).unwrap();
-        assert!(
-            t20.is_none(),
-            "tx at height 20 should be removed by rollback to 12"
-        );
+        assert!(t20.is_none(), "tx at height 20 should be removed by rollback to 12");
 
         cleanup(handle, &path);
     }
@@ -3141,18 +3027,14 @@ mod tests {
 
         // Mark spent
         with_db(handle, |db| db.mark_spent("ki_mu", "spend_tx", 200)).unwrap();
-        let got = with_db(handle, |db| db.get_output("ki_mu"))
-            .unwrap()
-            .unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_mu")).unwrap().unwrap();
         assert!(got.is_spent);
         assert_eq!(got.spent_tx_hash, Some("spend_tx".into()));
         assert_eq!(got.spent_height, Some(200));
 
         // Mark unspent
         with_db(handle, |db| db.mark_unspent("ki_mu")).unwrap();
-        let got = with_db(handle, |db| db.get_output("ki_mu"))
-            .unwrap()
-            .unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_mu")).unwrap().unwrap();
         assert!(!got.is_spent, "output should be unspent after mark_unspent");
         assert_eq!(got.spent_tx_hash, None);
         assert_eq!(got.spent_height, None);
@@ -3194,9 +3076,7 @@ mod tests {
         };
 
         with_db(handle, |db| db.put_output(&output)).unwrap();
-        let got = with_db(handle, |db| db.get_output("ki_full"))
-            .unwrap()
-            .unwrap();
+        let got = with_db(handle, |db| db.get_output("ki_full")).unwrap().unwrap();
 
         assert_eq!(got.key_image, Some("ki_full".into()));
         assert_eq!(got.public_key, Some("pk_full".into()));
@@ -3291,12 +3171,8 @@ mod tests {
         let (handle, path) = test_db();
 
         // Insert outputs with varying amounts
-        let amounts = [
-            ("ki_ar_1", "100"),
-            ("ki_ar_2", "500"),
-            ("ki_ar_3", "1000"),
-            ("ki_ar_4", "5000"),
-        ];
+        let amounts =
+            [("ki_ar_1", "100"), ("ki_ar_2", "500"), ("ki_ar_3", "1000"), ("ki_ar_4", "5000")];
         for (ki, amt) in &amounts {
             let o = make_output(ki, 100, amt, "SAL");
             with_db(handle, |db| db.put_output(&o)).unwrap();
@@ -3363,10 +3239,7 @@ mod tests {
 
         // Balance should exclude the frozen output
         let bal = with_db(handle, |db| db.get_balance(200, "SAL", -1)).unwrap();
-        assert_eq!(
-            bal.balance, "1000",
-            "frozen output should be excluded from balance"
-        );
+        assert_eq!(bal.balance, "1000", "frozen output should be excluded from balance");
         assert_eq!(bal.unlocked_balance, "1000");
 
         // Query with is_frozen filter
@@ -3445,11 +3318,7 @@ mod tests {
             max_amount: None,
         };
         let results = with_db(handle, |db| db.get_outputs(&query)).unwrap();
-        assert_eq!(
-            results.len(),
-            1,
-            "should get 1 output for account 0 subaddress 1"
-        );
+        assert_eq!(results.len(), 1, "should get 1 output for account 0 subaddress 1");
         assert_eq!(results[0].key_image, Some("ki_sa_01".into()));
 
         cleanup(handle, &path);
@@ -3518,10 +3387,7 @@ mod tests {
         with_db(handle, |db| db.put_stake(&stake)).unwrap();
 
         // Look up by change_output_key
-        let got = with_db(handle, |db| {
-            db.get_stake_by_output_key("outkey_stake_by_ok")
-        })
-        .unwrap();
+        let got = with_db(handle, |db| db.get_stake_by_output_key("outkey_stake_by_ok")).unwrap();
         assert!(got.is_some());
         let got = got.unwrap();
         assert_eq!(got.stake_tx_hash, "stake_by_ok");

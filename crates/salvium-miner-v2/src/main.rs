@@ -97,10 +97,7 @@ fn maybe_reinit_loop(
         return true;
     }
     let seed_bytes = hex::decode(seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
-    eprintln!(
-        "[stratum] Seed hash: {:.16}... — initializing RandomX v2",
-        seed_hash
-    );
+    eprintln!("[stratum] Seed hash: {:.16}... — initializing RandomX v2", seed_hash);
     if let Some(old) = mining_loop.take() {
         old.stop();
     }
@@ -140,10 +137,7 @@ fn dispatch_job(
             target: None,
         });
     }
-    eprintln!(
-        "[stratum] Job {} (height={}, diff={})",
-        job.job_id, job.height, job.difficulty
-    );
+    eprintln!("[stratum] Job {} (height={}, diff={})", job.job_id, job.height, job.difficulty);
 }
 
 /// Stratum pool mining mode (CryptoNote protocol for RandomX v2).
@@ -312,19 +306,13 @@ fn run_stratum(args: &Args) {
 
     // Final stats
     let elapsed = start_time.elapsed().as_secs_f64();
-    let total = mining_loop
-        .as_ref()
-        .map(|ml| ml.hash_count.load(Ordering::Relaxed))
-        .unwrap_or(0);
+    let total = mining_loop.as_ref().map(|ml| ml.hash_count.load(Ordering::Relaxed)).unwrap_or(0);
     eprintln!();
     eprintln!("Shutting down...");
     eprintln!("Total hashes:    {}", total);
     eprintln!("Shares accepted: {}", shares_accepted);
     eprintln!("Shares rejected: {}", shares_rejected);
-    eprintln!(
-        "Avg hashrate:    {}",
-        format_hashrate(total as f64 / elapsed)
-    );
+    eprintln!("Avg hashrate:    {}", format_hashrate(total as f64 / elapsed));
 
     if let Some(ml) = mining_loop {
         ml.stop();
@@ -379,10 +367,7 @@ fn run_daemon(args: &Args) {
         }
     };
 
-    eprintln!(
-        "Daemon height: {}, difficulty: {}",
-        info.height, info.difficulty
-    );
+    eprintln!("Daemon height: {}, difficulty: {}", info.height, info.difficulty);
 
     // Get initial block template
     let template = {
@@ -410,10 +395,7 @@ fn run_daemon(args: &Args) {
         match tmpl {
             Some(t) => t,
             None => {
-                log::error!(
-                    "failed to get block template after 5 attempts: {}",
-                    last_err
-                );
+                log::error!("failed to get block template after 5 attempts: {}", last_err);
                 std::process::exit(1);
             }
         }
@@ -421,10 +403,7 @@ fn run_daemon(args: &Args) {
 
     let difficulty = parse_difficulty(template.difficulty, template.wide_difficulty.as_deref());
 
-    eprintln!(
-        "Template: height={}, difficulty={}",
-        template.height, difficulty
-    );
+    eprintln!("Template: height={}, difficulty={}", template.height, difficulty);
 
     let seed_bytes = hex::decode(&template.seed_hash).unwrap_or_else(|_| vec![0u8; 32]);
     let hashing_blob = hex::decode(&template.blockhashing_blob).expect("Invalid hashing blob");
@@ -485,10 +464,7 @@ fn run_daemon(args: &Args) {
             }
 
             eprintln!();
-            eprintln!(
-                "*** BLOCK FOUND at height {}! nonce={} ***",
-                current_height, block.nonce
-            );
+            eprintln!("*** BLOCK FOUND at height {}! nonce={} ***", current_height, block.nonce);
 
             match client.submit_block(&block.blob_hex) {
                 Ok(()) => {
@@ -629,10 +605,7 @@ fn ctrlc_handler(running: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 
     #[cfg(unix)]
     unsafe {
-        libc::signal(
-            libc::SIGINT,
-            handle_sigint as *const () as libc::sighandler_t,
-        );
+        libc::signal(libc::SIGINT, handle_sigint as *const () as libc::sighandler_t);
         RUNNING_FLAG.store(running.as_ref() as *const _ as usize, Ordering::SeqCst);
     }
 }

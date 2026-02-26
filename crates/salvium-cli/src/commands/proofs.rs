@@ -22,9 +22,7 @@ pub async fn get_tx_key(ctx: &AppContext, tx_hash: &str) -> Result {
                 max_height: None,
             };
             let txs = wallet.get_transfers(&query)?;
-            let tx = txs
-                .first()
-                .ok_or_else(|| format!("transaction not found: {}", tx_hash))?;
+            let tx = txs.first().ok_or_else(|| format!("transaction not found: {}", tx_hash))?;
 
             match &tx.tx_pub_key {
                 Some(pk) => println!("Tx public key: {}", pk),
@@ -96,12 +94,8 @@ pub async fn get_tx_proof(ctx: &AppContext, tx_hash: &str, address: &str, messag
     let derivation =
         salvium_crypto::generate_key_derivation(&parsed_addr.view_public_key, &tx_key_bytes);
 
-    let proof_data = [
-        message.as_bytes(),
-        &hex::decode(tx_hash).unwrap_or_default(),
-        &derivation,
-    ]
-    .concat();
+    let proof_data =
+        [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default(), &derivation].concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
     let mut proof_hash32 = [0u8; 32];
     proof_hash32.copy_from_slice(&proof_hash[..32]);
@@ -152,12 +146,8 @@ pub async fn check_tx_proof(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid address: {}", e))?;
 
-    let proof_data = [
-        message.as_bytes(),
-        &hex::decode(tx_hash).unwrap_or_default(),
-        derivation,
-    ]
-    .concat();
+    let proof_data =
+        [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default(), derivation].concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
     let mut proof_hash32 = [0u8; 32];
     proof_hash32.copy_from_slice(&proof_hash[..32]);
@@ -165,9 +155,7 @@ pub async fn check_tx_proof(
     // Fetch the tx_pubkey from the daemon to verify.
     let daemon = DaemonRpc::new(&ctx.daemon_url);
     let tx_entries = daemon.get_transactions(&[tx_hash], true).await?;
-    let tx_entry = tx_entries
-        .first()
-        .ok_or("transaction not found on daemon")?;
+    let tx_entry = tx_entries.first().ok_or("transaction not found on daemon")?;
 
     // tx_pub_key is in the extra map for TransactionEntry.
     let tx_pubkey_hex = tx_entry
@@ -216,22 +204,13 @@ pub async fn get_spend_proof(ctx: &AppContext, tx_hash: &str, message: &str) -> 
         max_height: None,
     };
     let txs = wallet.get_transfers(&query)?;
-    let _tx = txs
-        .first()
-        .ok_or_else(|| format!("outgoing transaction not found: {}", tx_hash))?;
+    let _tx = txs.first().ok_or_else(|| format!("outgoing transaction not found: {}", tx_hash))?;
 
     // A spend proof demonstrates knowledge of the key images' secret keys.
     let keys = wallet.keys();
-    let spend_secret = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key")?;
+    let spend_secret = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
 
-    let proof_data = [
-        message.as_bytes(),
-        &hex::decode(tx_hash).unwrap_or_default(),
-    ]
-    .concat();
+    let proof_data = [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default()].concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
 
     // Sign with the spend key.
@@ -275,15 +254,9 @@ pub async fn check_spend_proof(
 
     let daemon = DaemonRpc::new(&ctx.daemon_url);
     let tx_entries = daemon.get_transactions(&[tx_hash], true).await?;
-    let _tx_entry = tx_entries
-        .first()
-        .ok_or("transaction not found on daemon")?;
+    let _tx_entry = tx_entries.first().ok_or("transaction not found on daemon")?;
 
-    let proof_data = [
-        message.as_bytes(),
-        &hex::decode(tx_hash).unwrap_or_default(),
-    ]
-    .concat();
+    let proof_data = [message.as_bytes(), &hex::decode(tx_hash).unwrap_or_default()].concat();
     let proof_hash = salvium_crypto::keccak256(&proof_data);
     let mut proof_hash32 = [0u8; 32];
     proof_hash32.copy_from_slice(&proof_hash[..32]);
@@ -312,10 +285,7 @@ pub async fn get_reserve_proof(ctx: &AppContext, amount_str: &str, message: &str
     };
 
     let keys = wallet.keys();
-    let spend_secret = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key")?;
+    let spend_secret = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
 
     // Build proof data: address + amount + message.
     let addr = wallet.cn_address().unwrap_or_default();
@@ -374,12 +344,8 @@ pub async fn check_reserve_proof(
     proof_hash32.copy_from_slice(&proof_hash[..32]);
 
     let r_prime = salvium_crypto::double_scalar_mult_base(c, &parsed_addr.spend_public_key, s);
-    let c_check_data = [
-        &r_prime[..],
-        &parsed_addr.spend_public_key[..],
-        &proof_hash32[..],
-    ]
-    .concat();
+    let c_check_data =
+        [&r_prime[..], &parsed_addr.spend_public_key[..], &proof_hash32[..]].concat();
     let c_check = salvium_crypto::keccak256(&c_check_data);
     let c_check_reduced = salvium_crypto::sc_reduce32(&c_check);
 

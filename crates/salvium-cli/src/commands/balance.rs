@@ -56,10 +56,7 @@ pub async fn incoming_transfers(ctx: &AppContext, transfer_type: &str, account: 
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:>16} {:<8} {:<10} Key Image",
-        "Height", "Amount", "Asset", "Status"
-    );
+    println!("{:<8} {:>16} {:<8} {:<10} Key Image", "Height", "Amount", "Asset", "Status");
     println!("{}", "-".repeat(80));
 
     for o in &outputs {
@@ -99,10 +96,7 @@ pub async fn unspent_outputs(ctx: &AppContext, account: i32) -> Result {
         return Ok(());
     }
 
-    println!(
-        "{:<8} {:>16} {:<8} {:<6} Key Image",
-        "Height", "Amount", "Asset", "Frozen"
-    );
+    println!("{:<8} {:>16} {:<8} {:<6} Key Image", "Height", "Amount", "Asset", "Frozen");
     println!("{}", "-".repeat(80));
 
     for o in &outputs {
@@ -135,10 +129,8 @@ pub async fn payments(ctx: &AppContext, payment_id: &str) -> Result {
     };
     let transfers = wallet.get_transfers(&query)?;
 
-    let filtered: Vec<_> = transfers
-        .iter()
-        .filter(|tx| tx.payment_id.as_deref() == Some(payment_id))
-        .collect();
+    let filtered: Vec<_> =
+        transfers.iter().filter(|tx| tx.payment_id.as_deref() == Some(payment_id)).collect();
 
     if filtered.is_empty() {
         println!("No payments found for payment ID: {}", payment_id);

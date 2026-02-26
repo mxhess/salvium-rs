@@ -27,10 +27,7 @@ pub async fn create_wallet(ctx: &AppContext, name: Option<String>) -> Result {
     let keys = WalletKeys::from_seed(seed, ctx.network);
     let mnemonic = wallet.mnemonic().and_then(|r| r.ok());
 
-    let spend_sk = keys
-        .cn
-        .spend_secret_key
-        .ok_or("wallet has no spend secret key")?;
+    let spend_sk = keys.cn.spend_secret_key.ok_or("wallet has no spend secret key")?;
     let secrets = salvium_wallet::WalletSecrets {
         seed: hex::encode(seed),
         spend_secret_key: hex::encode(spend_sk),
@@ -187,10 +184,7 @@ pub async fn save_watch_only(ctx: &AppContext) -> Result {
     println!("  Spend public key: {}", spend_pub);
 
     if keys.carrot.view_balance_secret != [0u8; 32] {
-        println!(
-            "  CARROT view balance secret: {}",
-            hex::encode(keys.carrot.view_balance_secret)
-        );
+        println!("  CARROT view balance secret: {}", hex::encode(keys.carrot.view_balance_secret));
         println!(
             "  CARROT account spend pubkey: {}",
             hex::encode(keys.carrot.account_spend_pubkey)
@@ -216,10 +210,7 @@ pub async fn encrypted_seed(ctx: &AppContext) -> Result {
         return Err("this is a view-only wallet — no seed available".into());
     }
 
-    let seed = wallet
-        .keys()
-        .seed
-        .ok_or("no seed available for this wallet")?;
+    let seed = wallet.keys().seed.ok_or("no seed available for this wallet")?;
 
     println!("Enter a passphrase to encrypt the seed (empty for no encryption):");
     let passphrase = rpassword::prompt_password("Passphrase: ")?;

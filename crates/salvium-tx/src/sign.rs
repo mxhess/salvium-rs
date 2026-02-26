@@ -43,11 +43,8 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
     let prefix_hash = compute_prefix_hash(&unsigned.prefix)?;
 
     // 2. Build output data.
-    let ecdh_info: Vec<EcdhInfo> = unsigned
-        .encrypted_amounts
-        .iter()
-        .map(|ea| EcdhInfo { amount: *ea })
-        .collect();
+    let ecdh_info: Vec<EcdhInfo> =
+        unsigned.encrypted_amounts.iter().map(|ea| EcdhInfo { amount: *ea }).collect();
     let out_pk: Vec<[u8; 32]> = unsigned.output_commitments.clone();
 
     // 3. Compute pseudo-output masks and commitments.
@@ -75,11 +72,7 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
             sd_bytes.extend_from_slice(&[0u8; 96]); // sa_proof (zeroed)
         } else {
             // SALVIUM_ZERO/ONE: type varint + pr_proof + sa_proof.
-            let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE {
-                2
-            } else {
-                0
-            };
+            let sd_type: u64 = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
             write_varint(&mut sd_bytes, sd_type);
             sd_bytes.extend_from_slice(&proof.0); // pr_proof.R
             sd_bytes.extend_from_slice(&proof.1); // pr_proof.z1
@@ -154,11 +147,7 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
                 input.real_index,
             );
 
-            clsags.push(ClsagData {
-                s: sig.s,
-                c1: sig.c1,
-                d: sig.commitment_image,
-            });
+            clsags.push(ClsagData { s: sig.s, c1: sig.c1, d: sig.commitment_image });
         }
     }
 
@@ -183,11 +172,7 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
             }))
         } else {
             // SALVIUM_ZERO/ONE: includes salvium_data_type.
-            let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE {
-                2
-            } else {
-                0
-            };
+            let sd_type_val = if unsigned.rct_type == rct_type::SALVIUM_ONE { 2 } else { 0 };
             Some(serde_json::json!({
                 "salvium_data_type": sd_type_val,
                 "pr_proof": pr_json,
@@ -211,10 +196,7 @@ pub fn sign_transaction(unsigned: UnsignedTransaction) -> Result<Transaction, Tx
         pseudo_outs,
     };
 
-    Ok(Transaction {
-        prefix: unsigned.prefix,
-        rct: Some(rct),
-    })
+    Ok(Transaction { prefix: unsigned.prefix, rct: Some(rct) })
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
@@ -268,10 +250,7 @@ fn compute_pseudo_outputs(
         .iter()
         .zip(pseudo_masks.iter())
         .map(|(input, mask)| {
-            to_32(&salvium_crypto::pedersen_commit(
-                &input.amount.to_le_bytes(),
-                mask,
-            ))
+            to_32(&salvium_crypto::pedersen_commit(&input.amount.to_le_bytes(), mask))
         })
         .collect();
 
@@ -283,10 +262,8 @@ fn compute_pseudo_outputs(
 /// Proves that each output commitment opens to a value in [0, 2^64).
 fn generate_bp_proof(amounts: &[u64], masks: &[[u8; 32]]) -> Result<BpPlusData, TxError> {
     // Convert masks from [u8; 32] to curve25519-dalek Scalars.
-    let scalar_masks: Vec<Scalar> = masks
-        .iter()
-        .map(|m| Scalar::from_bytes_mod_order(*m))
-        .collect();
+    let scalar_masks: Vec<Scalar> =
+        masks.iter().map(|m| Scalar::from_bytes_mod_order(*m)).collect();
 
     let proof = salvium_crypto::bulletproofs_plus::bulletproof_plus_prove(amounts, &scalar_masks);
 
@@ -298,16 +275,8 @@ fn generate_bp_proof(amounts: &[u64], masks: &[[u8; 32]]) -> Result<BpPlusData, 
         r1: proof.r1.to_bytes(),
         s1: proof.s1.to_bytes(),
         d1: proof.d1.to_bytes(),
-        l_vec: proof
-            .l_vec
-            .iter()
-            .map(|p| p.compress().to_bytes())
-            .collect(),
-        r_vec: proof
-            .r_vec
-            .iter()
-            .map(|p| p.compress().to_bytes())
-            .collect(),
+        l_vec: proof.l_vec.iter().map(|p| p.compress().to_bytes()).collect(),
+        r_vec: proof.r_vec.iter().map(|p| p.compress().to_bytes()).collect(),
     })
 }
 
@@ -516,10 +485,7 @@ mod tests {
     /// Create a valid prepared input with a 1-member ring (trivial, for testing).
     fn make_valid_input(amount: u64, use_tclsag: bool) -> PreparedInput {
         let mask = random_scalar_bytes();
-        let commitment = to_32(&salvium_crypto::pedersen_commit(
-            &amount.to_le_bytes(),
-            &mask,
-        ));
+        let commitment = to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &mask));
 
         if use_tclsag {
             let (sk_x, sk_y, pk) = test_keypair_dual();
@@ -594,10 +560,8 @@ mod tests {
     fn test_pseudo_output_balance() {
         // Verify that sum(pseudo_masks) == sum(output_masks).
         let output_masks = [random_scalar_bytes(), random_scalar_bytes()];
-        let inputs = vec![
-            make_valid_input(1_000_000_000, false),
-            make_valid_input(500_000_000, false),
-        ];
+        let inputs =
+            vec![make_valid_input(1_000_000_000, false), make_valid_input(500_000_000, false)];
 
         let (pseudo_masks, _pseudo_outs) = compute_pseudo_outputs(&inputs, &output_masks).unwrap();
 
@@ -621,14 +585,10 @@ mod tests {
         // requires valid CARROT keys for output construction).
         let output_mask1 = random_scalar_bytes();
         let output_mask2 = random_scalar_bytes();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let unsigned = UnsignedTransaction {
             prefix: TxPrefix {
@@ -737,14 +697,10 @@ mod tests {
 
         let output_mask1 = random_scalar_bytes();
         let output_mask2 = random_scalar_bytes();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let unsigned = UnsignedTransaction {
             prefix: TxPrefix {
@@ -877,10 +833,7 @@ mod tests {
             output_amounts: vec![send_amount, change_amount],
             encrypted_amounts: vec![[0u8; 8], [0u8; 8]],
             output_commitments: vec![
-                to_32(&salvium_crypto::pedersen_commit(
-                    &send_amount.to_le_bytes(),
-                    &output_mask1,
-                )),
+                to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1)),
                 to_32(&salvium_crypto::pedersen_commit(
                     &change_amount.to_le_bytes(),
                     &output_mask2,
@@ -914,14 +867,10 @@ mod tests {
 
         let output_mask1 = random_scalar_bytes();
         let output_mask2 = random_scalar_bytes();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let unsigned = UnsignedTransaction {
             prefix: TxPrefix {
@@ -1028,14 +977,10 @@ mod tests {
 
         let output_mask1 = random_scalar_bytes();
         let output_mask2 = random_scalar_bytes();
-        let out_commit1 = to_32(&salvium_crypto::pedersen_commit(
-            &send_amount.to_le_bytes(),
-            &output_mask1,
-        ));
-        let out_commit2 = to_32(&salvium_crypto::pedersen_commit(
-            &change_amount.to_le_bytes(),
-            &output_mask2,
-        ));
+        let out_commit1 =
+            to_32(&salvium_crypto::pedersen_commit(&send_amount.to_le_bytes(), &output_mask1));
+        let out_commit2 =
+            to_32(&salvium_crypto::pedersen_commit(&change_amount.to_le_bytes(), &output_mask2));
 
         let unsigned = UnsignedTransaction {
             prefix: TxPrefix {
@@ -1133,10 +1078,8 @@ mod tests {
     fn test_bp_proof_verifies() {
         let amounts = [1_000_000_000u64, 500_000_000u64];
         let masks = [random_scalar_bytes(), random_scalar_bytes()];
-        let scalar_masks: Vec<Scalar> = masks
-            .iter()
-            .map(|m| Scalar::from_bytes_mod_order(*m))
-            .collect();
+        let scalar_masks: Vec<Scalar> =
+            masks.iter().map(|m| Scalar::from_bytes_mod_order(*m)).collect();
 
         // Prove directly using the crypto API.
         let proof =

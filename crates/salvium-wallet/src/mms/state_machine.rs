@@ -26,40 +26,26 @@ pub fn next_action(
         .filter(|m| m.state == MessageState::Waiting && m.direction == MessageDirection::In)
         .collect();
 
-    let key_sets: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::KeySet)
-        .collect();
+    let key_sets: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::KeySet).collect();
 
-    let additional_key_sets: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::AdditionalKeySet)
-        .collect();
+    let additional_key_sets: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::AdditionalKeySet).collect();
 
-    let sync_data: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::MultisigSyncData)
-        .collect();
+    let sync_data: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::MultisigSyncData).collect();
 
-    let partial_txs: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::PartiallySignedTx)
-        .collect();
+    let partial_txs: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::PartiallySignedTx).collect();
 
-    let full_txs: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::FullySignedTx)
-        .collect();
+    let full_txs: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::FullySignedTx).collect();
 
-    let signer_configs: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::SignerConfig)
-        .collect();
+    let signer_configs: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::SignerConfig).collect();
 
-    let auto_config: Vec<&&Message> = waiting
-        .iter()
-        .filter(|m| m.msg_type == MessageType::AutoConfigData)
-        .collect();
+    let auto_config: Vec<&&Message> =
+        waiting.iter().filter(|m| m.msg_type == MessageType::AutoConfigData).collect();
 
     // Check for auto-config data first.
     if !auto_config.is_empty() {

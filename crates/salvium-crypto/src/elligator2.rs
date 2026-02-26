@@ -17,12 +17,8 @@ impl U256 {
     const TWO: Self = U256([2, 0, 0, 0]);
 
     // p = 2^255 - 19
-    const P: Self = U256([
-        0xFFFFFFFFFFFFFFED,
-        0xFFFFFFFFFFFFFFFF,
-        0xFFFFFFFFFFFFFFFF,
-        0x7FFFFFFFFFFFFFFF,
-    ]);
+    const P: Self =
+        U256([0xFFFFFFFFFFFFFFED, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x7FFFFFFFFFFFFFFF]);
 
     fn from_bytes_le(bytes: &[u8; 32]) -> Self {
         let mut limbs = [0u64; 4];
@@ -173,18 +169,8 @@ fn reduce_512(prod: &[u128; 8]) -> U256 {
 
     // Actually, let's do this properly with a simple approach:
     // Load as two U256 halves and use 2^256 ≡ 2*19 = 38 (mod p)
-    let lo = U256([
-        prod[0] as u64,
-        prod[1] as u64,
-        prod[2] as u64,
-        prod[3] as u64,
-    ]);
-    let hi = U256([
-        prod[4] as u64,
-        prod[5] as u64,
-        prod[6] as u64,
-        prod[7] as u64,
-    ]);
+    let lo = U256([prod[0] as u64, prod[1] as u64, prod[2] as u64, prod[3] as u64]);
+    let hi = U256([prod[4] as u64, prod[5] as u64, prod[6] as u64, prod[7] as u64]);
 
     // result = lo + hi * 2^256 mod p
     // 2^256 = 2 * 2^255 = 2 * (p + 19) = 2p + 38 ≡ 38 (mod p)
@@ -445,7 +431,5 @@ pub fn ge_fromfe_frombytes_vartime(hash: &[u8; 32]) -> EdwardsPoint {
         compressed[31] |= 0x80;
     }
 
-    CompressedEdwardsY(compressed)
-        .decompress()
-        .expect("elligator2 produced invalid point")
+    CompressedEdwardsY(compressed).decompress().expect("elligator2 produced invalid point")
 }

@@ -79,30 +79,15 @@ mod tests {
 
     #[test]
     fn test_msg_type_from_str_repr() {
-        assert_eq!(
-            MultisigMsgType::from_str_repr("kex_init"),
-            Some(MultisigMsgType::KexInit)
-        );
-        assert_eq!(
-            MultisigMsgType::from_str_repr("kex_round"),
-            Some(MultisigMsgType::KexRound)
-        );
-        assert_eq!(
-            MultisigMsgType::from_str_repr("kex_verify"),
-            Some(MultisigMsgType::KexVerify)
-        );
-        assert_eq!(
-            MultisigMsgType::from_str_repr("tx_set"),
-            Some(MultisigMsgType::TxSet)
-        );
+        assert_eq!(MultisigMsgType::from_str_repr("kex_init"), Some(MultisigMsgType::KexInit));
+        assert_eq!(MultisigMsgType::from_str_repr("kex_round"), Some(MultisigMsgType::KexRound));
+        assert_eq!(MultisigMsgType::from_str_repr("kex_verify"), Some(MultisigMsgType::KexVerify));
+        assert_eq!(MultisigMsgType::from_str_repr("tx_set"), Some(MultisigMsgType::TxSet));
         assert_eq!(
             MultisigMsgType::from_str_repr("partial_sig"),
             Some(MultisigMsgType::PartialSig)
         );
-        assert_eq!(
-            MultisigMsgType::from_str_repr("final_tx"),
-            Some(MultisigMsgType::FinalTx)
-        );
+        assert_eq!(MultisigMsgType::from_str_repr("final_tx"), Some(MultisigMsgType::FinalTx));
         assert_eq!(MultisigMsgType::from_str_repr("invalid"), None);
     }
 

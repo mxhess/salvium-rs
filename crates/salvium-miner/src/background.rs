@@ -19,11 +19,7 @@ pub struct BackgroundConfig {
 
 impl Default for BackgroundConfig {
     fn default() -> Self {
-        Self {
-            idle_threshold: 90,
-            min_idle_interval_secs: 10,
-            mining_target_pct: 40,
-        }
+        Self { idle_threshold: 90, min_idle_interval_secs: 10, mining_target_pct: 40 }
     }
 }
 
@@ -69,21 +65,13 @@ mod platform {
         if !line.starts_with("cpu ") {
             return None;
         }
-        let mut vals = line[4..]
-            .split_whitespace()
-            .filter_map(|s| s.parse::<u64>().ok());
+        let mut vals = line[4..].split_whitespace().filter_map(|s| s.parse::<u64>().ok());
         let user = vals.next()?;
         let nice = vals.next()?;
         let system = vals.next()?;
         let idle = vals.next()?;
         let rest: u64 = vals.sum();
-        Some(CpuTimes {
-            user,
-            nice,
-            system,
-            idle,
-            rest,
-        })
+        Some(CpuTimes { user, nice, system, idle, rest })
     }
 
     /// Check if system is on AC power.
@@ -143,13 +131,7 @@ mod platform {
     // TODO: macOS implementation using host_statistics / IOPSCopyPowerSourcesInfo
     pub fn read_cpu_times() -> Option<CpuTimes> {
         // Stub: report 100% idle
-        Some(CpuTimes {
-            user: 0,
-            nice: 0,
-            system: 0,
-            idle: 1_000_000,
-            rest: 0,
-        })
+        Some(CpuTimes { user: 0, nice: 0, system: 0, idle: 1_000_000, rest: 0 })
     }
 
     pub fn on_ac_power() -> bool {
@@ -190,9 +172,7 @@ impl BackgroundMonitor {
 
         // Start paused with conservative initial sleep
         throttle.paused.store(true, Ordering::Relaxed);
-        throttle
-            .extra_sleep_us
-            .store(EXTRA_SLEEP_INITIAL_US, Ordering::Relaxed);
+        throttle.extra_sleep_us.store(EXTRA_SLEEP_INITIAL_US, Ordering::Relaxed);
 
         let running = monitor_running.clone();
         let handle = thread::Builder::new()
@@ -202,10 +182,7 @@ impl BackgroundMonitor {
             })
             .expect("failed to spawn bg-monitor thread");
 
-        Self {
-            handle: Some(handle),
-            running: monitor_running,
-        }
+        Self { handle: Some(handle), running: monitor_running }
     }
 }
 
@@ -248,10 +225,7 @@ fn background_monitor_loop(
     let tps = ticks_per_second();
 
     // Wait one interval before first decision
-    interruptible_sleep(
-        Duration::from_secs(config.min_idle_interval_secs),
-        monitor_running,
-    );
+    interruptible_sleep(Duration::from_secs(config.min_idle_interval_secs), monitor_running);
 
     let mut is_mining = false;
 
@@ -285,10 +259,7 @@ fn background_monitor_loop(
         if !is_mining {
             // Not mining → check if we should start
             if idle_pct >= config.idle_threshold as f64 && ac {
-                eprintln!(
-                    "[bg-monitor] System idle ({:.0}%), on AC — starting mining",
-                    idle_pct
-                );
+                eprintln!("[bg-monitor] System idle ({:.0}%), on AC — starting mining", idle_pct);
                 throttle.paused.store(false, Ordering::Relaxed);
                 is_mining = true;
             }
@@ -300,9 +271,7 @@ fn background_monitor_loop(
                     idle_pct, miner_pct
                 );
                 throttle.paused.store(true, Ordering::Relaxed);
-                throttle
-                    .extra_sleep_us
-                    .store(EXTRA_SLEEP_INITIAL_US, Ordering::Relaxed);
+                throttle.extra_sleep_us.store(EXTRA_SLEEP_INITIAL_US, Ordering::Relaxed);
                 is_mining = false;
             } else {
                 // Adjust throttle: try to converge miner_pct toward target
@@ -316,10 +285,7 @@ fn background_monitor_loop(
             }
         }
 
-        interruptible_sleep(
-            Duration::from_secs(config.min_idle_interval_secs),
-            monitor_running,
-        );
+        interruptible_sleep(Duration::from_secs(config.min_idle_interval_secs), monitor_running);
     }
 }
 
@@ -338,20 +304,8 @@ mod tests {
 
     #[test]
     fn test_idle_percentage_math() {
-        let prev = CpuTimes {
-            user: 100,
-            nice: 0,
-            system: 50,
-            idle: 800,
-            rest: 50,
-        };
-        let curr = CpuTimes {
-            user: 200,
-            nice: 0,
-            system: 100,
-            idle: 1600,
-            rest: 100,
-        };
+        let prev = CpuTimes { user: 100, nice: 0, system: 50, idle: 800, rest: 50 };
+        let curr = CpuTimes { user: 200, nice: 0, system: 100, idle: 1600, rest: 100 };
         let pct = idle_percentage(&prev, &curr);
         // idle_delta = 800, total_delta = 1000 → 80%
         assert!((pct - 80.0).abs() < 0.01, "got {pct}");
@@ -359,13 +313,7 @@ mod tests {
 
     #[test]
     fn test_idle_percentage_zero_delta() {
-        let snap = CpuTimes {
-            user: 100,
-            nice: 0,
-            system: 50,
-            idle: 800,
-            rest: 50,
-        };
+        let snap = CpuTimes { user: 100, nice: 0, system: 50, idle: 800, rest: 50 };
         assert_eq!(idle_percentage(&snap, &snap), 100.0);
     }
 
@@ -399,11 +347,7 @@ mod tests {
         interruptible_sleep(Duration::from_secs(10), &flag);
         let elapsed = start.elapsed();
 
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "Should exit early, took {:?}",
-            elapsed
-        );
+        assert!(elapsed < Duration::from_secs(2), "Should exit early, took {:?}", elapsed);
     }
 
     #[test]
@@ -419,10 +363,7 @@ mod tests {
         );
 
         assert!(throttle.paused.load(Ordering::Relaxed));
-        assert_eq!(
-            throttle.extra_sleep_us.load(Ordering::Relaxed),
-            EXTRA_SLEEP_INITIAL_US
-        );
+        assert_eq!(throttle.extra_sleep_us.load(Ordering::Relaxed), EXTRA_SLEEP_INITIAL_US);
 
         // Clean shutdown
         engine_running.store(false, Ordering::Relaxed);

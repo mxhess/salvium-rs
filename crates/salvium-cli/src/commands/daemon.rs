@@ -20,10 +20,7 @@ pub async fn show_status(ctx: &AppContext) -> Result {
         "  Connections:      {} in / {} out",
         info.incoming_connections_count, info.outgoing_connections_count
     );
-    println!(
-        "  Synchronized:     {}",
-        if info.synchronized { "yes" } else { "no" }
-    );
+    println!("  Synchronized:     {}", if info.synchronized { "yes" } else { "no" });
 
     if let Ok(yi) = daemon.get_yield_info().await {
         println!();
@@ -52,9 +49,7 @@ pub async fn set_daemon(ctx: &AppContext, url: &str) -> Result {
 
 pub async fn start_mining(ctx: &AppContext, address: &str, threads: u32) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
-    daemon
-        .start_mining(address, threads as u64, false, false)
-        .await?;
+    daemon.start_mining(address, threads as u64, false, false).await?;
     println!("Mining started with {} threads.", threads);
     Ok(())
 }
@@ -88,10 +83,7 @@ pub async fn net_stats(ctx: &AppContext) -> Result {
     println!("  Start time:    {}", stats.start_time);
     println!("  Total recv:    {} bytes", stats.total_bytes_in);
     println!("  Total sent:    {} bytes", stats.total_bytes_out);
-    println!(
-        "  Total packets: {} in / {} out",
-        stats.total_packets_in, stats.total_packets_out
-    );
+    println!("  Total packets: {} in / {} out", stats.total_packets_in, stats.total_packets_out);
     Ok(())
 }
 
@@ -132,24 +124,15 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
     let daemon = DaemonRpc::new(&ctx.daemon_url);
 
     let info = daemon.get_info().await?;
-    println!(
-        "Connected to daemon at {} (height: {})",
-        ctx.daemon_url, info.height
-    );
+    println!("Connected to daemon at {} (height: {})", ctx.daemon_url, info.height);
 
     let wallet_height = wallet.sync_height().unwrap_or(0);
     if wallet_height >= info.height {
-        println!(
-            "Wallet is already synchronized at height {}.",
-            wallet_height
-        );
+        println!("Wallet is already synchronized at height {}.", wallet_height);
         return Ok(());
     }
 
-    println!(
-        "Syncing from height {} to {} ...",
-        wallet_height, info.height
-    );
+    println!("Syncing from height {} to {} ...", wallet_height, info.height);
 
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
@@ -160,12 +143,7 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                 SyncEvent::Started { target_height } => {
                     println!("Sync started (target: {})", target_height);
                 }
-                SyncEvent::Progress {
-                    current_height,
-                    target_height,
-                    outputs_found,
-                    ..
-                } => {
+                SyncEvent::Progress { current_height, target_height, outputs_found, .. } => {
                     let pct = if target_height > 0 {
                         (current_height as f64 / target_height as f64 * 100.0) as u32
                     } else {
@@ -179,10 +157,7 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                 SyncEvent::Complete { height } => {
                     println!("\nSync complete at height {}.", height);
                 }
-                SyncEvent::Reorg {
-                    from_height,
-                    to_height,
-                } => {
+                SyncEvent::Reorg { from_height, to_height } => {
                     println!(
                         "\nReorg detected: rolling back from {} to {}",
                         from_height, to_height
@@ -191,11 +166,7 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                 SyncEvent::Error(msg) => {
                     log::error!("sync error: {}", msg);
                 }
-                SyncEvent::ParseError {
-                    height,
-                    blob_len,
-                    ref error,
-                } => {
+                SyncEvent::ParseError { height, blob_len, ref error } => {
                     log::error!(
                         "block parse error at height {} (blob_len={}): {}",
                         height,
@@ -239,10 +210,7 @@ fn supply_field_u64(supply: &salvium_rpc::daemon::SupplyInfo, field: &str) -> u6
     supply
         .extra
         .get(field)
-        .and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        })
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
         .unwrap_or(0)
 }
 
@@ -254,14 +222,8 @@ pub async fn price_info(ctx: &AppContext) -> Result {
         "  Circulating:   {} SAL",
         format_sal_u64(supply_field_u64(&supply, "circulating_supply"))
     );
-    println!(
-        "  Total staked:  {} SAL",
-        format_sal_u64(supply_field_u64(&supply, "total_staked"))
-    );
-    println!(
-        "  Total burned:  {} SAL",
-        format_sal_u64(supply_field_u64(&supply, "total_burned"))
-    );
+    println!("  Total staked:  {} SAL", format_sal_u64(supply_field_u64(&supply, "total_staked")));
+    println!("  Total burned:  {} SAL", format_sal_u64(supply_field_u64(&supply, "total_burned")));
     Ok(())
 }
 
@@ -320,10 +282,7 @@ pub async fn scan_tx(ctx: &AppContext, tx_hashes: &[String]) -> Result {
     }
     let _ = keys;
 
-    println!(
-        "Processed {} transaction(s). Run 'sync' for full output scanning.",
-        found
-    );
+    println!("Processed {} transaction(s). Run 'sync' for full output scanning.", found);
 
     Ok(())
 }
@@ -345,10 +304,7 @@ pub async fn rescan_spent(ctx: &AppContext) -> Result {
     };
     let outputs = wallet.get_outputs(&query)?;
 
-    let key_images: Vec<&str> = outputs
-        .iter()
-        .filter_map(|o| o.key_image.as_deref())
-        .collect();
+    let key_images: Vec<&str> = outputs.iter().filter_map(|o| o.key_image.as_deref()).collect();
 
     if key_images.is_empty() {
         println!("No unspent outputs to check.");
@@ -366,10 +322,7 @@ pub async fn rescan_spent(ctx: &AppContext) -> Result {
         }
     }
 
-    println!(
-        "Rescan complete. {} outputs newly marked as spent.",
-        newly_spent
-    );
+    println!("Rescan complete. {} outputs newly marked as spent.", newly_spent);
     Ok(())
 }
 
@@ -443,10 +396,8 @@ pub async fn stop_mining_for_rpc(ctx: &AppContext) -> Result {
 
     match wallet.get_attribute("rpc_mining")? {
         Some(_) => {
-            wallet.set_attribute(
-                "rpc_mining",
-                &serde_json::json!({"active": false}).to_string(),
-            )?;
+            wallet
+                .set_attribute("rpc_mining", &serde_json::json!({"active": false}).to_string())?;
             println!("RPC payment mining stopped.");
         }
         None => {

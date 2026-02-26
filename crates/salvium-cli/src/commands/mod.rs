@@ -173,8 +173,7 @@ pub(crate) fn load_wallet_meta(
         let path_str = db_path.to_str().ok_or("invalid wallet path")?;
         let db = salvium_wallet::WalletDb::open(path_str, &legacy_db_key)
             .map_err(|e| format!("failed to open legacy wallet DB: {}", e))?;
-        db.rekey(&data_key)
-            .map_err(|e| format!("failed to rekey wallet DB: {}", e))?;
+        db.rekey(&data_key).map_err(|e| format!("failed to rekey wallet DB: {}", e))?;
 
         let spend_sk = keys.cn.spend_secret_key.unwrap_or([0u8; 32]);
         let secrets = salvium_wallet::WalletSecrets {
@@ -244,11 +243,7 @@ pub fn format_sal_u64(atomic: u64) -> String {
 pub(crate) fn parse_sal_amount(s: &str) -> std::result::Result<u64, Box<dyn std::error::Error>> {
     use salvium_types::constants::COIN;
     let parts: Vec<&str> = s.split('.').collect();
-    let whole: u64 = if parts[0].is_empty() {
-        0
-    } else {
-        parts[0].parse()?
-    };
+    let whole: u64 = if parts[0].is_empty() { 0 } else { parts[0].parse()? };
     let frac: u64 = if parts.len() > 1 {
         let frac_str = parts[1];
         if frac_str.len() > 8 {

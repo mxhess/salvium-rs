@@ -66,10 +66,7 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_fee(actual_fee);
 
@@ -135,10 +132,7 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::STAKE)
         .set_fee(actual_fee);
@@ -197,10 +191,7 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
         .add_inputs(prepared)
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::BURN)
         .set_amount_burnt(amount)
@@ -238,11 +229,7 @@ pub async fn convert(
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
-    println!(
-        "  Estimated fee: {} {}",
-        format_sal_u64(est_fee),
-        source_asset
-    );
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), source_asset);
 
     let balance = wallet.get_balance(source_asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
@@ -281,10 +268,7 @@ pub async fn convert(
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::CONVERT)
         .set_asset_types(source_asset, dest_asset)
@@ -347,10 +331,7 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::AUDIT)
         .set_fee(actual_fee);
@@ -417,10 +398,7 @@ pub async fn locked_transfer(
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_unlock_time(unlock_time)
         .set_fee(actual_fee);
@@ -527,20 +505,15 @@ pub async fn sweep_below(
         max_amount: None,
     };
     let outputs = wallet.get_outputs(&query)?;
-    let below: Vec<_> = outputs
-        .iter()
-        .filter(|o| o.amount.parse::<u64>().unwrap_or(0) < threshold)
-        .collect();
+    let below: Vec<_> =
+        outputs.iter().filter(|o| o.amount.parse::<u64>().unwrap_or(0) < threshold).collect();
 
     if below.is_empty() {
         println!("No outputs found below {} SAL.", format_sal_u64(threshold));
         return Ok(());
     }
 
-    let total: u64 = below
-        .iter()
-        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
-        .sum();
+    let total: u64 = below.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
     let est_fee = salvium_tx::estimate_tx_fee(below.len(), 1, 16, true, 0x04, fee_priority);
 
     if total <= est_fee {
@@ -680,25 +653,16 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
     };
     let outputs = wallet.get_outputs(&query)?;
     let dust_threshold = 1_000_000u64; // 0.001 SAL
-    let unmixable: Vec<_> = outputs
-        .iter()
-        .filter(|o| o.amount.parse::<u64>().unwrap_or(0) < dust_threshold)
-        .collect();
+    let unmixable: Vec<_> =
+        outputs.iter().filter(|o| o.amount.parse::<u64>().unwrap_or(0) < dust_threshold).collect();
 
     if unmixable.is_empty() {
         println!("No unmixable outputs found.");
         return Ok(());
     }
 
-    let total: u64 = unmixable
-        .iter()
-        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
-        .sum();
-    println!(
-        "Found {} unmixable outputs totalling {} SAL",
-        unmixable.len(),
-        format_sal_u64(total)
-    );
+    let total: u64 = unmixable.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
+    println!("Found {} unmixable outputs totalling {} SAL", unmixable.len(), format_sal_u64(total));
 
     if !tx_common::confirm("Sweep unmixable outputs to self? [y/N] ")? {
         println!("Cancelled.");
@@ -807,10 +771,7 @@ pub async fn locked_sweep_all(
         .set_fee(actual_fee);
 
     let result = pipeline.build_sign_submit(builder).await?;
-    println!(
-        "Locked sweep submitted! TX hash: {}",
-        hex::encode(result.tx_hash)
-    );
+    println!("Locked sweep submitted! TX hash: {}", hex::encode(result.tx_hash));
 
     Ok(())
 }
@@ -894,19 +855,13 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
-        .set_change_address(
-            keys.carrot.account_spend_pubkey,
-            keys.carrot.account_view_pubkey,
-        )
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::RETURN)
         .set_fee(actual_fee);
 
     let result = pipeline.build_sign_submit(builder).await?;
-    println!(
-        "Return payment submitted! TX hash: {}",
-        hex::encode(result.tx_hash)
-    );
+    println!("Return payment submitted! TX hash: {}", hex::encode(result.tx_hash));
 
     Ok(())
 }
@@ -962,10 +917,7 @@ pub async fn sweep_account(
         return Ok(());
     }
 
-    let total: u64 = filtered
-        .iter()
-        .map(|o| o.amount.parse::<u64>().unwrap_or(0))
-        .sum();
+    let total: u64 = filtered.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
     let est_fee = salvium_tx::estimate_tx_fee(filtered.len(), 1, 16, true, 0x04, fee_priority);
 
     if total <= est_fee {

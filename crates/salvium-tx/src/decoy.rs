@@ -42,9 +42,7 @@ impl DecoySelector {
     /// Each entry represents the total number of RCT outputs at that block height.
     pub fn new(rct_offsets: Vec<u64>) -> Result<Self, TxError> {
         if rct_offsets.len() < SPENDABLE_AGE + 1 {
-            return Err(TxError::DecoySelection(
-                "insufficient output distribution data".into(),
-            ));
+            return Err(TxError::DecoySelection("insufficient output distribution data".into()));
         }
 
         let usable_len = rct_offsets.len() - SPENDABLE_AGE;
@@ -57,11 +55,7 @@ impl DecoySelector {
         let total_time = (usable_len as f64) * DIFFICULTY_TARGET;
         let average_output_time = total_time / (num_usable as f64);
 
-        Ok(Self {
-            rct_offsets,
-            num_usable,
-            average_output_time,
-        })
+        Ok(Self { rct_offsets, num_usable, average_output_time })
     }
 
     /// Pick decoys for one input.
@@ -160,11 +154,7 @@ impl DecoySelector {
             }
         };
 
-        let block_start = if block == 0 {
-            0
-        } else {
-            self.rct_offsets[block - 1]
-        };
+        let block_start = if block == 0 { 0 } else { self.rct_offsets[block - 1] };
         let block_end = self.rct_offsets[block];
 
         if block_end <= block_start {
@@ -317,10 +307,6 @@ mod tests {
             }
         }
         // ~99.7% should be within 3 sigma.
-        assert!(
-            in_range > 950,
-            "expected >95% within 3 sigma, got {}",
-            in_range
-        );
+        assert!(in_range > 950, "expected >95% within 3 sigma, got {}", in_range);
     }
 }

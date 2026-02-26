@@ -12,9 +12,7 @@ pub unsafe fn c_str_to_str<'a>(ptr: *const c_char) -> Result<&'a str, String> {
     if ptr.is_null() {
         return Err("null string pointer".into());
     }
-    unsafe { CStr::from_ptr(ptr) }
-        .to_str()
-        .map_err(|e| format!("invalid UTF-8: {e}"))
+    unsafe { CStr::from_ptr(ptr) }.to_str().map_err(|e| format!("invalid UTF-8: {e}"))
 }
 
 /// Convert a C buffer pointer + length to a Rust `&[u8]`.

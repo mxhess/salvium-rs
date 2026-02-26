@@ -31,10 +31,7 @@ impl LedgerDevice {
         for device_info in api.device_list() {
             if device_info.vendor_id() == LEDGER_VENDOR_ID {
                 if let Ok(device) = api.open_path(device_info.path()) {
-                    return Some(Self {
-                        device,
-                        connected: true,
-                    });
+                    return Some(Self { device, connected: true });
                 }
             }
         }
@@ -91,10 +88,7 @@ impl LedgerDevice {
             let sw =
                 ((response[response.len() - 2] as u16) << 8) | response[response.len() - 1] as u16;
             if sw != 0x9000 {
-                return Err(WalletError::Device(format!(
-                    "Ledger returned error: 0x{:04X}",
-                    sw
-                )));
+                return Err(WalletError::Device(format!("Ledger returned error: 0x{:04X}", sw)));
             }
         }
 
@@ -138,9 +132,7 @@ impl HwDevice for LedgerDevice {
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
-        Err(WalletError::Device(
-            "hardware wallet support not compiled".to_string(),
-        ))
+        Err(WalletError::Device("hardware wallet support not compiled".to_string()))
     }
 
     fn get_view_key(&self) -> Result<[u8; 32], WalletError> {
@@ -157,9 +149,7 @@ impl HwDevice for LedgerDevice {
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
-        Err(WalletError::Device(
-            "hardware wallet support not compiled".to_string(),
-        ))
+        Err(WalletError::Device("hardware wallet support not compiled".to_string()))
     }
 
     fn export_key_images(
@@ -191,18 +181,13 @@ impl HwDevice for LedgerDevice {
             }
 
             let num = key_images.len();
-            Ok(KeyImageSyncResult {
-                key_images,
-                num_exported: num,
-            })
+            Ok(KeyImageSyncResult { key_images, num_exported: num })
         }
 
         #[cfg(not(feature = "hardware-wallet"))]
         {
             let _ = outputs;
-            Err(WalletError::Device(
-                "hardware wallet support not compiled".to_string(),
-            ))
+            Err(WalletError::Device("hardware wallet support not compiled".to_string()))
         }
     }
 
@@ -229,9 +214,7 @@ impl HwDevice for LedgerDevice {
         #[cfg(not(feature = "hardware-wallet"))]
         {
             let _ = (major, minor, payment_id);
-            Err(WalletError::Device(
-                "hardware wallet support not compiled".to_string(),
-            ))
+            Err(WalletError::Device("hardware wallet support not compiled".to_string()))
         }
     }
 }

@@ -36,9 +36,8 @@ fn generate_random_scalar() -> (String, [u8; 32]) {
 /// Run a complete KEX protocol for an M-of-N multisig group.
 /// Returns the completed accounts.
 fn run_full_kex(threshold: usize, signer_count: usize) -> Vec<MultisigAccount> {
-    let mut accounts: Vec<MultisigAccount> = (0..signer_count)
-        .map(|_| MultisigAccount::new(threshold, signer_count).unwrap())
-        .collect();
+    let mut accounts: Vec<MultisigAccount> =
+        (0..signer_count).map(|_| MultisigAccount::new(threshold, signer_count).unwrap()).collect();
 
     // Generate keys and set indices
     let keys: Vec<(String, String)> = (0..signer_count)
@@ -93,11 +92,7 @@ fn run_full_kex(threshold: usize, signer_count: usize) -> Vec<MultisigAccount> {
 
     // Verify all accounts completed KEX
     for acct in &accounts {
-        assert!(
-            acct.is_kex_complete(),
-            "KEX not complete for signer {}",
-            acct.signer_index
-        );
+        assert!(acct.is_kex_complete(), "KEX not complete for signer {}", acct.signer_index);
     }
 
     accounts
@@ -216,30 +211,24 @@ fn test_kex_2_of_3_completes() {
 #[test]
 fn test_kex_3_of_3_completes() {
     let accounts = run_full_kex(3, 3);
-    let pks: Vec<_> = accounts
-        .iter()
-        .map(|a| a.multisig_pubkey.as_ref().unwrap().clone())
-        .collect();
+    let pks: Vec<_> =
+        accounts.iter().map(|a| a.multisig_pubkey.as_ref().unwrap().clone()).collect();
     assert!(pks.windows(2).all(|w| w[0] == w[1]));
 }
 
 #[test]
 fn test_kex_3_of_5_completes() {
     let accounts = run_full_kex(3, 5);
-    let pks: Vec<_> = accounts
-        .iter()
-        .map(|a| a.multisig_pubkey.as_ref().unwrap().clone())
-        .collect();
+    let pks: Vec<_> =
+        accounts.iter().map(|a| a.multisig_pubkey.as_ref().unwrap().clone()).collect();
     assert!(pks.windows(2).all(|w| w[0] == w[1]));
 }
 
 #[test]
 fn test_kex_2_of_8_completes() {
     let accounts = run_full_kex(2, 8);
-    let pks: Vec<_> = accounts
-        .iter()
-        .map(|a| a.multisig_pubkey.as_ref().unwrap().clone())
-        .collect();
+    let pks: Vec<_> =
+        accounts.iter().map(|a| a.multisig_pubkey.as_ref().unwrap().clone()).collect();
     assert!(pks.windows(2).all(|w| w[0] == w[1]));
 }
 
@@ -258,10 +247,8 @@ fn test_kex_deterministic_with_same_keys() {
     let view1 = "44".repeat(32);
 
     let run = || {
-        let mut accounts = [
-            MultisigAccount::new(2, 2).unwrap(),
-            MultisigAccount::new(2, 2).unwrap(),
-        ];
+        let mut accounts =
+            [MultisigAccount::new(2, 2).unwrap(), MultisigAccount::new(2, 2).unwrap()];
         accounts[0].set_signer_index(0);
         accounts[1].set_signer_index(1);
 
@@ -393,8 +380,7 @@ fn test_kex_process_before_init() {
 #[test]
 fn test_kex_round1_wrong_message_count() {
     let mut acct = MultisigAccount::new(2, 3).unwrap();
-    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
-        .unwrap();
+    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32)).unwrap();
 
     let msgs = vec![
         KexMessage {
@@ -418,8 +404,7 @@ fn test_kex_round1_wrong_message_count() {
 #[test]
 fn test_kex_round1_wrong_round_number() {
     let mut acct = MultisigAccount::new(2, 2).unwrap();
-    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
-        .unwrap();
+    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32)).unwrap();
 
     let msgs = vec![
         KexMessage {
@@ -443,8 +428,7 @@ fn test_kex_round1_wrong_round_number() {
 #[test]
 fn test_kex_round1_too_few_keys() {
     let mut acct = MultisigAccount::new(2, 2).unwrap();
-    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
-        .unwrap();
+    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32)).unwrap();
 
     let msgs = vec![
         KexMessage {
@@ -468,8 +452,7 @@ fn test_kex_round1_too_few_keys() {
 #[test]
 fn test_kex_round1_invalid_hex_key() {
     let mut acct = MultisigAccount::new(2, 2).unwrap();
-    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
-        .unwrap();
+    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32)).unwrap();
 
     let msgs = vec![
         KexMessage {
@@ -498,10 +481,7 @@ fn test_kex_verification_corrupted_hash() {
     let spend1 = "33".repeat(32);
     let view1 = "44".repeat(32);
 
-    let mut accounts = [
-        MultisigAccount::new(2, 2).unwrap(),
-        MultisigAccount::new(2, 2).unwrap(),
-    ];
+    let mut accounts = [MultisigAccount::new(2, 2).unwrap(), MultisigAccount::new(2, 2).unwrap()];
     accounts[0].set_signer_index(0);
     accounts[1].set_signer_index(1);
 
@@ -529,8 +509,7 @@ fn test_kex_verification_corrupted_hash() {
 #[test]
 fn test_kex_duplicate_signer_indices() {
     let mut acct = MultisigAccount::new(2, 2).unwrap();
-    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32))
-        .unwrap();
+    acct.initialize_kex(&"11".repeat(32), &"22".repeat(32)).unwrap();
 
     let msgs = vec![
         KexMessage {
@@ -612,14 +591,9 @@ fn test_partial_sign_valid_scalars() {
     let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     let (privkey_hex, _) = generate_random_scalar();
 
-    let partial = partial_sign(
-        &ctx,
-        &nonces0,
-        &privkey_hex,
-        &"22".repeat(32),
-        &[nonces0.clone(), nonces1],
-    )
-    .unwrap();
+    let partial =
+        partial_sign(&ctx, &nonces0, &privkey_hex, &"22".repeat(32), &[nonces0.clone(), nonces1])
+            .unwrap();
     assert_eq!(partial.s_partial.len(), 64);
     assert_eq!(partial.c_0.len(), 64);
     hex::decode(&partial.s_partial).unwrap();
@@ -680,9 +654,8 @@ fn test_combine_two_partials() {
 #[test]
 fn test_combine_three_partials() {
     let ctx = make_signing_context(2);
-    let nonces: Vec<SignerNonces> = (0..3)
-        .map(|i| generate_nonces(i, &ctx.key_image).unwrap())
-        .collect();
+    let nonces: Vec<SignerNonces> =
+        (0..3).map(|i| generate_nonces(i, &ctx.key_image).unwrap()).collect();
 
     let keys: Vec<String> = (0..3).map(|_| generate_random_scalar().0).collect();
 
@@ -836,13 +809,8 @@ fn test_partial_sign_invalid_privkey_hex() {
     let nonces0 = generate_nonces(0, &ctx.key_image).unwrap();
     let nonces1 = generate_nonces(1, &ctx.key_image).unwrap();
     // Non-hex key — should now return an error
-    let result = partial_sign(
-        &ctx,
-        &nonces0,
-        "not_hex!",
-        &"22".repeat(32),
-        &[nonces0.clone(), nonces1],
-    );
+    let result =
+        partial_sign(&ctx, &nonces0, "not_hex!", &"22".repeat(32), &[nonces0.clone(), nonces1]);
     assert!(result.is_err());
 }
 
@@ -1046,13 +1014,10 @@ fn test_e2e_3_of_5_kex_then_sign() {
     let accounts = run_full_kex(3, 5);
 
     let ctx = make_signing_context(2);
-    let nonces: Vec<SignerNonces> = (0..3)
-        .map(|i| generate_nonces(i, &ctx.key_image).unwrap())
-        .collect();
+    let nonces: Vec<SignerNonces> =
+        (0..3).map(|i| generate_nonces(i, &ctx.key_image).unwrap()).collect();
 
-    let keys: Vec<String> = (0..3)
-        .map(|i| accounts[i].spend_key().unwrap().to_string())
-        .collect();
+    let keys: Vec<String> = (0..3).map(|i| accounts[i].spend_key().unwrap().to_string()).collect();
 
     let partials: Vec<_> = (0..3)
         .map(|i| partial_sign(&ctx, &nonces[i], &keys[i], &"22".repeat(32), &nonces).unwrap())
@@ -1335,14 +1300,10 @@ fn test_2of2_multisig_clsag_verify() {
     let z_1 = to_32(&salvium_crypto::sc_sub(&z, &z_0));
 
     // 4. Compute commitments.
-    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &input_mask,
-    ));
-    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &pseudo_mask,
-    ));
+    let input_commitment =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &input_mask));
+    let pseudo_output =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &pseudo_mask));
 
     // 5. Build a ring with decoys (ring size = 4, real at index 1).
     let real_index = 1;
@@ -1408,23 +1369,11 @@ fn test_2of2_multisig_clsag_verify() {
     let all_nonces = vec![nonces0.clone(), nonces1.clone()];
 
     // 12. Both signers produce partial signatures.
-    let partial0 = partial_sign(
-        &ctx,
-        &nonces0,
-        &hex::encode(sk_0),
-        &hex::encode(z_0),
-        &all_nonces,
-    )
-    .unwrap();
+    let partial0 =
+        partial_sign(&ctx, &nonces0, &hex::encode(sk_0), &hex::encode(z_0), &all_nonces).unwrap();
 
-    let partial1 = partial_sign(
-        &ctx,
-        &nonces1,
-        &hex::encode(sk_1),
-        &hex::encode(z_1),
-        &all_nonces,
-    )
-    .unwrap();
+    let partial1 =
+        partial_sign(&ctx, &nonces1, &hex::encode(sk_1), &hex::encode(z_1), &all_nonces).unwrap();
 
     // Both signers must agree on c_0.
     assert_eq!(partial0.c_0, partial1.c_0, "signers must agree on c_0");
@@ -1435,10 +1384,8 @@ fn test_2of2_multisig_clsag_verify() {
     let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
 
     // 14. Build the full response vector.
-    let mut s_vec: Vec<[u8; 32]> = fake_responses
-        .iter()
-        .map(|h| to_32(&hex::decode(h).unwrap()))
-        .collect();
+    let mut s_vec: Vec<[u8; 32]> =
+        fake_responses.iter().map(|h| to_32(&hex::decode(h).unwrap())).collect();
     s_vec[real_index] = s_combined;
 
     // 15. Construct the ClsagSignature.
@@ -1480,24 +1427,17 @@ fn test_2of3_multisig_clsag_verify() {
     let (_, z_0) = generate_random_scalar();
     let z_1 = to_32(&salvium_crypto::sc_sub(&z, &z_0));
 
-    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &input_mask,
-    ));
-    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &pseudo_mask,
-    ));
+    let input_commitment =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &input_mask));
+    let pseudo_output =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &pseudo_mask));
 
     // Ring (size 2 for speed).
     let real_index = 0;
     let (_, decoy_sk) = generate_random_scalar();
     let decoy_pk = to_32(&salvium_crypto::scalar_mult_base(&decoy_sk));
     let (_, decoy_cm) = generate_random_scalar();
-    let decoy_commit = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &decoy_cm,
-    ));
+    let decoy_commit = to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &decoy_cm));
     let ring = vec![pk, decoy_pk];
     let ring_commitments = vec![input_commitment, decoy_commit];
 
@@ -1529,23 +1469,11 @@ fn test_2of3_multisig_clsag_verify() {
     let nonces1 = generate_nonces(1, &pk_hex).unwrap();
     let all_nonces = vec![nonces0.clone(), nonces1.clone()];
 
-    let p0 = partial_sign(
-        &ctx,
-        &nonces0,
-        &hex::encode(sk_signer0),
-        &hex::encode(z_0),
-        &all_nonces,
-    )
-    .unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &hex::encode(sk_signer0), &hex::encode(z_0), &all_nonces)
+        .unwrap();
 
-    let p1 = partial_sign(
-        &ctx,
-        &nonces1,
-        &hex::encode(sk_signer1),
-        &hex::encode(z_1),
-        &all_nonces,
-    )
-    .unwrap();
+    let p1 = partial_sign(&ctx, &nonces1, &hex::encode(sk_signer1), &hex::encode(z_1), &all_nonces)
+        .unwrap();
 
     assert_eq!(p0.c_0, p1.c_0);
 
@@ -1553,10 +1481,8 @@ fn test_2of3_multisig_clsag_verify() {
     let s = to_32(&hex::decode(&s_hex).unwrap());
     let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
 
-    let mut s_vec: Vec<[u8; 32]> = fake_responses
-        .iter()
-        .map(|h| to_32(&hex::decode(h).unwrap()))
-        .collect();
+    let mut s_vec: Vec<[u8; 32]> =
+        fake_responses.iter().map(|h| to_32(&hex::decode(h).unwrap())).collect();
     s_vec[real_index] = s;
 
     let sig = salvium_crypto::clsag::ClsagSignature {
@@ -1612,14 +1538,10 @@ fn test_proposer_cosigner_offset_pattern() {
     let zero = [0u8; 32];
 
     // 3. Compute commitments and key images.
-    let input_commitment = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &input_mask,
-    ));
-    let pseudo_output = to_32(&salvium_crypto::pedersen_commit(
-        &amount.to_le_bytes(),
-        &pseudo_mask,
-    ));
+    let input_commitment =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &input_mask));
+    let pseudo_output =
+        to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &pseudo_mask));
 
     let hp_pk = to_32(&salvium_crypto::hash_to_point(&pk));
     let key_image = to_32(&salvium_crypto::scalar_mult_point(&sk, &hp_pk));
@@ -1642,10 +1564,8 @@ fn test_proposer_cosigner_offset_pattern() {
             let (_, dk) = generate_random_scalar();
             ring.push(to_32(&salvium_crypto::scalar_mult_base(&dk)));
             let (_, cm) = generate_random_scalar();
-            ring_commitments.push(to_32(&salvium_crypto::pedersen_commit(
-                &amount.to_le_bytes(),
-                &cm,
-            )));
+            ring_commitments
+                .push(to_32(&salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &cm)));
             let (fr, _) = generate_random_scalar();
             fake_responses.push(fr);
         }
@@ -1674,14 +1594,8 @@ fn test_proposer_cosigner_offset_pattern() {
     let all_nonces = vec![nonces0.clone(), nonces1.clone()];
 
     // 7. Proposer signs with (weighted_share + key_offset) and full z.
-    let p0 = partial_sign(
-        &ctx,
-        &nonces0,
-        &hex::encode(proposer_key),
-        &hex::encode(z),
-        &all_nonces,
-    )
-    .unwrap();
+    let p0 = partial_sign(&ctx, &nonces0, &hex::encode(proposer_key), &hex::encode(z), &all_nonces)
+        .unwrap();
 
     // 8. Co-signer signs with bare weighted_share and z = 0.
     let p1 = partial_sign(
@@ -1700,10 +1614,8 @@ fn test_proposer_cosigner_offset_pattern() {
     let s = to_32(&hex::decode(&s_hex).unwrap());
     let c_0 = to_32(&hex::decode(&c_0_hex).unwrap());
 
-    let mut s_vec: Vec<[u8; 32]> = fake_responses
-        .iter()
-        .map(|h| to_32(&hex::decode(h).unwrap()))
-        .collect();
+    let mut s_vec: Vec<[u8; 32]> =
+        fake_responses.iter().map(|h| to_32(&hex::decode(h).unwrap())).collect();
     s_vec[real_index] = s;
 
     let sig = salvium_crypto::clsag::ClsagSignature {
@@ -1721,10 +1633,7 @@ fn test_proposer_cosigner_offset_pattern() {
         &pseudo_output,
     );
 
-    assert!(
-        valid,
-        "proposer-owns-offsets pattern CLSAG signature MUST verify!"
-    );
+    assert!(valid, "proposer-owns-offsets pattern CLSAG signature MUST verify!");
 }
 
 /// Verify that PendingMultisigTx with the new fields serializes and deserializes correctly.

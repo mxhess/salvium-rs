@@ -87,10 +87,7 @@ impl ChainState {
 
     /// Append a block, automatically computing cumulative difficulty and height.
     pub fn add_block(&mut self, timestamp: u64, difficulty: u128, block_weight: u64) {
-        let prev_cum = self
-            .blocks
-            .last()
-            .map_or(0u128, |b| b.cumulative_difficulty);
+        let prev_cum = self.blocks.last().map_or(0u128, |b| b.cumulative_difficulty);
         let height = self.blocks.len() as u64;
         self.blocks.push(BlockInfo {
             height,
@@ -146,10 +143,7 @@ impl ChainState {
     /// weights when the chain is shorter).
     pub fn get_short_term_weights(&self) -> Vec<u64> {
         let start = self.blocks.len().saturating_sub(REWARD_BLOCKS_WINDOW);
-        self.blocks[start..]
-            .iter()
-            .map(|b| b.block_weight)
-            .collect()
+        self.blocks[start..].iter().map(|b| b.block_weight).collect()
     }
 
     /// Compute the dynamic block weight limit.
@@ -161,11 +155,8 @@ impl ChainState {
     pub fn get_block_weight_limit(&self) -> (u64, u64) {
         let short_term = self.get_short_term_weights();
 
-        let short_term_median = if short_term.is_empty() {
-            0
-        } else {
-            get_median_block_weight(&short_term)
-        };
+        let short_term_median =
+            if short_term.is_empty() { 0 } else { get_median_block_weight(&short_term) };
 
         // For a simplified model (without long-term weight tracking) we treat
         // the long-term effective median as BLOCK_GRANTED_FULL_REWARD_ZONE_V5
@@ -232,10 +223,7 @@ mod tests {
 
     #[test]
     fn cumulative_multiple() {
-        assert_eq!(
-            build_cumulative_difficulties(&[10, 20, 30]),
-            vec![10, 30, 60]
-        );
+        assert_eq!(build_cumulative_difficulties(&[10, 20, 30]), vec![10, 30, 60]);
     }
 
     #[test]
@@ -288,10 +276,7 @@ mod tests {
 
     #[test]
     fn median_all_same() {
-        assert_eq!(
-            get_median_block_weight(&[300_000, 300_000, 300_000]),
-            300_000
-        );
+        assert_eq!(get_median_block_weight(&[300_000, 300_000, 300_000]), 300_000);
     }
 
     // ---- ChainState ----------------------------------------------------------

@@ -112,13 +112,7 @@ impl Fe {
 
     /// Field addition: a + b
     fn add(a: &Fe, b: &Fe) -> Fe {
-        Fe([
-            a.0[0] + b.0[0],
-            a.0[1] + b.0[1],
-            a.0[2] + b.0[2],
-            a.0[3] + b.0[3],
-            a.0[4] + b.0[4],
-        ])
+        Fe([a.0[0] + b.0[0], a.0[1] + b.0[1], a.0[2] + b.0[2], a.0[3] + b.0[3], a.0[4] + b.0[4]])
     }
 
     /// Field subtraction: a - b (adds 2p first to avoid underflow)
@@ -154,20 +148,10 @@ impl Fe {
     /// Field multiplication: a * b mod p
     fn mul(a: &Fe, b: &Fe) -> Fe {
         // Schoolbook multiplication with 128-bit intermediates
-        let (a0, a1, a2, a3, a4) = (
-            a.0[0] as u128,
-            a.0[1] as u128,
-            a.0[2] as u128,
-            a.0[3] as u128,
-            a.0[4] as u128,
-        );
-        let (b0, b1, b2, b3, b4) = (
-            b.0[0] as u128,
-            b.0[1] as u128,
-            b.0[2] as u128,
-            b.0[3] as u128,
-            b.0[4] as u128,
-        );
+        let (a0, a1, a2, a3, a4) =
+            (a.0[0] as u128, a.0[1] as u128, a.0[2] as u128, a.0[3] as u128, a.0[4] as u128);
+        let (b0, b1, b2, b3, b4) =
+            (b.0[0] as u128, b.0[1] as u128, b.0[2] as u128, b.0[3] as u128, b.0[4] as u128);
 
         // Precompute 19*b_i for reduction
         let b1_19 = 19 * b1;
@@ -209,13 +193,8 @@ impl Fe {
 
     /// Field squaring: a^2 mod p (optimized)
     fn sq(a: &Fe) -> Fe {
-        let (a0, a1, a2, a3, a4) = (
-            a.0[0] as u128,
-            a.0[1] as u128,
-            a.0[2] as u128,
-            a.0[3] as u128,
-            a.0[4] as u128,
-        );
+        let (a0, a1, a2, a3, a4) =
+            (a.0[0] as u128, a.0[1] as u128, a.0[2] as u128, a.0[3] as u128, a.0[4] as u128);
 
         // Double cross terms
         let d0 = 2 * a0;

@@ -24,10 +24,7 @@ async fn debug_block_1230() {
                         for out in vout {
                             let out_type = out.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
                             let amount = out.get("amount").and_then(|v| v.as_str()).unwrap_or("?");
-                            let vt = out
-                                .get("viewTag")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("none");
+                            let vt = out.get("viewTag").and_then(|v| v.as_str()).unwrap_or("none");
                             let asset =
                                 out.get("assetType").and_then(|v| v.as_str()).unwrap_or("?");
                             println!(
@@ -55,19 +52,13 @@ async fn debug_block_1230() {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block_json_str) {
         println!("{}", serde_json::to_string_pretty(&val).unwrap());
     } else {
-        println!(
-            "Failed to parse as JSON: {}",
-            &block_json_str[..200.min(block_json_str.len())]
-        );
+        println!("Failed to parse as JSON: {}", &block_json_str[..200.min(block_json_str.len())]);
     }
 
     // Decrypt wallet-a to get keys.
     let dir = dirs::home_dir().unwrap().join("testnet-wallet");
     let wallet_json = std::fs::read_to_string(dir.join("wallet-a.json")).unwrap();
-    let pin = std::fs::read_to_string(dir.join("wallet-a.pin"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let pin = std::fs::read_to_string(dir.join("wallet-a.pin")).unwrap().trim().to_string();
     let secrets = decrypt_js_wallet(&wallet_json, &pin).unwrap();
 
     println!("\n=== Wallet A keys ===");
@@ -82,13 +73,9 @@ async fn debug_block_1230() {
     // Create wallet and check scan context.
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("debug.db");
-    let wallet = Wallet::create(
-        secrets.seed,
-        Network::Testnet,
-        db_path.to_str().unwrap(),
-        &[0u8; 32],
-    )
-    .unwrap();
+    let wallet =
+        Wallet::create(secrets.seed, Network::Testnet, db_path.to_str().unwrap(), &[0u8; 32])
+            .unwrap();
 
     let keys = wallet.keys();
     println!("\n=== Wallet keys from seed ===");
@@ -104,10 +91,7 @@ async fn debug_block_1230() {
     let ctx = wallet.scan_context();
     println!("\n=== Scan context ===");
     println!("CN subaddress map entries: {}", ctx.cn_subaddress_map.len());
-    println!(
-        "CARROT subaddress map entries: {}",
-        ctx.carrot_subaddress_map.len()
-    );
+    println!("CARROT subaddress map entries: {}", ctx.carrot_subaddress_map.len());
     println!("CARROT enabled: {}", ctx.carrot_enabled);
 
     if !ctx.cn_subaddress_map.is_empty() {
@@ -137,10 +121,8 @@ async fn debug_block_1230() {
 
             // Try extracting tx_pub_key from extra.
             if let Some(extra) = miner_tx.get("extra").and_then(|v| v.as_array()) {
-                let bytes: Vec<u8> = extra
-                    .iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as u8))
-                    .collect();
+                let bytes: Vec<u8> =
+                    extra.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect();
                 println!(
                     "\nExtra bytes ({} total): {:?}",
                     bytes.len(),

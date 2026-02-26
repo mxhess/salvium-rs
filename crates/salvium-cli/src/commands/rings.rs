@@ -12,12 +12,7 @@ pub async fn print_ring(ctx: &AppContext, key_image_or_txid: &str) -> Result {
         println!("{:<6} {:>12} {:>8}", "Index", "Global Out", "Relative");
         println!("{}", "-".repeat(30));
         for (idx, global, relative) in &members {
-            println!(
-                "{:<6} {:>12} {:>8}",
-                idx,
-                global,
-                if *relative { "yes" } else { "no" }
-            );
+            println!("{:<6} {:>12} {:>8}", idx, global, if *relative { "yes" } else { "no" });
         }
         return Ok(());
     }
@@ -25,10 +20,7 @@ pub async fn print_ring(ctx: &AppContext, key_image_or_txid: &str) -> Result {
     // Try as tx hash — look up all key images in that transaction.
     let rings = wallet.get_rings_for_tx(key_image_or_txid)?;
     if rings.is_empty() {
-        println!(
-            "No ring data found for key image or tx hash: {}",
-            key_image_or_txid
-        );
+        println!("No ring data found for key image or tx hash: {}", key_image_or_txid);
         return Ok(());
     }
 
@@ -37,12 +29,7 @@ pub async fn print_ring(ctx: &AppContext, key_image_or_txid: &str) -> Result {
         println!("{:<6} {:>12} {:>8}", "Index", "Global Out", "Relative");
         println!("{}", "-".repeat(30));
         for (idx, global, relative) in members {
-            println!(
-                "{:<6} {:>12} {:>8}",
-                idx,
-                global,
-                if *relative { "yes" } else { "no" }
-            );
+            println!("{:<6} {:>12} {:>8}", idx, global, if *relative { "yes" } else { "no" });
         }
         println!();
     }
@@ -65,11 +52,7 @@ pub async fn set_ring(
         .collect();
 
     wallet.set_ring(key_image, &members)?;
-    println!(
-        "Stored {} ring members for key image: {}",
-        indices.len(),
-        key_image
-    );
+    println!("Stored {} ring members for key image: {}", indices.len(), key_image);
 
     Ok(())
 }
@@ -86,21 +69,14 @@ pub async fn unset_ring(ctx: &AppContext, key_image_or_txid: &str) -> Result {
     // Try as tx hash.
     let rings = wallet.get_rings_for_tx(key_image_or_txid)?;
     if rings.is_empty() {
-        println!(
-            "No ring data found for key image or tx hash: {}",
-            key_image_or_txid
-        );
+        println!("No ring data found for key image or tx hash: {}", key_image_or_txid);
         return Ok(());
     }
 
     for ki in rings.keys() {
         wallet.unset_ring(ki)?;
     }
-    println!(
-        "Removed ring data for {} key images in tx: {}",
-        rings.len(),
-        key_image_or_txid
-    );
+    println!("Removed ring data for {} key images in tx: {}", rings.len(), key_image_or_txid);
 
     Ok(())
 }

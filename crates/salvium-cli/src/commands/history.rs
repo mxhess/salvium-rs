@@ -77,16 +77,9 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
     }
 
     let display_count = transfers.len().min(f.limit);
-    println!(
-        "Showing {}/{} transactions:",
-        display_count,
-        transfers.len()
-    );
+    println!("Showing {}/{} transactions:", display_count, transfers.len());
     println!();
-    println!(
-        "{:<8} {:<10} {:<8} {:>16} TX Hash",
-        "Height", "Type", "Asset", "Amount"
-    );
+    println!("{:<8} {:<10} {:<8} {:>16} TX Hash", "Height", "Type", "Asset", "Amount");
     println!("{}", "-".repeat(80));
 
     for tx in transfers.iter().rev().take(f.limit) {
@@ -119,11 +112,7 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
 }
 
 pub async fn show_history(ctx: &AppContext, _account: i32, limit: usize) -> Result {
-    let f = TransferFilters {
-        limit,
-        account: _account,
-        ..Default::default()
-    };
+    let f = TransferFilters { limit, account: _account, ..Default::default() };
     show_transfers(ctx, &f).await
 }
 
@@ -142,9 +131,7 @@ pub async fn show_transfer(ctx: &AppContext, tx_hash: &str) -> Result {
     };
     let transfers = wallet.get_transfers(&query)?;
 
-    let tx = transfers
-        .first()
-        .ok_or_else(|| format!("transaction not found: {}", tx_hash))?;
+    let tx = transfers.first().ok_or_else(|| format!("transaction not found: {}", tx_hash))?;
 
     println!("Transaction details:");
     println!("  TX hash:    {}", tx.tx_hash);
@@ -193,16 +180,9 @@ pub async fn export_transfers(ctx: &AppContext, output_file: &str) -> Result {
         String::from("height,type,direction,asset,amount,fee,tx_hash,timestamp,payment_id\n");
 
     for tx in &transfers {
-        let direction = if tx.incoming_amount != "0" {
-            "in"
-        } else {
-            "out"
-        };
-        let amount = if tx.incoming_amount != "0" {
-            &tx.incoming_amount
-        } else {
-            &tx.outgoing_amount
-        };
+        let direction = if tx.incoming_amount != "0" { "in" } else { "out" };
+        let amount =
+            if tx.incoming_amount != "0" { &tx.incoming_amount } else { &tx.outgoing_amount };
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{}\n",
             tx.block_height.unwrap_or(0),
@@ -218,11 +198,7 @@ pub async fn export_transfers(ctx: &AppContext, output_file: &str) -> Result {
     }
 
     std::fs::write(output_file, &csv)?;
-    println!(
-        "Exported {} transactions to {}",
-        transfers.len(),
-        output_file
-    );
+    println!("Exported {} transactions to {}", transfers.len(), output_file);
 
     Ok(())
 }

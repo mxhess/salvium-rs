@@ -28,28 +28,19 @@ fn create_miner_transaction(
 
     // Genesis block: full premine, no stake deduction
     if already_generated_coins == 0 {
-        return Some(MinerTxOutput {
-            amount: reward,
-            tx_type: TxType::Miner,
-        });
+        return Some(MinerTxOutput { amount: reward, tx_type: TxType::Miner });
     }
 
     // Post-genesis: 20% stake deduction
     let stake_deduction = reward / 5;
     let miner_reward = reward - stake_deduction;
 
-    Some(MinerTxOutput {
-        amount: miner_reward,
-        tx_type: TxType::Miner,
-    })
+    Some(MinerTxOutput { amount: miner_reward, tx_type: TxType::Miner })
 }
 
 /// Create an empty protocol transaction (for stake returns, yield, etc.)
 fn create_protocol_transaction(_height: u64, amount: u64) -> MinerTxOutput {
-    MinerTxOutput {
-        amount,
-        tx_type: TxType::Protocol,
-    }
+    MinerTxOutput { amount, tx_type: TxType::Protocol }
 }
 
 // =============================================================================

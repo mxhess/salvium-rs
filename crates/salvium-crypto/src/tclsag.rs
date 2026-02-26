@@ -20,9 +20,7 @@ const T_BYTES: [u8; 32] = [
 ];
 
 fn t_point() -> EdwardsPoint {
-    CompressedEdwardsY(T_BYTES)
-        .decompress()
-        .expect("invalid T generator")
+    CompressedEdwardsY(T_BYTES).decompress().expect("invalid T generator")
 }
 
 // Domain separators (same as CLSAG)
@@ -78,10 +76,8 @@ pub fn tclsag_sign(
     let pseudo_pt = decompress(pseudo_output);
 
     // Commitment differences
-    let c_diff: Vec<EdwardsPoint> = commitments
-        .iter()
-        .map(|c| decompress(&to32(c)) - pseudo_pt)
-        .collect();
+    let c_diff: Vec<EdwardsPoint> =
+        commitments.iter().map(|c| decompress(&to32(c)) - pseudo_pt).collect();
 
     // Key image: I = x * H_p(P_l)
     let p_l = ring[secret_index];
@@ -172,12 +168,7 @@ pub fn tclsag_sign(
         // L = sx[i]*G + sy[i]*T + c*mu_P*P[i] + c*mu_C*C[i]
         let l_pt = EdwardsPoint::vartime_multiscalar_mul(
             &[sx_i, sy_i, c_mu_p, c_mu_c],
-            &[
-                curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
-                t_gen,
-                ring_pt,
-                c_diff[i],
-            ],
+            &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, t_gen, ring_pt, c_diff[i]],
         );
 
         // R = sx[i]*H_p(P[i]) + c*mu_P*I + c*mu_C*D_full
@@ -234,13 +225,7 @@ pub fn tclsag_sign(
         }
     };
 
-    TclsagSignature {
-        sx,
-        sy,
-        c1: c1.to_bytes(),
-        key_image,
-        commitment_image: d8,
-    }
+    TclsagSignature { sx, sy, c1: c1.to_bytes(), key_image, commitment_image: d8 }
 }
 
 // ─── Core TCLSAG Verify ─────────────────────────────────────────────────────
@@ -264,10 +249,8 @@ pub fn tclsag_verify(
         None => return false,
     };
 
-    let c_diff: Vec<EdwardsPoint> = commitments
-        .iter()
-        .map(|c| decompress(&to32(c)) - pseudo_pt)
-        .collect();
+    let c_diff: Vec<EdwardsPoint> =
+        commitments.iter().map(|c| decompress(&to32(c)) - pseudo_pt).collect();
 
     // D_full = D_8 * 8
     let d8_pt = match CompressedEdwardsY(sig.commitment_image).decompress() {
@@ -320,12 +303,7 @@ pub fn tclsag_verify(
         // L = sx[i]*G + sy[i]*T + c*mu_P*P[i] + c*mu_C*C[i]
         let l_pt = EdwardsPoint::vartime_multiscalar_mul(
             &[sx_i, sy_i, c_mu_p, c_mu_c],
-            &[
-                curve25519_dalek::constants::ED25519_BASEPOINT_POINT,
-                t_gen,
-                ring_pt,
-                c_diff[i],
-            ],
+            &[curve25519_dalek::constants::ED25519_BASEPOINT_POINT, t_gen, ring_pt, c_diff[i]],
         );
 
         // R = sx[i]*H_p(P[i]) + c*mu_P*I + c*mu_C*D_full
@@ -401,13 +379,7 @@ fn deserialize_tclsag(bytes: &[u8]) -> Option<TclsagSignature> {
     offset += 32;
     let commitment_image = to32(&bytes[offset..offset + 32]);
 
-    Some(TclsagSignature {
-        sx,
-        sy,
-        c1,
-        key_image,
-        commitment_image,
-    })
+    Some(TclsagSignature { sx, sy, c1, key_image, commitment_image })
 }
 
 // ─── WASM Bindings ──────────────────────────────────────────────────────────
@@ -425,12 +397,9 @@ pub fn tclsag_sign_wasm(
     secret_index: u32,
 ) -> Vec<u8> {
     let n = ring_flat.len() / 32;
-    let ring: Vec<[u8; 32]> = (0..n)
-        .map(|i| to32(&ring_flat[i * 32..(i + 1) * 32]))
-        .collect();
-    let comms: Vec<[u8; 32]> = (0..n)
-        .map(|i| to32(&commitments_flat[i * 32..(i + 1) * 32]))
-        .collect();
+    let ring: Vec<[u8; 32]> = (0..n).map(|i| to32(&ring_flat[i * 32..(i + 1) * 32])).collect();
+    let comms: Vec<[u8; 32]> =
+        (0..n).map(|i| to32(&commitments_flat[i * 32..(i + 1) * 32])).collect();
 
     let sig = tclsag_sign(
         &to32(message),
@@ -458,12 +427,9 @@ pub fn tclsag_verify_wasm(
         None => return false,
     };
     let n = ring_flat.len() / 32;
-    let ring: Vec<[u8; 32]> = (0..n)
-        .map(|i| to32(&ring_flat[i * 32..(i + 1) * 32]))
-        .collect();
-    let comms: Vec<[u8; 32]> = (0..n)
-        .map(|i| to32(&commitments_flat[i * 32..(i + 1) * 32]))
-        .collect();
+    let ring: Vec<[u8; 32]> = (0..n).map(|i| to32(&ring_flat[i * 32..(i + 1) * 32])).collect();
+    let comms: Vec<[u8; 32]> =
+        (0..n).map(|i| to32(&commitments_flat[i * 32..(i + 1) * 32])).collect();
 
     tclsag_verify(&to32(message), &sig, &ring, &comms, &to32(pseudo_output))
 }
@@ -495,9 +461,8 @@ mod tests {
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
 
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -515,22 +480,10 @@ mod tests {
             0,
         );
 
-        assert!(tclsag_verify(
-            &message,
-            &sig,
-            &[pk],
-            &[commitment],
-            &pseudo_output
-        ));
+        assert!(tclsag_verify(&message, &sig, &[pk], &[commitment], &pseudo_output));
 
         let wrong_msg = keccak256_internal(b"wrong message");
-        assert!(!tclsag_verify(
-            &wrong_msg,
-            &sig,
-            &[pk],
-            &[commitment],
-            &pseudo_output
-        ));
+        assert!(!tclsag_verify(&wrong_msg, &sig, &[pk], &[commitment], &pseudo_output));
     }
 
     #[test]
@@ -553,9 +506,7 @@ mod tests {
             }
             let mask = random_scalar();
             commitments.push(
-                (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-                    .compress()
-                    .to_bytes(),
+                (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes(),
             );
             masks.push(mask);
         }
@@ -579,13 +530,7 @@ mod tests {
             secret_index,
         );
 
-        assert!(tclsag_verify(
-            &message,
-            &sig,
-            &ring,
-            &commitments,
-            &pseudo_output
-        ));
+        assert!(tclsag_verify(&message, &sig, &ring, &commitments, &pseudo_output));
     }
 
     #[test]
@@ -597,9 +542,8 @@ mod tests {
         let mask = random_scalar();
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -645,9 +589,8 @@ mod tests {
         let mask = random_scalar();
         let pseudo_mask = random_scalar();
         let z = mask - pseudo_mask;
-        let commitment = (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
-            .compress()
-            .to_bytes();
+        let commitment =
+            (mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT).compress().to_bytes();
         let pseudo_output = (pseudo_mask * curve25519_dalek::constants::ED25519_BASEPOINT_POINT)
             .compress()
             .to_bytes();
@@ -666,12 +609,6 @@ mod tests {
         let bytes = serialize_tclsag(&sig);
         let sig2 = deserialize_tclsag(&bytes).unwrap();
 
-        assert!(tclsag_verify(
-            &message,
-            &sig2,
-            &[pk],
-            &[commitment],
-            &pseudo_output
-        ));
+        assert!(tclsag_verify(&message, &sig2, &[pk], &[commitment], &pseudo_output));
     }
 }

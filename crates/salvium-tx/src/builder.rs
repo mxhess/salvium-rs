@@ -272,10 +272,7 @@ impl TransactionBuilder {
         // Check sufficient funds.
         let needed = total_dest + estimated_fee + self.amount_burnt;
         if total_input < needed {
-            return Err(TxError::InsufficientInputs {
-                need: needed,
-                have: total_input,
-            });
+            return Err(TxError::InsufficientInputs { need: needed, have: total_input });
         }
 
         let change_amount = total_input - total_dest - estimated_fee - self.amount_burnt;
@@ -508,18 +505,13 @@ impl TransactionBuilder {
         if self.rct_type >= rct_type::SALVIUM_ONE {
             output_order.sort_by(|&a, &b| tx_outputs[a].key().cmp(tx_outputs[b].key()));
         }
-        let tx_outputs: Vec<_> = output_order
-            .iter()
-            .map(|&i| tx_outputs[i].clone())
-            .collect();
+        let tx_outputs: Vec<_> = output_order.iter().map(|&i| tx_outputs[i].clone()).collect();
         let output_masks: Vec<_> = output_order.iter().map(|&i| output_masks[i]).collect();
         let output_amounts: Vec<_> = output_order.iter().map(|&i| output_amounts[i]).collect();
         let encrypted_amounts: Vec<_> =
             output_order.iter().map(|&i| encrypted_amounts[i]).collect();
-        let output_commitments: Vec<_> = output_order
-            .iter()
-            .map(|&i| output_commitments[i])
-            .collect();
+        let output_commitments: Vec<_> =
+            output_order.iter().map(|&i| output_commitments[i]).collect();
         // Sort ephemeral keys to match the output order.
         let ephemeral_keys: Vec<_> = output_order.iter().map(|&i| ephemeral_keys[i]).collect();
 
@@ -577,11 +569,7 @@ impl TransactionBuilder {
         }
 
         // Version 4 for CARROT transactions (rct_type >= SALVIUM_ONE), version 2 otherwise.
-        let version = if self.rct_type >= rct_type::SALVIUM_ONE {
-            4
-        } else {
-            2
-        };
+        let version = if self.rct_type >= rct_type::SALVIUM_ONE { 4 } else { 2 };
 
         // For version >= 3 TRANSFER, populate return_address_list and change_mask.
         let (return_address_list, return_address_change_mask) = if self.tx_type == tx_type::TRANSFER
@@ -776,20 +764,14 @@ mod tests {
 
     #[test]
     fn test_absolute_to_relative() {
-        assert_eq!(
-            absolute_to_relative(&[10, 50, 80, 100]),
-            vec![10, 40, 30, 20]
-        );
+        assert_eq!(absolute_to_relative(&[10, 50, 80, 100]), vec![10, 40, 30, 20]);
         assert_eq!(absolute_to_relative(&[5]), vec![5]);
         assert_eq!(absolute_to_relative(&[]), Vec::<u64>::new());
     }
 
     #[test]
     fn test_relative_to_absolute() {
-        assert_eq!(
-            relative_to_absolute(&[10, 40, 30, 20]),
-            vec![10, 50, 80, 100]
-        );
+        assert_eq!(relative_to_absolute(&[10, 40, 30, 20]), vec![10, 50, 80, 100]);
         assert_eq!(relative_to_absolute(&[5]), vec![5]);
     }
 

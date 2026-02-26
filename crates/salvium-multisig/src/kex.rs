@@ -194,10 +194,7 @@ impl KexRoundProcessor {
             }
             for key_hex in &msg.keys {
                 let key = hex_to_32(key_hex)?;
-                self.kex_keys_to_origins
-                    .entry(key)
-                    .or_default()
-                    .push(msg.signer_index);
+                self.kex_keys_to_origins.entry(key).or_default().push(msg.signer_index);
                 all_incoming.push(key);
             }
         }
@@ -317,10 +314,7 @@ impl KexRoundProcessor {
                 ));
             }
             if msg.keys.is_empty() {
-                return Err(format!(
-                    "signer {} sent empty verification",
-                    msg.signer_index
-                ));
+                return Err(format!("signer {} sent empty verification", msg.signer_index));
             }
             if msg.keys[0] != *expected_hash {
                 return Err(format!(
@@ -360,12 +354,7 @@ pub struct KexMessage {
 impl KexMessage {
     /// Create a new KexMessage with default values.
     pub fn new() -> Self {
-        Self {
-            round: 0,
-            signer_index: 0,
-            keys: Vec::new(),
-            msg_type: MultisigMsgType::KexInit,
-        }
+        Self { round: 0, signer_index: 0, keys: Vec::new(), msg_type: MultisigMsgType::KexInit }
     }
 
     /// Serialize to a JSON byte vector.
@@ -386,11 +375,7 @@ impl KexMessage {
 
 impl std::fmt::Display for KexMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            serde_json::to_string(self).expect("KexMessage to_string should not fail")
-        )
+        write!(f, "{}", serde_json::to_string(self).expect("KexMessage to_string should not fail"))
     }
 }
 
@@ -577,9 +562,7 @@ mod tests {
         // Verification
         let v0 = proc0.verification_message(&agg0, &view0);
         let v1 = proc1.verification_message(&agg1, &view1);
-        proc0
-            .verify_kex(&[v0.clone(), v1.clone()], &agg0, &view0)
-            .unwrap();
+        proc0.verify_kex(&[v0.clone(), v1.clone()], &agg0, &view0).unwrap();
         proc1.verify_kex(&[v0, v1], &agg1, &view1).unwrap();
     }
 

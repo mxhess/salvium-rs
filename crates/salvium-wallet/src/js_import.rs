@@ -42,10 +42,7 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
     let envelope: serde_json::Value =
         serde_json::from_str(wallet_json).map_err(|e| WalletError::InvalidFile(e.to_string()))?;
 
-    let encrypted = envelope
-        .get("encrypted")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let encrypted = envelope.get("encrypted").and_then(|v| v.as_bool()).unwrap_or(false);
     if !encrypted {
         return Err(WalletError::InvalidFile("wallet is not encrypted".into()));
     }
@@ -65,21 +62,12 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
         .get("argon2")
         .ok_or_else(|| WalletError::InvalidFile("missing argon2 parameters".into()))?;
     let t_cost = argon2_params.get("t").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
-    let m_cost = argon2_params
-        .get("m")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(65536) as u32;
+    let m_cost = argon2_params.get("m").and_then(|v| v.as_u64()).unwrap_or(65536) as u32;
     let parallelism = argon2_params.get("p").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
 
     // 1-2. Derive classical key + KEM seed via shared PQC primitives.
-    let keys = crate::pqc::derive_keys(
-        pin.as_bytes(),
-        &kdf_salt,
-        &kem_salt,
-        t_cost,
-        m_cost,
-        parallelism,
-    )?;
+    let keys =
+        crate::pqc::derive_keys(pin.as_bytes(), &kdf_salt, &kem_salt, t_cost, m_cost, parallelism)?;
 
     // 3. Deterministic ML-KEM-768 keygen from seed (d = first 32, z = last 32).
     let d: [u8; 32] = keys.kem_seed[..32].try_into().unwrap();
@@ -92,9 +80,7 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
         .as_slice()
         .try_into()
         .map_err(|_| WalletError::InvalidFile("invalid kyber ciphertext length".into()))?;
-    let quantum_key = dk
-        .decapsulate(&ct_array)
-        .map_err(|_| WalletError::DecryptionFailed)?;
+    let quantum_key = dk.decapsulate(&ct_array).map_err(|_| WalletError::DecryptionFailed)?;
 
     // 5. HKDF-SHA256: combine classical + quantum -> 32-byte AES key.
     let mut ikm = Vec::with_capacity(64);
@@ -103,8 +89,7 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
 
     let hk = Hkdf::<Sha256>::new(None, &ikm);
     let mut aes_key = [0u8; 32];
-    hk.expand(HKDF_INFO, &mut aes_key)
-        .map_err(|e| WalletError::KeyDerivation(e.to_string()))?;
+    hk.expand(HKDF_INFO, &mut aes_key).map_err(|e| WalletError::KeyDerivation(e.to_string()))?;
 
     // 6. AES-256-GCM decrypt.
     if iv.len() != 12 {
@@ -117,9 +102,8 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
     let key = Key::<Aes256Gcm>::from_slice(&aes_key);
     let cipher = Aes256Gcm::new(key);
     let nonce = Nonce::from_slice(&iv);
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext.as_ref())
-        .map_err(|_| WalletError::DecryptionFailed)?;
+    let plaintext =
+        cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| WalletError::DecryptionFailed)?;
 
     // 7. Parse the JSON plaintext.
     let secrets: serde_json::Value = serde_json::from_slice(&plaintext)
@@ -132,35 +116,19 @@ pub fn decrypt_js_wallet(wallet_json: &str, pin: &str) -> Result<JsWalletSecrets
             .ok_or_else(|| WalletError::InvalidFile("missing seed in decrypted data".into()))?,
     )?;
 
-    let spend_secret_key = hex_to_32(
-        secrets
-            .get("spendSecretKey")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                WalletError::InvalidFile("missing spendSecretKey in decrypted data".into())
-            })?,
-    )?;
+    let spend_secret_key =
+        hex_to_32(secrets.get("spendSecretKey").and_then(|v| v.as_str()).ok_or_else(|| {
+            WalletError::InvalidFile("missing spendSecretKey in decrypted data".into())
+        })?)?;
 
-    let view_secret_key = hex_to_32(
-        secrets
-            .get("viewSecretKey")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                WalletError::InvalidFile("missing viewSecretKey in decrypted data".into())
-            })?,
-    )?;
+    let view_secret_key =
+        hex_to_32(secrets.get("viewSecretKey").and_then(|v| v.as_str()).ok_or_else(|| {
+            WalletError::InvalidFile("missing viewSecretKey in decrypted data".into())
+        })?)?;
 
-    let mnemonic = secrets
-        .get("mnemonic")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let mnemonic = secrets.get("mnemonic").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    Ok(JsWalletSecrets {
-        seed,
-        spend_secret_key,
-        view_secret_key,
-        mnemonic,
-    })
+    Ok(JsWalletSecrets { seed, spend_secret_key, view_secret_key, mnemonic })
 }
 
 fn hex_decode_field(obj: &serde_json::Value, field: &str) -> Result<Vec<u8>, WalletError> {
@@ -176,10 +144,7 @@ fn hex_to_32(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let bytes = hex::decode(hex_str)
         .map_err(|e| WalletError::InvalidFile(format!("invalid hex: {}", e)))?;
     if bytes.len() != 32 {
-        return Err(WalletError::InvalidFile(format!(
-            "expected 32 bytes, got {}",
-            bytes.len()
-        )));
+        return Err(WalletError::InvalidFile(format!("expected 32 bytes, got {}", bytes.len())));
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
@@ -207,40 +172,23 @@ mod tests {
         }
 
         let wallet_json = std::fs::read_to_string(&wallet_path).unwrap();
-        let pin = std::fs::read_to_string(&pin_path)
-            .unwrap()
-            .trim()
-            .to_string();
+        let pin = std::fs::read_to_string(&pin_path).unwrap().trim().to_string();
 
         let secrets = decrypt_js_wallet(&wallet_json, &pin).unwrap();
 
         // Verify seed is non-zero.
         assert_ne!(secrets.seed, [0u8; 32], "seed should not be zero");
-        assert_ne!(
-            secrets.spend_secret_key, [0u8; 32],
-            "spend key should not be zero"
-        );
-        assert_ne!(
-            secrets.view_secret_key, [0u8; 32],
-            "view key should not be zero"
-        );
+        assert_ne!(secrets.spend_secret_key, [0u8; 32], "spend key should not be zero");
+        assert_ne!(secrets.view_secret_key, [0u8; 32], "view key should not be zero");
 
         // Verify the seed produces the expected public keys.
         let spend_pub = salvium_crypto::scalar_mult_base(&secrets.spend_secret_key);
         let expected_spend_pub = "74547ce24f8a18b602276c2f5fb361ff8e77a6dc8056386cb33b5cce4a44343a";
-        assert_eq!(
-            hex::encode(&spend_pub[..32]),
-            expected_spend_pub,
-            "spend public key mismatch"
-        );
+        assert_eq!(hex::encode(&spend_pub[..32]), expected_spend_pub, "spend public key mismatch");
 
         let view_pub = salvium_crypto::scalar_mult_base(&secrets.view_secret_key);
         let expected_view_pub = "0d35458cceb342262359219253f8f3a20a8ba525005062728ce9dd31bc22a908";
-        assert_eq!(
-            hex::encode(&view_pub[..32]),
-            expected_view_pub,
-            "view public key mismatch"
-        );
+        assert_eq!(hex::encode(&view_pub[..32]), expected_view_pub, "view public key mismatch");
 
         if let Some(ref mnemonic) = secrets.mnemonic {
             let words: Vec<&str> = mnemonic.split_whitespace().collect();

@@ -28,12 +28,8 @@ pub static ALL_LANGUAGES: [&WordList; 12] = [
     &LOJBAN,
 ];
 
-pub static ENGLISH: WordList = WordList {
-    name: "English",
-    english_name: "english",
-    prefix_length: 3,
-    words: &ENGLISH_WORDS,
-};
+pub static ENGLISH: WordList =
+    WordList { name: "English", english_name: "english", prefix_length: 3, words: &ENGLISH_WORDS };
 
 static ENGLISH_WORDS: [&str; 1626] = [
     "abbey",
@@ -1664,12 +1660,8 @@ static ENGLISH_WORDS: [&str; 1626] = [
     "zoom",
 ];
 
-pub static SPANISH: WordList = WordList {
-    name: "Español",
-    english_name: "spanish",
-    prefix_length: 4,
-    words: &SPANISH_WORDS,
-};
+pub static SPANISH: WordList =
+    WordList { name: "Español", english_name: "spanish", prefix_length: 4, words: &SPANISH_WORDS };
 
 static SPANISH_WORDS: [&str; 1626] = [
     "ábaco",
@@ -3300,12 +3292,8 @@ static SPANISH_WORDS: [&str; 1626] = [
     "rito",
 ];
 
-pub static FRENCH: WordList = WordList {
-    name: "Français",
-    english_name: "french",
-    prefix_length: 4,
-    words: &FRENCH_WORDS,
-};
+pub static FRENCH: WordList =
+    WordList { name: "Français", english_name: "french", prefix_length: 4, words: &FRENCH_WORDS };
 
 static FRENCH_WORDS: [&str; 1626] = [
     "abandon",
@@ -4936,12 +4924,8 @@ static FRENCH_WORDS: [&str; 1626] = [
     "zoom",
 ];
 
-pub static GERMAN: WordList = WordList {
-    name: "Deutsch",
-    english_name: "german",
-    prefix_length: 4,
-    words: &GERMAN_WORDS,
-};
+pub static GERMAN: WordList =
+    WordList { name: "Deutsch", english_name: "german", prefix_length: 4, words: &GERMAN_WORDS };
 
 static GERMAN_WORDS: [&str; 1626] = [
     "Abakus",
@@ -6572,12 +6556,8 @@ static GERMAN_WORDS: [&str; 1626] = [
     "Zyklop",
 ];
 
-pub static ITALIAN: WordList = WordList {
-    name: "Italiano",
-    english_name: "italian",
-    prefix_length: 4,
-    words: &ITALIAN_WORDS,
-};
+pub static ITALIAN: WordList =
+    WordList { name: "Italiano", english_name: "italian", prefix_length: 4, words: &ITALIAN_WORDS };
 
 static ITALIAN_WORDS: [&str; 1626] = [
     "abbinare", "abbonato", "abisso", "abitare", "abominio", "accadere", "accesso", "acciaio",
@@ -8412,12 +8392,8 @@ static PORTUGUESE_WORDS: [&str; 1626] = [
     "zumbi",
 ];
 
-pub static DUTCH: WordList = WordList {
-    name: "Nederlands",
-    english_name: "dutch",
-    prefix_length: 4,
-    words: &DUTCH_WORDS,
-};
+pub static DUTCH: WordList =
+    WordList { name: "Nederlands", english_name: "dutch", prefix_length: 4, words: &DUTCH_WORDS };
 
 static DUTCH_WORDS: [&str; 1626] = [
     "aalglad",
@@ -11684,12 +11660,10 @@ static RUSSIAN_WORDS: [&str; 1626] = [
     "ящик",
 ];
 
-pub static JAPANESE: WordList = WordList {
-    name: "日本語",
-    english_name: "japanese",
-    prefix_length: 3,
-    words: &JAPANESE_WORDS,
-};
+pub static JAPANESE: WordList =
+    WordList {
+        name: "日本語", english_name: "japanese", prefix_length: 3, words: &JAPANESE_WORDS
+    };
 
 static JAPANESE_WORDS: [&str; 1626] = [
     "あいこくしん",
@@ -15068,12 +15042,8 @@ static ESPERANTO_WORDS: [&str; 1626] = [
     "zumilo",
 ];
 
-pub static LOJBAN: WordList = WordList {
-    name: "Lojban",
-    english_name: "lojban",
-    prefix_length: 4,
-    words: &LOJBAN_WORDS,
-};
+pub static LOJBAN: WordList =
+    WordList { name: "Lojban", english_name: "lojban", prefix_length: 4, words: &LOJBAN_WORDS };
 
 static LOJBAN_WORDS: [&str; 1626] = [
     "backi",

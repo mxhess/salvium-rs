@@ -310,11 +310,7 @@ pub fn next_difficulty(
     }
 
     let length = ts.len();
-    assert_eq!(
-        length,
-        cd.len(),
-        "timestamps and difficulties must have same length"
-    );
+    assert_eq!(length, cd.len(), "timestamps and difficulties must have same length");
 
     if length <= 1 {
         return 1;
@@ -495,10 +491,7 @@ pub fn validate_block_timestamp(
         let window = &recent_timestamps[..TIMESTAMP_CHECK_WINDOW];
         let median = median_timestamp(window);
         if timestamp <= median {
-            return Err(format!(
-                "Timestamp not greater than median: {} <= {}",
-                timestamp, median
-            ));
+            return Err(format!("Timestamp not greater than median: {} <= {}", timestamp, median));
         }
     }
 

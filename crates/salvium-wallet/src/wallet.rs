@@ -118,16 +118,12 @@ impl Wallet {
 
     /// Get the primary CryptoNote address.
     pub fn cn_address(&self) -> Result<String, WalletError> {
-        self.keys
-            .cn_address()
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+        self.keys.cn_address().map_err(|e| WalletError::InvalidAddress(e.to_string()))
     }
 
     /// Get the primary CARROT address.
     pub fn carrot_address(&self) -> Result<String, WalletError> {
-        self.keys
-            .carrot_address()
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+        self.keys.carrot_address().map_err(|e| WalletError::InvalidAddress(e.to_string()))
     }
 
     /// Get the mnemonic seed words (only for full wallets).
@@ -174,13 +170,8 @@ impl Wallet {
         asset_type: &str,
         account_index: i32,
     ) -> Result<salvium_crypto::storage::BalanceResult, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let sync_height = db
-            .get_sync_height()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let sync_height = db.get_sync_height().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.get_balance(sync_height, asset_type, account_index)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
@@ -194,13 +185,8 @@ impl Wallet {
         std::collections::HashMap<String, salvium_crypto::storage::BalanceResult>,
         WalletError,
     > {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let sync_height = db
-            .get_sync_height()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let sync_height = db.get_sync_height().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.get_all_balances(sync_height, account_index)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
@@ -208,13 +194,8 @@ impl Wallet {
     /// Get the current sync height.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn sync_height(&self) -> Result<u64, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_sync_height()
-            .map(|h| h as u64)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_sync_height().map(|h| h as u64).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Sync (native only) ───────────────────────────────────────────────
@@ -229,15 +210,8 @@ impl Wallet {
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
-        SyncEngine::sync(
-            daemon,
-            &self.db,
-            &mut self.scan_context,
-            lock_period,
-            event_tx,
-            cancel,
-        )
-        .await
+        SyncEngine::sync(daemon, &self.db, &mut self.scan_context, lock_period, event_tx, cancel)
+            .await
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────
@@ -251,13 +225,8 @@ impl Wallet {
         asset_type: &str,
         strategy: SelectionStrategy,
     ) -> Result<utxo::SelectionResult, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let sync_height = db
-            .get_sync_height()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let sync_height = db.get_sync_height().map_err(|e| WalletError::Storage(e.to_string()))?;
 
         let query = salvium_crypto::storage::OutputQuery {
             is_spent: Some(false),
@@ -270,9 +239,7 @@ impl Wallet {
             max_amount: None,
         };
 
-        let outputs = db
-            .get_outputs(&query)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let outputs = db.get_outputs(&query).map_err(|e| WalletError::Storage(e.to_string()))?;
 
         // Filter to unlocked outputs only.
         let candidates: Vec<UtxoCandidate> = outputs
@@ -312,13 +279,8 @@ impl Wallet {
         asset_type: &str,
         strategy: SelectionStrategy,
     ) -> Result<utxo::SelectionResult, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let sync_height = db
-            .get_sync_height()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let sync_height = db.get_sync_height().map_err(|e| WalletError::Storage(e.to_string()))?;
 
         let query = salvium_crypto::storage::OutputQuery {
             is_spent: Some(false),
@@ -331,9 +293,7 @@ impl Wallet {
             max_amount: None,
         };
 
-        let outputs = db
-            .get_outputs(&query)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let outputs = db.get_outputs(&query).map_err(|e| WalletError::Storage(e.to_string()))?;
 
         let candidates: Vec<UtxoCandidate> = outputs
             .into_iter()
@@ -371,12 +331,8 @@ impl Wallet {
         &self,
         key_image: &str,
     ) -> Result<Option<salvium_crypto::storage::OutputRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_output(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_output(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Mark an output as spent by key image.
@@ -386,10 +342,7 @@ impl Wallet {
         key_image: &str,
         spending_tx_hash: &str,
     ) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.mark_spent(key_image, spending_tx_hash, 0)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
@@ -402,12 +355,8 @@ impl Wallet {
         &self,
         query: &salvium_crypto::storage::TxQuery,
     ) -> Result<Vec<salvium_crypto::storage::TransactionRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_txs(query)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_txs(query).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Staking ──────────────────────────────────────────────────────────
@@ -418,12 +367,8 @@ impl Wallet {
         &self,
         status: Option<&str>,
     ) -> Result<Vec<salvium_crypto::storage::StakeRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_stakes(status, None)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_stakes(status, None).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Transaction Notes ────────────────────────────────────────────────
@@ -431,12 +376,8 @@ impl Wallet {
     /// Set a user note on a transaction.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_tx_note(&self, tx_hash: &str, note: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_tx_note(tx_hash, note)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_tx_note(tx_hash, note).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get notes for a list of transaction hashes.
@@ -445,12 +386,8 @@ impl Wallet {
         &self,
         tx_hashes: &[&str],
     ) -> Result<std::collections::HashMap<String, String>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_tx_notes(tx_hashes)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_tx_notes(tx_hashes).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Address Book ─────────────────────────────────────────────────────
@@ -464,10 +401,7 @@ impl Wallet {
         description: &str,
         payment_id: &str,
     ) -> Result<i64, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.add_address_book_entry(address, label, description, payment_id)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
@@ -477,12 +411,8 @@ impl Wallet {
     pub fn get_address_book(
         &self,
     ) -> Result<Vec<salvium_crypto::storage::AddressBookEntry>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_address_book()
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_address_book().map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get a single address book entry by row_id.
@@ -491,12 +421,8 @@ impl Wallet {
         &self,
         row_id: i64,
     ) -> Result<Option<salvium_crypto::storage::AddressBookEntry>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_address_book_entry(row_id)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_address_book_entry(row_id).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Edit an address book entry. Returns true if the entry was found and updated.
@@ -509,10 +435,7 @@ impl Wallet {
         description: Option<&str>,
         payment_id: Option<&str>,
     ) -> Result<bool, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.edit_address_book_entry(row_id, address, label, description, payment_id)
             .map_err(|e| WalletError::Storage(e.to_string()))
     }
@@ -520,12 +443,8 @@ impl Wallet {
     /// Delete an address book entry. Returns true if the entry existed.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn delete_address_book_entry(&self, row_id: i64) -> Result<bool, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.delete_address_book_entry(row_id)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.delete_address_book_entry(row_id).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Output queries ──────────────────────────────────────────────────
@@ -536,45 +455,29 @@ impl Wallet {
         &self,
         query: &salvium_crypto::storage::OutputQuery,
     ) -> Result<Vec<salvium_crypto::storage::OutputRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_outputs(query)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_outputs(query).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Mark an output as unspent.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn mark_output_unspent(&self, key_image: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.mark_unspent(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.mark_unspent(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Freeze an output (exclude from coin selection).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn freeze_output(&self, key_image: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.freeze_output(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.freeze_output(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Thaw a frozen output.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn thaw_output(&self, key_image: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.thaw_output(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.thaw_output(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Wallet attributes (key-value store) ─────────────────────────────
@@ -582,34 +485,22 @@ impl Wallet {
     /// Set a wallet attribute.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_attribute(&self, key: &str, value: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_attribute(key, value)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_attribute(key, value).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get a wallet attribute.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_attribute(&self, key: &str) -> Result<Option<String>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_attribute(key)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_attribute(key).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Reset the sync height (for rescanning).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn reset_sync_height(&self, height: u64) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_sync_height(height as i64)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_sync_height(height as i64).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Subaddress / Account management ─────────────────────────────────
@@ -618,18 +509,9 @@ impl Wallet {
     /// Returns the new major index.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn create_account(&self, label: &str) -> Result<(i64, String), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let accounts = db
-            .get_accounts()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let major = if accounts.is_empty() {
-            0
-        } else {
-            accounts.last().unwrap().major + 1
-        };
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let accounts = db.get_accounts().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let major = if accounts.is_empty() { 0 } else { accounts.last().unwrap().major + 1 };
 
         // Read chain tip while we already hold the db lock.
         let chain_tip = db
@@ -640,11 +522,7 @@ impl Wallet {
 
         // Derive the primary address (minor=0) for this account.
         let address = self.derive_subaddress(major as u32, 0, chain_tip)?;
-        let lbl = if label.is_empty() && major == 0 {
-            "Primary account"
-        } else {
-            label
-        };
+        let lbl = if label.is_empty() && major == 0 { "Primary account" } else { label };
 
         db.upsert_subaddress(major, 0, &address, lbl)
             .map_err(|e| WalletError::Storage(e.to_string()))?;
@@ -654,12 +532,8 @@ impl Wallet {
     /// Get all accounts.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_accounts(&self) -> Result<Vec<salvium_crypto::storage::SubaddressRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_accounts()
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_accounts().map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Create a new subaddress in an existing account.
@@ -670,13 +544,9 @@ impl Wallet {
         major: i64,
         label: &str,
     ) -> Result<(i64, i64, String), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        let minor = db
-            .next_subaddress_minor(major)
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        let minor =
+            db.next_subaddress_minor(major).map_err(|e| WalletError::Storage(e.to_string()))?;
         // Ensure minor starts at 1 if 0 already exists (0 = account primary address).
         let minor = if minor == 0 { 1 } else { minor };
 
@@ -699,21 +569,14 @@ impl Wallet {
         &self,
         major: i64,
     ) -> Result<Vec<salvium_crypto::storage::SubaddressRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_subaddresses(major)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_subaddresses(major).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Set a label on a subaddress.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn label_subaddress(&self, major: i64, minor: i64, label: &str) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.label_subaddress(major, minor, label)
             .map_err(|e| WalletError::Storage(e.to_string()))?;
         Ok(())
@@ -740,13 +603,9 @@ impl Wallet {
 
         if major == 0 && minor == 0 {
             return if use_carrot {
-                self.keys
-                    .carrot_address()
-                    .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+                self.keys.carrot_address().map_err(|e| WalletError::InvalidAddress(e.to_string()))
             } else {
-                self.keys
-                    .cn_address()
-                    .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+                self.keys.cn_address().map_err(|e| WalletError::InvalidAddress(e.to_string()))
             };
         }
 
@@ -816,9 +675,7 @@ impl Wallet {
         let parsed =
             parse_address(address).map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
         if parsed.address_type != AddressType::Integrated {
-            return Err(WalletError::InvalidAddress(
-                "not an integrated address".into(),
-            ));
+            return Err(WalletError::InvalidAddress("not an integrated address".into()));
         }
         let pid = parsed.payment_id.ok_or_else(|| {
             WalletError::InvalidAddress("integrated address has no payment ID".into())
@@ -852,10 +709,7 @@ impl Wallet {
             .map_err(WalletError::Other)?;
 
         self.multisig = Some(account);
-        self.keys.wallet_type = WalletType::Multisig {
-            threshold,
-            signer_count,
-        };
+        self.keys.wallet_type = WalletType::Multisig { threshold, signer_count };
 
         // Persist multisig state
         self.save_multisig_state()?;
@@ -871,10 +725,8 @@ impl Wallet {
         &mut self,
         messages: &[String],
     ) -> Result<Option<String>, WalletError> {
-        let account = self
-            .multisig
-            .as_mut()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_mut().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         let kex_messages: Vec<salvium_multisig::kex::KexMessage> = messages
             .iter()
@@ -883,14 +735,10 @@ impl Wallet {
 
         // On round 1, register signers
         if account.kex_round == 1 {
-            account
-                .register_signers(&kex_messages)
-                .map_err(WalletError::Other)?;
+            account.register_signers(&kex_messages).map_err(WalletError::Other)?;
         }
 
-        let result = account
-            .process_kex_round(&kex_messages)
-            .map_err(WalletError::Other)?;
+        let result = account.process_kex_round(&kex_messages).map_err(WalletError::Other)?;
 
         // Persist updated state
         self.save_multisig_state()?;
@@ -940,10 +788,8 @@ impl Wallet {
     /// key-offset component) to derive full key images via `import_multisig_info`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn export_multisig_info(&self) -> Result<Vec<u8>, WalletError> {
-        let account = self
-            .multisig
-            .as_ref()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_ref().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         if !account.kex_complete {
             return Err(WalletError::Other("KEX not complete".into()));
@@ -954,10 +800,8 @@ impl Wallet {
             .map_err(|e| WalletError::Other(format!("weighted key share: {}", e)))?;
 
         // Query all unspent outputs.
-        let query = salvium_crypto::storage::OutputQuery {
-            is_spent: Some(false),
-            ..Default::default()
-        };
+        let query =
+            salvium_crypto::storage::OutputQuery { is_spent: Some(false), ..Default::default() };
         let outputs = self.get_outputs(&query)?;
 
         // Compute partial key images for each output that has a public key.
@@ -997,10 +841,8 @@ impl Wallet {
     /// as a wallet attribute `multisig_ki:<output_public_key>`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn import_multisig_info(&mut self, infos: &[Vec<u8>]) -> Result<usize, WalletError> {
-        let account = self
-            .multisig
-            .as_ref()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_ref().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         if !account.kex_complete {
             return Err(WalletError::Other("KEX not complete".into()));
@@ -1061,10 +903,7 @@ impl Wallet {
                     sum.copy_from_slice(&partial_bytes[..32]);
                     first = false;
                 } else {
-                    sum = to_32(&salvium_crypto::point_add_compressed(
-                        &sum,
-                        &partial_bytes[..32],
-                    ));
+                    sum = to_32(&salvium_crypto::point_add_compressed(&sum, &partial_bytes[..32]));
                 }
             }
 
@@ -1099,10 +938,8 @@ impl Wallet {
         destinations: &[(String, u64)],
         fee: u64,
     ) -> Result<salvium_multisig::tx_set::MultisigTxSet, WalletError> {
-        let account = self
-            .multisig
-            .as_ref()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_ref().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         if !account.kex_complete {
             return Err(WalletError::Other("KEX not complete".into()));
@@ -1120,10 +957,7 @@ impl Wallet {
             input_nonces: Vec::new(),
             input_partials: Vec::new(),
             fee,
-            destinations: destinations
-                .iter()
-                .map(|(d, a)| format!("{}:{}", d, a))
-                .collect(),
+            destinations: destinations.iter().map(|(d, a)| format!("{}:{}", d, a)).collect(),
             signing_contexts: Vec::new(),
             signing_message: String::new(),
             input_key_offsets: Vec::new(),
@@ -1145,10 +979,8 @@ impl Wallet {
         &self,
         tx_set: &mut salvium_multisig::tx_set::MultisigTxSet,
     ) -> Result<(), WalletError> {
-        let account = self
-            .multisig
-            .as_ref()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_ref().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         if !account.kex_complete {
             return Err(WalletError::Other("KEX not complete".into()));
@@ -1197,10 +1029,8 @@ impl Wallet {
         &self,
         tx_set: &mut salvium_multisig::tx_set::MultisigTxSet,
     ) -> Result<bool, WalletError> {
-        let account = self
-            .multisig
-            .as_ref()
-            .ok_or(WalletError::Other("not a multisig wallet".into()))?;
+        let account =
+            self.multisig.as_ref().ok_or(WalletError::Other("not a multisig wallet".into()))?;
 
         if !account.kex_complete {
             return Err(WalletError::Other("KEX not complete".into()));
@@ -1221,10 +1051,8 @@ impl Wallet {
             }
 
             // Check if we have enough nonces to sign.
-            let have_enough_nonces = pending
-                .input_nonces
-                .iter()
-                .all(|n| n.len() >= account.threshold);
+            let have_enough_nonces =
+                pending.input_nonces.iter().all(|n| n.len() >= account.threshold);
 
             if !have_enough_nonces {
                 return Err(WalletError::Other(format!(
@@ -1333,12 +1161,8 @@ impl Wallet {
     /// Get ring member indices for a key image.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_ring(&self, key_image: &str) -> Result<Vec<(i64, i64, bool)>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_ring(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_ring(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get ring members for all key images in a transaction.
@@ -1348,12 +1172,8 @@ impl Wallet {
         &self,
         tx_hash: &str,
     ) -> Result<std::collections::HashMap<String, Vec<(i64, i64, bool)>>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_rings_for_tx(tx_hash)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_rings_for_tx(tx_hash).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Store ring member indices for a key image.
@@ -1363,23 +1183,15 @@ impl Wallet {
         key_image: &str,
         members: &[(i64, i64, bool)],
     ) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_ring(key_image, members)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_ring(key_image, members).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Remove ring data for a key image.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn unset_ring(&self, key_image: &str) -> Result<bool, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.unset_ring(key_image)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.unset_ring(key_image).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Scan all transfers and persist their ring members.
@@ -1420,10 +1232,7 @@ impl Wallet {
         signature_count: i64,
         transport_id: &str,
     ) -> Result<i64, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.add_mms_message(
             msg_type,
             direction,
@@ -1444,12 +1253,8 @@ impl Wallet {
         &self,
         id: i64,
     ) -> Result<Option<salvium_crypto::storage::MmsMessageRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_mms_message(id)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_mms_message(id).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// List all MMS messages.
@@ -1457,34 +1262,22 @@ impl Wallet {
     pub fn get_mms_messages(
         &self,
     ) -> Result<Vec<salvium_crypto::storage::MmsMessageRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_mms_messages()
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_mms_messages().map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Update MMS message state.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn update_mms_message_state(&self, id: i64, state: i64) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.update_mms_message_state(id, state)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.update_mms_message_state(id, state).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Delete an MMS message.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn delete_mms_message(&self, id: i64) -> Result<bool, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.delete_mms_message(id)
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.delete_mms_message(id).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Upsert an MMS signer.
@@ -1497,18 +1290,9 @@ impl Wallet {
         monero_address: &str,
         is_me: bool,
     ) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.set_mms_signer(
-            signer_index,
-            label,
-            transport_address,
-            monero_address,
-            is_me,
-        )
-        .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.set_mms_signer(signer_index, label, transport_address, monero_address, is_me)
+            .map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Get all MMS signers.
@@ -1516,23 +1300,15 @@ impl Wallet {
     pub fn get_mms_signers(
         &self,
     ) -> Result<Vec<salvium_crypto::storage::MmsSignerRow>, WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.get_mms_signers()
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.get_mms_signers().map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Clear all MMS data.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn clear_mms(&self) -> Result<(), WalletError> {
-        let db = self
-            .db
-            .lock()
-            .map_err(|e| WalletError::Storage(e.to_string()))?;
-        db.clear_mms()
-            .map_err(|e| WalletError::Storage(e.to_string()))
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.clear_mms().map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     /// Load multisig state from the database, if present.

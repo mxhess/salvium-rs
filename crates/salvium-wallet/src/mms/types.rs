@@ -164,13 +164,7 @@ pub struct MmsConfig {
 
 impl Default for MmsConfig {
     fn default() -> Self {
-        Self {
-            active: false,
-            threshold: 0,
-            signer_count: 0,
-            own_index: 0,
-            auto_send: true,
-        }
+        Self { active: false, threshold: 0, signer_count: 0, own_index: 0, auto_send: true }
     }
 }
 

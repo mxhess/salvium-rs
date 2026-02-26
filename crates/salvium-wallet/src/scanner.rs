@@ -179,14 +179,9 @@ pub fn scan_transaction(ctx: &ScanContext, tx: &ScanTxData) -> Vec<FoundOutput> 
             // Non-CARROT output: try CN scan with shared derivation first.
             let mut cn_found = false;
             if let Some(ref derivation) = cn_derivation {
-                if let Some(result) = try_cn_scan(
-                    ctx,
-                    derivation,
-                    &tx.tx_pub_key,
-                    output,
-                    tx.is_coinbase,
-                    tx.tx_type,
-                ) {
+                if let Some(result) =
+                    try_cn_scan(ctx, derivation, &tx.tx_pub_key, output, tx.is_coinbase, tx.tx_type)
+                {
                     found.push(result);
                     cn_found = true;
                 }
@@ -240,11 +235,7 @@ fn try_cn_scan(
     tx_type: u8,
 ) -> Option<FoundOutput> {
     let rct_type = if is_coinbase { 0 } else { output.rct_type };
-    let clear_amount = if is_coinbase && output.amount > 0 {
-        Some(output.amount)
-    } else {
-        None
-    };
+    let clear_amount = if is_coinbase && output.amount > 0 { Some(output.amount) } else { None };
 
     // Try with actual output index first.
     let result = salvium_crypto::cn_scan::scan_cryptonote_output(
@@ -311,11 +302,7 @@ fn try_carrot_scan(
     let view_tag_3 = output.carrot_view_tag.as_ref()?;
     let d_e = output.carrot_ephemeral_pubkey.as_ref()?;
 
-    let clear_amount = if is_coinbase && output.amount > 0 {
-        Some(output.amount)
-    } else {
-        None
-    };
+    let clear_amount = if is_coinbase && output.amount > 0 { Some(output.amount) } else { None };
 
     // Try external scanning (outputs sent TO us).
     if let Some(result) = salvium_crypto::carrot_scan::scan_carrot_output(
@@ -447,11 +434,7 @@ fn compute_carrot_key_image(
     let generate_image_key = ctx.carrot_generate_image_key.as_ref()?;
 
     // prove_spend_key is only used for sk_y; pass zeros when unavailable.
-    let prove_spend_key = ctx
-        .carrot_prove_spend_key
-        .as_ref()
-        .copied()
-        .unwrap_or([0u8; 32]);
+    let prove_spend_key = ctx.carrot_prove_spend_key.as_ref().copied().unwrap_or([0u8; 32]);
 
     // Compute the commitment from the derived mask and amount.
     let commitment = salvium_crypto::pedersen_commit(&result.amount.to_le_bytes(), &result.mask);

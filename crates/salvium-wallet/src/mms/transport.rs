@@ -251,9 +251,7 @@ pub fn decrypt_message(
     // Verify MAC.
     let computed_mac = salvium_crypto::keccak256(encrypted);
     if &computed_mac[..16] != mac {
-        return Err(WalletError::Other(
-            "message MAC verification failed".to_string(),
-        ));
+        return Err(WalletError::Other("message MAC verification failed".to_string()));
     }
 
     let nonce = salvium_crypto::keccak256(shared_secret);

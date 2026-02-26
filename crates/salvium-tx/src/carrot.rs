@@ -127,11 +127,7 @@ pub fn create_carrot_output(
     ctx_data.extend_from_slice(&d_e_pub);
     ctx_data.extend_from_slice(params.input_context);
     let ctx_transcript = build_transcript(domain::SENDER_RECEIVER_SECRET, &ctx_data);
-    let s_ctx = to_32(&salvium_crypto::blake2b_keyed(
-        &ctx_transcript,
-        32,
-        &s_sr_unctx,
-    ));
+    let s_ctx = to_32(&salvium_crypto::blake2b_keyed(&ctx_transcript, 32, &s_sr_unctx));
 
     // 6. Derive commitment mask (blinding factor).
     //    k_a = H_n(domain, key=s_ctx, amount_le || K_s || enote_type)
@@ -143,10 +139,8 @@ pub fn create_carrot_output(
     let commitment_mask = hash_to_scalar_64(&mask_transcript, &s_ctx);
 
     // 7. Compute amount commitment: C_a = k_a*G + amount*H.
-    let amount_commitment = to_32(&salvium_crypto::pedersen_commit(
-        &params.amount.to_le_bytes(),
-        &commitment_mask,
-    ));
+    let amount_commitment =
+        to_32(&salvium_crypto::pedersen_commit(&params.amount.to_le_bytes(), &commitment_mask));
 
     // 8. Derive one-time address extensions.
     //    k^o_g = H_n(domain_G, key=s_ctx, C_a)
@@ -177,11 +171,8 @@ pub fn create_carrot_output(
     // 11. Encrypt Janus anchor.
     let anchor_transcript = build_transcript(domain::ENCRYPTION_MASK_ANCHOR, &onetime_address);
     let anchor_mask = salvium_crypto::blake2b_keyed(&anchor_transcript, 16, &s_ctx);
-    let encrypted_anchor: Vec<u8> = anchor
-        .iter()
-        .zip(anchor_mask.iter())
-        .map(|(a, m)| a ^ m)
-        .collect();
+    let encrypted_anchor: Vec<u8> =
+        anchor.iter().zip(anchor_mask.iter()).map(|(a, m)| a ^ m).collect();
 
     // 12. Encrypt amount.
     let amount_le = params.amount.to_le_bytes();
@@ -339,11 +330,7 @@ mod tests {
         let g_mont = salvium_crypto::edwards_to_montgomery_u(&g_compressed);
         let mut nine = [0u8; 32];
         nine[0] = 9;
-        assert_eq!(
-            to_32(&g_mont),
-            nine,
-            "edwards_to_montgomery_u(G) should be 9"
-        );
+        assert_eq!(to_32(&g_mont), nine, "edwards_to_montgomery_u(G) should be 9");
 
         // Test with simple scalar k = [7; 32]
         let k = [7u8; 32];
@@ -365,10 +352,7 @@ mod tests {
         let k_vi_times_g = salvium_crypto::scalar_mult_base(&k_vi);
         println!("k_vi: {}", hex::encode(k_vi));
         println!("K^0_v (from derivation): {}", hex::encode(k_v_pub));
-        println!(
-            "k_vi * G (scalar_mult_base): {}",
-            hex::encode(&k_vi_times_g)
-        );
+        println!("k_vi * G (scalar_mult_base): {}", hex::encode(&k_vi_times_g));
         assert_eq!(
             to_32(&k_vi_times_g),
             k_v_pub,
@@ -401,11 +385,7 @@ mod tests {
         let scalar = hash_to_scalar_64(data, &key);
         assert_ne!(scalar, [0u8; 32], "scalar should not be zero");
         // Scalar should be reduced (< L), last byte should have high bit clear.
-        assert!(
-            scalar[31] < 0x10,
-            "scalar should be reduced: high byte = {:02x}",
-            scalar[31]
-        );
+        assert!(scalar[31] < 0x10, "scalar should be reduced: high byte = {:02x}", scalar[31]);
     }
 
     #[test]
@@ -533,12 +513,8 @@ mod tests {
             1, // minor_count (0..=1)
         );
         // Parse the map: [count:u32LE] [spend_pub(32) | major(u32LE) | minor(u32LE)] ...
-        let count = u32::from_le_bytes([
-            sub_map_raw[0],
-            sub_map_raw[1],
-            sub_map_raw[2],
-            sub_map_raw[3],
-        ]);
+        let count =
+            u32::from_le_bytes([sub_map_raw[0], sub_map_raw[1], sub_map_raw[2], sub_map_raw[3]]);
         assert_eq!(count, 2, "should have 2 entries: (0,0) and (0,1)");
 
         // Entry 1 is at offset 4 + 40 = 44 (each entry is 32 + 4 + 4 = 40 bytes)
@@ -560,16 +536,10 @@ mod tests {
 
         println!("K_s (main): {}", hex::encode(keys.account_spend_pubkey));
         println!("K_s_sub (0,1): {}", hex::encode(sub_k_s));
-        assert_ne!(
-            sub_k_s, keys.account_spend_pubkey,
-            "subaddress key should differ from main"
-        );
+        assert_ne!(sub_k_s, keys.account_spend_pubkey, "subaddress key should differ from main");
 
         // Compute subaddress view key: K_v_sub = k_vi * K_s_sub
-        let kv_sub = to_32(&salvium_crypto::scalar_mult_point(
-            &keys.view_incoming_key,
-            &sub_k_s,
-        ));
+        let kv_sub = to_32(&salvium_crypto::scalar_mult_point(&keys.view_incoming_key, &sub_k_s));
         println!("K_v_sub: {}", hex::encode(kv_sub));
 
         // Create output to the subaddress
@@ -619,10 +589,7 @@ mod tests {
             &d_e_priv,
             &to_32(&salvium_crypto::edwards_to_montgomery_u(&kv_sub)),
         ));
-        println!(
-            "Creator ECDH (d_e * mont(K_v_sub)): {}",
-            hex::encode(creator_ecdh)
-        );
+        println!("Creator ECDH (d_e * mont(K_v_sub)): {}", hex::encode(creator_ecdh));
         println!("ECDH match: {}", scanner_ecdh == creator_ecdh);
 
         if let Some(ref r) = result {
