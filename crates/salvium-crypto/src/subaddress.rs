@@ -257,7 +257,10 @@ pub fn carrot_derive_subaddress_keys(
     let sub_spend = EdwardsPoint::vartime_multiscalar_mul(&[k_subscal], &[spend_pt]);
     let sub_view = EdwardsPoint::vartime_multiscalar_mul(&[k_subscal], &[view_pt]);
 
-    (sub_spend.compress().to_bytes(), sub_view.compress().to_bytes())
+    (
+        sub_spend.compress().to_bytes(),
+        sub_view.compress().to_bytes(),
+    )
 }
 
 /// Generate the full CARROT subaddress map as a flat binary buffer.

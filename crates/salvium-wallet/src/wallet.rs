@@ -727,8 +727,8 @@ impl Wallet {
                 .unwrap_or(0)
         };
 
-        let use_carrot = is_carrot_active(chain_tip, self.keys.network)
-            && !self.keys.carrot.is_empty();
+        let use_carrot =
+            is_carrot_active(chain_tip, self.keys.network) && !self.keys.carrot.is_empty();
 
         if major == 0 && minor == 0 {
             return if use_carrot {
@@ -743,15 +743,14 @@ impl Wallet {
         }
 
         if use_carrot {
-            let (spend_pub, view_pub) =
-                salvium_crypto::subaddress::carrot_derive_subaddress_keys(
-                    &self.keys.carrot.account_spend_pubkey,
-                    &self.keys.carrot.account_view_pubkey,
-                    &self.keys.carrot.primary_address_view_pubkey,
-                    &self.keys.carrot.generate_address_secret,
-                    major,
-                    minor,
-                );
+            let (spend_pub, view_pub) = salvium_crypto::subaddress::carrot_derive_subaddress_keys(
+                &self.keys.carrot.account_spend_pubkey,
+                &self.keys.carrot.account_view_pubkey,
+                &self.keys.carrot.primary_address_view_pubkey,
+                &self.keys.carrot.generate_address_secret,
+                major,
+                minor,
+            );
 
             create_address_raw(
                 self.keys.network,
