@@ -1509,12 +1509,21 @@ fn build_transaction_row(
     is_coinbase: bool,
     unlock_time: u64,
 ) -> salvium_crypto::storage::TransactionRow {
-    let is_incoming = !found.is_empty();
+    let has_outputs = !found.is_empty();
     let is_outgoing = spent_info.count > 0;
     let incoming_amount: u64 = found.iter().map(|o| o.amount).sum();
     let outgoing_amount = spent_info.total_amount;
-    // When we're the sender, incoming outputs are change back to us
+    // When we're the sender, received outputs are change back to us.
+    // Don't mark as "incoming" when all received outputs are change —
+    // the user sent funds, they didn't receive anything.
     let change_amount = if is_outgoing { incoming_amount } else { 0 };
+    let is_incoming = if is_outgoing {
+        // Only mark as incoming if we received MORE than we spent (net positive).
+        // This handles self-transfers (stake returns, etc.) correctly.
+        incoming_amount > outgoing_amount
+    } else {
+        has_outputs
+    };
 
     // Asset type: prefer spent asset type, then first found output, then "SAL"
     let asset_type = spent_info
