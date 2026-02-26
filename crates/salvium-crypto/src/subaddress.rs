@@ -224,6 +224,42 @@ fn carrot_subaddress_spend_pubkey(
     EdwardsPoint::vartime_multiscalar_mul(&[k_subscal], &[*account_spend_pt])
 }
 
+/// Derive the CARROT subaddress spend and view public keys for a given index.
+///
+/// Returns `(spend_pubkey, view_pubkey)` as 32-byte arrays.
+///
+/// For (0,0): spend = K_s, view = primary_address_view_pubkey (k_vi * G).
+/// For other indices: spend = k^j_subscal * K_s, view = k^j_subscal * K_v.
+pub fn carrot_derive_subaddress_keys(
+    account_spend_pubkey: &[u8; 32],
+    account_view_pubkey: &[u8; 32],
+    primary_address_view_pubkey: &[u8; 32],
+    generate_address_secret: &[u8; 32],
+    major: u32,
+    minor: u32,
+) -> ([u8; 32], [u8; 32]) {
+    if major == 0 && minor == 0 {
+        return (*account_spend_pubkey, *primary_address_view_pubkey);
+    }
+
+    let spend_pt = match CompressedEdwardsY(*account_spend_pubkey).decompress() {
+        Some(pt) => pt,
+        None => return (*account_spend_pubkey, *account_view_pubkey),
+    };
+    let view_pt = match CompressedEdwardsY(*account_view_pubkey).decompress() {
+        Some(pt) => pt,
+        None => return (*account_spend_pubkey, *account_view_pubkey),
+    };
+
+    let s_gen = carrot_index_extension_generator(generate_address_secret, major, minor);
+    let k_subscal = carrot_subaddress_scalar(account_spend_pubkey, &s_gen, major, minor);
+
+    let sub_spend = EdwardsPoint::vartime_multiscalar_mul(&[k_subscal], &[spend_pt]);
+    let sub_view = EdwardsPoint::vartime_multiscalar_mul(&[k_subscal], &[view_pt]);
+
+    (sub_spend.compress().to_bytes(), sub_view.compress().to_bytes())
+}
+
 /// Generate the full CARROT subaddress map as a flat binary buffer.
 ///
 /// Iterates major 0..=major_count, minor 0..=minor_count.

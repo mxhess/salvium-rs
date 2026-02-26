@@ -2,6 +2,10 @@
 
 How to use the salvium-rs FFI library to create a wallet, sync it, and read data.
 
+**All JSON fields are camelCase.** Both query inputs and response outputs use camelCase
+(e.g. `isConfirmed`, `incomingAmount`, `blockHeight`). This is enforced by
+`#[serde(rename_all = "camelCase")]` on every struct.
+
 ## 1. Initialization
 
 ```c
@@ -92,6 +96,19 @@ int rc = salvium_wallet_sync(wallet, daemon, my_callback);
 - Stores matched outputs and transactions in the wallet database
 - Updates sync height per-block for crash safety
 
+### Cancellation
+
+From another thread, call:
+
+```c
+int rc = salvium_wallet_stop_sync(wallet);
+// rc: 0 = success, -1 = error
+```
+
+The sync loop stops before the next batch and returns error code -1.
+The callback fires event type 6 (Cancelled) with the height reached.
+After cancelling, you can `salvium_wallet_reset_sync_height` and restart.
+
 ### Callback (optional, may be NULL)
 
 ```c
@@ -111,6 +128,7 @@ void my_callback(int type, uint64_t cur, uint64_t target, uint32_t outs, const c
         case 3: printf("Reorg: %llu -> %llu\n", cur, target); break;
         case 4: printf("Error: %s\n", msg); break;
         case 5: printf("Parse error at %llu: %s\n", cur, msg); break;
+        case 6: printf("Cancelled at %llu\n", cur); break;
     }
 }
 ```
@@ -123,6 +141,7 @@ void my_callback(int type, uint64_t cur, uint64_t target, uint32_t outs, const c
 | Reorg | 3 | When chain fork detected | `current_height` = old tip, `target_height` = fork point |
 | Error | 4 | On RPC/network error | `error_msg` = description |
 | ParseError | 5 | On block parse failure | `current_height` = block height, `error_msg` = details |
+| Cancelled | 6 | When `stop_sync` called | `current_height` = height reached |
 
 ### Incremental sync
 
@@ -140,16 +159,24 @@ salvium_wallet_sync(wallet, daemon, callback); // full rescan
 ```c
 // Single asset
 char* json = salvium_wallet_get_balance(wallet, "SAL", 0);
-// Returns: {"balance":"123456789","unlocked_balance":"100000000","locked_balance":"23456789"}
+// Returns: {"balance":"123456789","unlockedBalance":"100000000","lockedBalance":"23456789"}
 // Amounts are atomic units (1 SAL = 100,000,000 atomic)
 // CALLER MUST FREE:
 salvium_string_free(json);
 
 // All assets
 char* all = salvium_wallet_get_all_balances(wallet, 0);
-// Returns: {"SAL":{"balance":"...","unlocked_balance":"...","locked_balance":"..."}, ...}
+// Returns: {"SAL":{"balance":"...","unlockedBalance":"...","lockedBalance":"..."}, ...}
 salvium_string_free(all);
 ```
+
+**BalanceResult fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `balance` | string | Total balance (atomic units) |
+| `unlockedBalance` | string | Spendable balance (atomic units) |
+| `lockedBalance` | string | Locked/immature balance (atomic units) |
 
 **You MUST sync before querying balances.** Without sync, the balance will be 0.
 
@@ -157,63 +184,117 @@ salvium_string_free(all);
 
 ```c
 // All confirmed transfers
-char* txs = salvium_wallet_get_transfers(wallet, "{\"is_confirmed\":true}");
+char* txs = salvium_wallet_get_transfers(wallet, "{\"isConfirmed\":true}");
 
 // Only incoming
-char* txs = salvium_wallet_get_transfers(wallet, "{\"is_incoming\":true}");
+char* txs = salvium_wallet_get_transfers(wallet, "{\"isIncoming\":true}");
 
 // Height range
-char* txs = salvium_wallet_get_transfers(wallet, "{\"min_height\":100000,\"max_height\":200000}");
+char* txs = salvium_wallet_get_transfers(wallet, "{\"minHeight\":100000,\"maxHeight\":200000}");
 
 // Specific tx hash
-char* txs = salvium_wallet_get_transfers(wallet, "{\"tx_hash\":\"abc123...\"}");
+char* txs = salvium_wallet_get_transfers(wallet, "{\"txHash\":\"abc123...\"}");
 
 // Returns JSON array. ALWAYS free:
 salvium_string_free(txs);
 ```
 
-**TxQuery fields (all optional):**
+**TxQuery fields (all optional, camelCase):**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `is_incoming` | bool | Filter incoming transfers |
-| `is_outgoing` | bool | Filter outgoing transfers |
-| `is_confirmed` | bool | Filter confirmed (in-block) |
-| `in_pool` | bool | Filter mempool transactions |
-| `tx_type` | i64 | 1=miner, 2=protocol, 3=transfer |
-| `min_height` | i64 | Minimum block height |
-| `max_height` | i64 | Maximum block height |
-| `tx_hash` | string | Exact transaction hash |
+| `isIncoming` | bool | Filter incoming transfers |
+| `isOutgoing` | bool | Filter outgoing transfers |
+| `isConfirmed` | bool | Filter confirmed (in-block) |
+| `inPool` | bool | Filter mempool transactions |
+| `txType` | i64 | Transaction type code (see below) |
+| `minHeight` | i64 | Minimum block height |
+| `maxHeight` | i64 | Maximum block height |
+| `txHash` | string | Exact transaction hash |
 
-**TransactionRow fields in response:**
+**TransactionRow fields in response (camelCase):**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `tx_hash` | string | Transaction hash (hex) |
-| `block_height` | i64/null | Block height (null if in pool) |
-| `block_timestamp` | i64 | Unix timestamp |
-| `is_incoming` | bool | Received funds |
-| `is_outgoing` | bool | Sent funds |
-| `is_confirmed` | bool | In a block |
-| `incoming_amount` | string | Atomic units received |
-| `outgoing_amount` | string | Atomic units sent |
+| `txHash` | string | Transaction hash (hex) |
+| `txPubKey` | string/null | Transaction public key (hex) |
+| `blockHeight` | i64/null | Block height (null if in pool) |
+| `blockTimestamp` | i64/null | Unix timestamp |
+| `isIncoming` | bool | Received funds |
+| `isOutgoing` | bool | Sent funds |
+| `isConfirmed` | bool | In a block |
+| `incomingAmount` | string | Atomic units received |
+| `outgoingAmount` | string | Atomic units sent |
 | `fee` | string | Transaction fee (atomic) |
-| `asset_type` | string | e.g. "SAL" |
-| `tx_type` | i64 | Transaction type code |
+| `changeAmount` | string | Change returned to self (atomic) |
+| `unlockTime` | string | Unlock time (0 = immediate) |
+| `assetType` | string | e.g. "SAL" |
+| `txType` | i64 | Transaction type code (see below) |
+| `isMinerTx` | bool | Coinbase transaction |
+| `isProtocolTx` | bool | Protocol yield/return transaction |
+| `note` | string | User note (empty if unset) |
+
+**Transaction types (`txType`):**
+
+| Value | Meaning |
+|-------|---------|
+| 1 | Miner (coinbase) |
+| 2 | Protocol (yield distribution, stake returns) |
+| 3 | Transfer |
+| 4 | Convert (SAL <-> VSD) |
+| 5 | Burn |
+| 6 | Stake |
+| 7 | Return (stake unlock) |
+
+**Display logic:**
+
+- `isIncoming && !isOutgoing` — received funds, show `incomingAmount`
+- `!isIncoming && isOutgoing` — sent funds, show `outgoingAmount - changeAmount`
+- `isIncoming && isOutgoing` — self-transfer, net = `incomingAmount - outgoingAmount`
 
 ## 7. Query Outputs (UTXOs)
 
 ```c
 // All unspent outputs
-char* outs = salvium_wallet_get_outputs(wallet, "{\"is_spent\":false}");
+char* outs = salvium_wallet_get_outputs(wallet, "{\"isSpent\":false}");
 
 // Unspent SAL only
-char* outs = salvium_wallet_get_outputs(wallet, "{\"is_spent\":false,\"asset_type\":\"SAL\"}");
+char* outs = salvium_wallet_get_outputs(wallet, "{\"isSpent\":false,\"assetType\":\"SAL\"}");
 
 salvium_string_free(outs);
 ```
 
-## 8. Other Wallet Queries
+**OutputQuery fields (all optional, camelCase):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `isSpent` | bool | Filter spent/unspent |
+| `isFrozen` | bool | Filter frozen outputs |
+| `assetType` | string | e.g. "SAL" |
+| `txType` | i64 | Transaction type code |
+| `accountIndex` | i64 | Account major index |
+| `subaddressIndex` | i64 | Subaddress minor index |
+| `minAmount` | string | Minimum amount (atomic) |
+| `maxAmount` | string | Maximum amount (atomic) |
+
+## 8. Subaddresses
+
+```c
+// Create a new subaddress (returns JSON: {"major":0,"minor":1,"address":"..."})
+char* sub = salvium_wallet_create_subaddress(wallet, 0, "my label");
+salvium_string_free(sub);
+
+// List all subaddresses for account 0
+char* subs = salvium_wallet_get_subaddresses(wallet, 0);
+salvium_string_free(subs);
+
+// Label an existing subaddress
+salvium_wallet_label_subaddress(wallet, 0, 1, "new label");
+```
+
+Subaddresses are automatically CARROT or CryptoNote based on the current chain hardfork.
+
+## 9. Other Wallet Queries
 
 ```c
 // Addresses
@@ -240,14 +321,29 @@ uint64_t h = salvium_wallet_sync_height(wallet);
 int net = salvium_wallet_network(wallet);  // 0=main, 1=test, 2=stage
 ```
 
-## 9. Staking
+## 10. Staking
 
 ```c
 char* stakes = salvium_wallet_get_stakes(wallet, "locked");   // or "returned" or NULL for all
 salvium_string_free(stakes);
 ```
 
-## 10. Cleanup
+**StakeRow fields (camelCase):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stakeTxHash` | string | Stake transaction hash |
+| `stakeHeight` | i64/null | Block height of stake |
+| `stakeTimestamp` | i64/null | Unix timestamp of stake |
+| `amountStaked` | string | Amount staked (atomic) |
+| `fee` | string | Transaction fee (atomic) |
+| `assetType` | string | e.g. "SAL" |
+| `status` | string | "locked" or "returned" |
+| `returnTxHash` | string/null | Return transaction hash |
+| `returnHeight` | i64/null | Block height of return |
+| `returnAmount` | string | Amount returned (atomic) |
+
+## 11. Cleanup
 
 **Close in reverse order.** Always close handles when done.
 
@@ -312,7 +408,7 @@ printf("Balance: %s\n", bal);
 salvium_string_free(bal);
 
 // Read transactions
-char* txs = salvium_wallet_get_transfers(wallet, "{\"is_confirmed\":true}");
+char* txs = salvium_wallet_get_transfers(wallet, "{\"isConfirmed\":true}");
 printf("Transfers: %s\n", txs);
 salvium_string_free(txs);
 

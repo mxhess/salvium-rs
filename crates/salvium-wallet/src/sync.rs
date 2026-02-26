@@ -134,6 +134,9 @@ impl SyncEngine {
 
         let sync_height = {
             let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+            // Persist chain tip so non-sync code (e.g. subaddress creation)
+            // can determine the active hardfork without daemon access.
+            let _ = db.set_attribute("chain_tip_height", &top_block.to_string());
             db.get_sync_height()
                 .map_err(|e| WalletError::Storage(e.to_string()))?
         };

@@ -706,38 +706,80 @@ impl Wallet {
     }
 
     /// Derive the address string for a subaddress at (major, minor).
+    ///
+    /// Produces a CARROT address if the CARROT hard fork is active at the
+    /// chain tip height, otherwise falls back to legacy CryptoNote.
+    /// The chain tip is persisted in the DB by the sync engine.
+    #[cfg(not(target_arch = "wasm32"))]
     fn derive_subaddress(&self, major: u32, minor: u32) -> Result<String, WalletError> {
         use salvium_types::address::create_address_raw;
+        use salvium_types::consensus::is_carrot_active;
         use salvium_types::constants::{AddressFormat, AddressType};
 
+        let chain_tip = {
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            db.get_attribute("chain_tip_height")
+                .map_err(|e| WalletError::Storage(e.to_string()))?
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+
+        let use_carrot = is_carrot_active(chain_tip, self.keys.network)
+            && !self.keys.carrot.is_empty();
+
         if major == 0 && minor == 0 {
-            // Primary address.
-            return self
-                .keys
-                .cn_address()
-                .map_err(|e| WalletError::InvalidAddress(e.to_string()));
+            return if use_carrot {
+                self.keys
+                    .carrot_address()
+                    .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+            } else {
+                self.keys
+                    .cn_address()
+                    .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+            };
         }
 
-        // Derive the subaddress spend public key.
-        let spend_pub = salvium_crypto::subaddress::cn_derive_subaddress_spend_pubkey(
-            &self.keys.cn.spend_public_key,
-            &self.keys.cn.view_secret_key,
-            major,
-            minor,
-        );
+        if use_carrot {
+            let (spend_pub, view_pub) =
+                salvium_crypto::subaddress::carrot_derive_subaddress_keys(
+                    &self.keys.carrot.account_spend_pubkey,
+                    &self.keys.carrot.account_view_pubkey,
+                    &self.keys.carrot.primary_address_view_pubkey,
+                    &self.keys.carrot.generate_address_secret,
+                    major,
+                    minor,
+                );
 
-        // Subaddresses use the main view public key.
-        let addr = create_address_raw(
-            self.keys.network,
-            AddressFormat::Legacy,
-            AddressType::Subaddress,
-            &spend_pub,
-            &self.keys.cn.view_public_key,
-            None,
-        )
-        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+            create_address_raw(
+                self.keys.network,
+                AddressFormat::Carrot,
+                AddressType::Subaddress,
+                &spend_pub,
+                &view_pub,
+                None,
+            )
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+        } else {
+            let spend_pub = salvium_crypto::subaddress::cn_derive_subaddress_spend_pubkey(
+                &self.keys.cn.spend_public_key,
+                &self.keys.cn.view_secret_key,
+                major,
+                minor,
+            );
 
-        Ok(addr)
+            create_address_raw(
+                self.keys.network,
+                AddressFormat::Legacy,
+                AddressType::Subaddress,
+                &spend_pub,
+                &self.keys.cn.view_public_key,
+                None,
+            )
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))
+        }
     }
 
     // ── Integrated addresses ────────────────────────────────────────────
