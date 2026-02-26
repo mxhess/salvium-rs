@@ -172,7 +172,40 @@ pub unsafe extern "C" fn salvium_wallet_stake(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority).await })
+        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority, false).await })
+    })
+}
+
+/// Build a stake transaction without broadcasting (dry run).
+///
+/// Same params as `salvium_wallet_stake`. Returns the estimated fee and
+/// weight so the UI can show a confirmation dialog before committing.
+///
+/// Returns JSON: `{"fee": "...", "weight": ...}`
+/// Returns null on error.
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_stake_dry_run(
+    wallet: *mut c_void,
+    daemon: *mut c_void,
+    params_json: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
+        let json_str = unsafe { c_str_to_str(params_json) }?;
+
+        let params: StakeParams =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid stake params: {e}"))?;
+
+        if !wh.wallet.can_spend() {
+            return Err("wallet is view-only, cannot sign transactions".into());
+        }
+
+        let priority = parse_priority(&params.priority);
+        let rt = crate::runtime();
+
+        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority, true).await })
     })
 }
 
@@ -367,6 +400,7 @@ async fn do_stake(
     daemon: &DaemonRpc,
     params: &StakeParams,
     priority: FeePriority,
+    dry_run: bool,
 ) -> Result<String, String> {
     let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
 
@@ -428,7 +462,7 @@ async fn do_stake(
         amount, // amount_burnt = staked amount
         fork_rct,
         is_carrot,
-        false, // never dry-run stakes
+        dry_run,
     )
     .await?;
 
@@ -436,6 +470,7 @@ async fn do_stake(
         "tx_hash": built.tx_hash,
         "fee": built.fee.to_string(),
         "amount": amount.to_string(),
+        "weight": built.weight,
     });
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
