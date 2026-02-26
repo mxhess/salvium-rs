@@ -203,11 +203,15 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                         error
                     );
                 }
+                SyncEvent::Cancelled { height } => {
+                    println!("Sync cancelled at height {}", height);
+                }
             }
         }
     });
 
-    let _final_height = wallet.sync(&daemon, Some(&tx)).await?;
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
+    let _final_height = wallet.sync(&daemon, Some(&tx), &no_cancel).await?;
     drop(tx);
     let _ = progress_task.await;
 

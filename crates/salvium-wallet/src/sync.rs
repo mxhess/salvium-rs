@@ -37,6 +37,8 @@ pub enum SyncEvent {
         blob_len: usize,
         error: String,
     },
+    /// Sync cancelled by caller.
+    Cancelled { height: u64 },
 }
 
 /// Blockchain sync engine.
@@ -119,6 +121,7 @@ impl SyncEngine {
         scan_ctx: &mut ScanContext,
         stake_lock_period: u64,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
+        cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<u64, WalletError> {
         let daemon_height = daemon
             .get_height()
@@ -167,6 +170,13 @@ impl SyncEngine {
         let mut controller = BatchController::new();
 
         while current < top_block {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(tx) = event_tx {
+                    let _ = tx.send(SyncEvent::Cancelled { height: current }).await;
+                }
+                return Err(WalletError::Cancelled);
+            }
+
             let remaining = top_block - current;
             let batch_size = controller.next_batch_size(remaining);
             let batch_start = current + 1;

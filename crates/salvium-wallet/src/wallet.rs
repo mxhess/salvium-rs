@@ -225,6 +225,7 @@ impl Wallet {
         &mut self,
         daemon: &salvium_rpc::DaemonRpc,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
+        cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
@@ -234,6 +235,7 @@ impl Wallet {
             &mut self.scan_context,
             lock_period,
             event_tx,
+            cancel,
         )
         .await
     }

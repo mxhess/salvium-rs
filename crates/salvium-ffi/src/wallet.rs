@@ -1,12 +1,29 @@
 //! Wallet lifecycle, key/address queries, balance, sync, and data operations.
 
 use std::ffi::{c_char, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::error::{ffi_try, ffi_try_ptr, ffi_try_string};
 use crate::handles::{borrow_handle, borrow_handle_mut, drop_handle};
 use crate::strings::c_str_to_str;
 
 use salvium_wallet::Wallet;
+
+/// Wrapper that pairs a Wallet with its cancellation flag.
+pub(crate) struct WalletHandle {
+    pub wallet: Wallet,
+    pub sync_cancel: Arc<AtomicBool>,
+}
+
+impl WalletHandle {
+    fn new(wallet: Wallet) -> Self {
+        Self {
+            wallet,
+            sync_cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
 
 // =============================================================================
 // Wallet Lifecycle
@@ -36,7 +53,9 @@ pub unsafe extern "C" fn salvium_wallet_create(
         let network = int_to_network(network)?;
         let path = unsafe { c_str_to_str(db_path) }?;
         let key = unsafe { crate::strings::c_buf_to_slice(db_key, db_key_len) }?;
-        Wallet::create(seed_arr, network, path, key).map_err(|e| e.to_string())
+        Wallet::create(seed_arr, network, path, key)
+            .map(WalletHandle::new)
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -56,7 +75,9 @@ pub unsafe extern "C" fn salvium_wallet_from_mnemonic(
         let network = int_to_network(network)?;
         let path = unsafe { c_str_to_str(db_path) }?;
         let key = unsafe { crate::strings::c_buf_to_slice(db_key, db_key_len) }?;
-        Wallet::from_mnemonic(words, network, path, key).map_err(|e| e.to_string())
+        Wallet::from_mnemonic(words, network, path, key)
+            .map(WalletHandle::new)
+            .map_err(|e| e.to_string())
     })
 }
 
@@ -79,14 +100,16 @@ pub unsafe extern "C" fn salvium_wallet_open(
         let key = unsafe { crate::strings::c_buf_to_slice(db_key, db_key_len) }?;
 
         let keys = wallet_keys_from_json(json_str)?;
-        Wallet::open(keys, path, key).map_err(|e| e.to_string())
+        Wallet::open(keys, path, key)
+            .map(WalletHandle::new)
+            .map_err(|e| e.to_string())
     })
 }
 
 /// Close a wallet handle, releasing all resources.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_close(handle: *mut c_void) {
-    drop_handle::<Wallet>(handle);
+    drop_handle::<WalletHandle>(handle);
 }
 
 // =============================================================================
@@ -104,7 +127,7 @@ pub unsafe extern "C" fn salvium_wallet_get_address(
     addr_type: i32,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         match addr_type {
             0 => wallet.cn_address().map_err(|e| e.to_string()),
             1 => wallet.carrot_address().map_err(|e| e.to_string()),
@@ -122,7 +145,7 @@ pub unsafe extern "C" fn salvium_wallet_get_address(
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_get_mnemonic(handle: *mut c_void) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         match wallet.mnemonic() {
             Some(Ok(words)) => Ok(words),
             Some(Err(e)) => Err(e.to_string()),
@@ -138,7 +161,7 @@ pub unsafe extern "C" fn salvium_wallet_get_mnemonic(handle: *mut c_void) -> *mu
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_get_keys_json(handle: *mut c_void) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let keys = wallet.keys();
         let json = serde_json::json!({
             "wallet_type": format!("{:?}", keys.wallet_type),
@@ -159,7 +182,9 @@ pub unsafe extern "C" fn salvium_wallet_get_keys_json(handle: *mut c_void) -> *m
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_can_spend(handle: *mut c_void) -> i32 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }.ok()?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }
+            .ok()?
+            .wallet;
         Some(wallet.can_spend())
     }));
     match result {
@@ -175,7 +200,9 @@ pub unsafe extern "C" fn salvium_wallet_can_spend(handle: *mut c_void) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_network(handle: *mut c_void) -> i32 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }.ok()?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }
+            .ok()?
+            .wallet;
         Some(wallet.network())
     }));
     match result {
@@ -192,7 +219,9 @@ pub unsafe extern "C" fn salvium_wallet_network(handle: *mut c_void) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_sync_height(handle: *mut c_void) -> u64 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }.ok()?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }
+            .ok()?
+            .wallet;
         wallet.sync_height().ok()
     }));
     match result {
@@ -216,7 +245,7 @@ pub unsafe extern "C" fn salvium_wallet_get_balance(
     account_index: i32,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let asset = unsafe { c_str_to_str(asset_type) }?;
         let result = wallet
             .get_balance(asset, account_index)
@@ -235,7 +264,7 @@ pub unsafe extern "C" fn salvium_wallet_get_all_balances(
     account_index: i32,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let result = wallet
             .get_all_balances(account_index)
             .map_err(|e| e.to_string())?;
@@ -255,7 +284,7 @@ pub unsafe extern "C" fn salvium_wallet_set_attribute(
     value: *const c_char,
 ) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let k = unsafe { c_str_to_str(key) }?;
         let v = unsafe { c_str_to_str(value) }?;
         wallet.set_attribute(k, v).map_err(|e| e.to_string())
@@ -272,7 +301,7 @@ pub unsafe extern "C" fn salvium_wallet_get_attribute(
     key: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let k = unsafe { c_str_to_str(key) }?;
         match wallet.get_attribute(k).map_err(|e| e.to_string())? {
             Some(v) => Ok(v),
@@ -285,7 +314,7 @@ pub unsafe extern "C" fn salvium_wallet_get_attribute(
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_reset_sync_height(handle: *mut c_void, height: u64) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         wallet.reset_sync_height(height).map_err(|e| e.to_string())
     })
 }
@@ -296,7 +325,7 @@ pub unsafe extern "C" fn salvium_wallet_reset_sync_height(handle: *mut c_void, h
 
 /// Sync callback function pointer type.
 ///
-/// - `event_type`: 0=started, 1=progress, 2=complete, 3=reorg, 4=error
+/// - `event_type`: 0=started, 1=progress, 2=complete, 3=reorg, 4=error, 5=parse_error, 6=cancelled
 /// - `current_height`: current scan height
 /// - `target_height`: target chain height
 /// - `outputs_found`: number of outputs found so far
@@ -324,9 +353,12 @@ pub unsafe extern "C" fn salvium_wallet_sync(
     callback: Option<SyncCallbackFn>,
 ) -> i32 {
     ffi_try(|| {
-        let wallet_ref = unsafe { borrow_handle_mut::<Wallet>(wallet) }?;
+        let handle = unsafe { borrow_handle_mut::<WalletHandle>(wallet) }?;
         let daemon_ref = unsafe { borrow_handle::<salvium_rpc::DaemonRpc>(daemon) }?;
         let rt = crate::runtime();
+
+        // Reset cancel flag before starting.
+        handle.sync_cancel.store(false, Ordering::Relaxed);
 
         rt.block_on(async {
             if let Some(cb) = callback {
@@ -339,19 +371,39 @@ pub unsafe extern "C" fn salvium_wallet_sync(
                     }
                 });
 
-                let result = wallet_ref.sync(daemon_ref, Some(&tx)).await;
+                let result = handle
+                    .wallet
+                    .sync(daemon_ref, Some(&tx), &handle.sync_cancel)
+                    .await;
                 drop(tx); // Close channel so forwarder exits.
                 let _ = forwarder.await;
 
                 result.map(|_| ()).map_err(|e| e.to_string())
             } else {
-                wallet_ref
-                    .sync(daemon_ref, None)
+                handle
+                    .wallet
+                    .sync(daemon_ref, None, &handle.sync_cancel)
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             }
         })
+    })
+}
+
+/// Cancel an in-progress sync.
+///
+/// Sets the cancellation flag. The sync loop will stop before the next
+/// batch and return `WalletError::Cancelled`. Safe to call from any thread.
+/// No-op if no sync is running.
+///
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_stop_sync(wallet: *mut c_void) -> i32 {
+    ffi_try(|| {
+        let handle = unsafe { borrow_handle::<WalletHandle>(wallet) }?;
+        handle.sync_cancel.store(true, Ordering::Relaxed);
+        Ok(())
     })
 }
 
@@ -412,6 +464,9 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
                 }
             }
         }
+        SyncEvent::Cancelled { height } => unsafe {
+            cb(6, *height, 0, 0, std::ptr::null());
+        },
     }
 }
 
@@ -433,7 +488,7 @@ pub unsafe extern "C" fn salvium_wallet_get_transfers(
     filters_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let json_str = unsafe { c_str_to_str(filters_json) }?;
         let query: salvium_wallet::TxQuery =
             serde_json::from_str(json_str).map_err(|e| format!("invalid query JSON: {e}"))?;
@@ -456,7 +511,7 @@ pub unsafe extern "C" fn salvium_wallet_get_outputs(
     query_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let json_str = unsafe { c_str_to_str(query_json) }?;
         let query: salvium_wallet::OutputQuery =
             serde_json::from_str(json_str).map_err(|e| format!("invalid query JSON: {e}"))?;
@@ -476,7 +531,7 @@ pub unsafe extern "C" fn salvium_wallet_get_stakes(
     status: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let status_opt = if status.is_null() {
             None
         } else {
@@ -497,7 +552,7 @@ pub unsafe extern "C" fn salvium_wallet_get_stakes(
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_address_book_list(handle: *mut c_void) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let entries = wallet.get_address_book().map_err(|e| e.to_string())?;
         serde_json::to_string(&entries).map_err(|e| e.to_string())
     })
@@ -514,7 +569,7 @@ pub unsafe extern "C" fn salvium_wallet_address_book_add(
     description: *const c_char,
 ) -> i64 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let addr = unsafe { c_str_to_str(address) }?;
         let lbl = unsafe { c_str_to_str(label) }?;
         let desc = unsafe { c_str_to_str(description) }?;
@@ -544,7 +599,7 @@ pub unsafe extern "C" fn salvium_wallet_address_book_delete(
     row_id: i64,
 ) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         wallet
             .delete_address_book_entry(row_id)
             .map(|_| ())
@@ -564,7 +619,7 @@ pub unsafe extern "C" fn salvium_wallet_set_tx_note(
     note: *const c_char,
 ) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let hash = unsafe { c_str_to_str(tx_hash) }?;
         let n = unsafe { c_str_to_str(note) }?;
         wallet.set_tx_note(hash, n).map_err(|e| e.to_string())
@@ -582,7 +637,7 @@ pub unsafe extern "C" fn salvium_wallet_get_tx_notes(
     tx_hashes_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let json_str = unsafe { c_str_to_str(tx_hashes_json) }?;
         let hashes: Vec<String> =
             serde_json::from_str(json_str).map_err(|e| format!("invalid JSON array: {e}"))?;
@@ -603,7 +658,7 @@ pub unsafe extern "C" fn salvium_wallet_freeze_output(
     key_image: *const c_char,
 ) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let ki = unsafe { c_str_to_str(key_image) }?;
         wallet.freeze_output(ki).map_err(|e| e.to_string())
     })
@@ -616,7 +671,7 @@ pub unsafe extern "C" fn salvium_wallet_thaw_output(
     key_image: *const c_char,
 ) -> i32 {
     ffi_try(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let ki = unsafe { c_str_to_str(key_image) }?;
         wallet.thaw_output(ki).map_err(|e| e.to_string())
     })
@@ -641,7 +696,7 @@ pub unsafe extern "C" fn salvium_wallet_export_blob(
     pin: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet = unsafe { borrow_handle::<Wallet>(handle) }?;
+        let wallet = &unsafe { borrow_handle::<WalletHandle>(handle) }?.wallet;
         let pin_str = unsafe { c_str_to_str(pin) }?;
 
         let keys = wallet.keys();
@@ -714,7 +769,9 @@ pub unsafe extern "C" fn salvium_wallet_import_blob(
             return Err("blob contains neither seed nor keys".into());
         };
 
-        Wallet::open(keys, path, &data_key).map_err(|e| e.to_string())
+        Wallet::open(keys, path, &data_key)
+            .map(WalletHandle::new)
+            .map_err(|e| e.to_string())
     })
 }
 

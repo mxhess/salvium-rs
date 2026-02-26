@@ -135,8 +135,9 @@ async fn test_real_testnet_transfer() {
         }
     });
 
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
     let sync_height = wallet
-        .sync(&daemon, Some(&event_tx))
+        .sync(&daemon, Some(&event_tx), &no_cancel)
         .await
         .expect("sync failed");
     drop(event_tx);

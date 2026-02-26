@@ -317,13 +317,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 SyncEvent::Started { .. } => {}
+                SyncEvent::Cancelled { height } => {
+                    println!("  ** Sync cancelled at height {} **", height);
+                }
             }
         }
 
         (final_parse_errors, final_empty_blobs)
     });
 
-    let sync_result = wallet.sync(&daemon, Some(&tx)).await;
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
+    let sync_result = wallet.sync(&daemon, Some(&tx), &no_cancel).await;
     drop(tx); // close channel so progress task finishes
     let (final_parse_errors, final_empty_blobs) = progress_handle.await.unwrap_or((0, 0));
 

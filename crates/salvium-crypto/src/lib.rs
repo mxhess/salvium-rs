@@ -29,6 +29,8 @@ pub mod storage;
 #[cfg(not(target_arch = "wasm32"))]
 mod ffi;
 
+mod wasm_ffi;
+
 /// Keccak-256 hash (CryptoNote variant with 0x01 padding, NOT SHA3)
 /// Matches Salvium C++ cn_fast_hash / keccak()
 #[cfg_attr(feature = "wasm-exports", wasm_bindgen)]

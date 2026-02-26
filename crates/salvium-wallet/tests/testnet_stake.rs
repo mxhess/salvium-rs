@@ -76,7 +76,10 @@ async fn test_stake_transaction_build() {
 
     // Sync
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height {}", sync_height);
 
     // Get hardfork info for asset type
@@ -190,7 +193,10 @@ async fn test_stake_submit_testnet() {
     .expect("create wallet");
 
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height {}", sync_height);
 
     let hf_info = d.hard_fork_info().await.unwrap();
@@ -467,7 +473,10 @@ async fn test_stake_return_detection() {
     .expect("create wallet");
 
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height {}", sync_height);
 
     // Look for protocol TX outputs (stake returns).

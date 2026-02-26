@@ -274,12 +274,16 @@ async fn wallet_sync_and_balance_check() {
                         height, blob_len, error
                     );
                 }
+                SyncEvent::Cancelled { height } => {
+                    println!("  ** Sync cancelled at height {} **", height);
+                }
             }
         }
     });
 
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
     let sync_height = wallet
-        .sync(&daemon, Some(&event_tx))
+        .sync(&daemon, Some(&event_tx), &no_cancel)
         .await
         .expect("wallet sync failed");
 
@@ -442,7 +446,7 @@ async fn wallet_sync_and_balance_check() {
     // ── Sync idempotency check ──────────────────────────────────────────
     println!("\n  Verifying sync idempotency...");
     let height2 = wallet
-        .sync(&daemon, None)
+        .sync(&daemon, None, &no_cancel)
         .await
         .expect("second sync failed");
     let all_balances_2 = wallet.get_all_balances(0).unwrap();

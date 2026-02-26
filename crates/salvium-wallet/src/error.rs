@@ -52,6 +52,9 @@ pub enum WalletError {
     #[error("hardware device error: {0}")]
     Device(String),
 
+    #[error("sync cancelled by caller")]
+    Cancelled,
+
     #[error("{0}")]
     Other(String),
 }

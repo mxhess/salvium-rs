@@ -36,6 +36,16 @@ wasm-pack build \
 # Remove wasm-pack's generated .gitignore (we want to commit/ship this)
 rm -f "$OUT_DIR/.gitignore"
 
+# Build WASM static library (C ABI, no wasm-bindgen glue).
+# Produces libsalvium_crypto.a for direct linking (e.g. Cloudflare Worker).
+echo ""
+echo "==> Building WASM static library (C ABI)..."
+cargo build -p salvium-crypto \
+  --target wasm32-unknown-unknown \
+  --release \
+  --no-default-features
+cp "$ROOT_DIR/target/wasm32-unknown-unknown/release/libsalvium_crypto.a" "$OUT_DIR/"
+
 echo ""
 echo "==> Done:"
 ls -lh "$OUT_DIR/"*

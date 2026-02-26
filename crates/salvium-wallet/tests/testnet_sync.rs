@@ -57,7 +57,10 @@ async fn test_full_sync_balance() {
     println!("Daemon height: {}", info.height);
     println!("Network: testnet");
 
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height: {}", sync_height);
 
     // Sync height should be close to daemon height
@@ -140,7 +143,10 @@ async fn test_view_only_sync() {
         .expect("open view-only wallet");
 
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("view-only sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("view-only sync failed");
     println!("View-only synced to height: {}", sync_height);
 
     // View-only wallet should detect CN outputs
@@ -204,8 +210,9 @@ async fn test_carrot_view_only_sync() {
         .expect("open CARROT view-only wallet");
 
     let d = daemon();
+    let no_cancel = std::sync::atomic::AtomicBool::new(false);
     let sync_height = wallet
-        .sync(&d, None)
+        .sync(&d, None, &no_cancel)
         .await
         .expect("CARROT view-only sync failed");
     println!("CARROT view-only synced to height: {}", sync_height);
@@ -259,7 +266,10 @@ async fn test_sync_idempotent() {
     let d = daemon();
 
     // First sync
-    let height_1 = wallet.sync(&d, None).await.expect("first sync failed");
+    let height_1 = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("first sync failed");
     let bal_1 = wallet.get_balance("SAL", 0).unwrap();
     let total_1: u64 = bal_1.balance.parse().unwrap_or(0);
     let unlocked_1: u64 = bal_1.unlocked_balance.parse().unwrap_or(0);
@@ -271,7 +281,10 @@ async fn test_sync_idempotent() {
     );
 
     // Second sync (should be a no-op or near-instant)
-    let height_2 = wallet.sync(&d, None).await.expect("second sync failed");
+    let height_2 = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("second sync failed");
     let bal_2 = wallet.get_balance("SAL", 0).unwrap();
     let total_2: u64 = bal_2.balance.parse().unwrap_or(0);
     let unlocked_2: u64 = bal_2.unlocked_balance.parse().unwrap_or(0);

@@ -74,7 +74,10 @@ async fn test_burn_transaction_build() {
     .expect("create wallet");
 
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height {}", sync_height);
 
     let hf_info = d.hard_fork_info().await.unwrap();
@@ -138,7 +141,10 @@ async fn test_burn_submit_testnet() {
     .expect("create wallet");
 
     let d = daemon();
-    let sync_height = wallet.sync(&d, None).await.expect("sync failed");
+    let sync_height = wallet
+        .sync(&d, None, &std::sync::atomic::AtomicBool::new(false))
+        .await
+        .expect("sync failed");
     println!("Synced to height {}", sync_height);
 
     let hf_info = d.hard_fork_info().await.unwrap();
