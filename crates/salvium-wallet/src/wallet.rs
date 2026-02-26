@@ -631,8 +631,15 @@ impl Wallet {
             accounts.last().unwrap().major + 1
         };
 
+        // Read chain tip while we already hold the db lock.
+        let chain_tip = db
+            .get_attribute("chain_tip_height")
+            .map_err(|e| WalletError::Storage(e.to_string()))?
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
         // Derive the primary address (minor=0) for this account.
-        let address = self.derive_subaddress(major as u32, 0)?;
+        let address = self.derive_subaddress(major as u32, 0, chain_tip)?;
         let lbl = if label.is_empty() && major == 0 {
             "Primary account"
         } else {
@@ -673,7 +680,14 @@ impl Wallet {
         // Ensure minor starts at 1 if 0 already exists (0 = account primary address).
         let minor = if minor == 0 { 1 } else { minor };
 
-        let address = self.derive_subaddress(major as u32, minor as u32)?;
+        // Read chain tip while we already hold the db lock (avoid re-locking in derive_subaddress).
+        let chain_tip = db
+            .get_attribute("chain_tip_height")
+            .map_err(|e| WalletError::Storage(e.to_string()))?
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let address = self.derive_subaddress(major as u32, minor as u32, chain_tip)?;
         db.upsert_subaddress(major, minor, &address, label)
             .map_err(|e| WalletError::Storage(e.to_string()))?;
         Ok((major, minor, address))
@@ -711,21 +725,15 @@ impl Wallet {
     /// chain tip height, otherwise falls back to legacy CryptoNote.
     /// The chain tip is persisted in the DB by the sync engine.
     #[cfg(not(target_arch = "wasm32"))]
-    fn derive_subaddress(&self, major: u32, minor: u32) -> Result<String, WalletError> {
+    fn derive_subaddress(
+        &self,
+        major: u32,
+        minor: u32,
+        chain_tip: u64,
+    ) -> Result<String, WalletError> {
         use salvium_types::address::create_address_raw;
         use salvium_types::consensus::is_carrot_active;
         use salvium_types::constants::{AddressFormat, AddressType};
-
-        let chain_tip = {
-            let db = self
-                .db
-                .lock()
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
-            db.get_attribute("chain_tip_height")
-                .map_err(|e| WalletError::Storage(e.to_string()))?
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0)
-        };
 
         let use_carrot =
             is_carrot_active(chain_tip, self.keys.network) && !self.keys.carrot.is_empty();
