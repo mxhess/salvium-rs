@@ -10,10 +10,18 @@ use crate::strings::c_str_to_str;
 
 use salvium_wallet::Wallet;
 
-/// Wrapper that pairs a Wallet with its cancellation flag.
+/// Wrapper that pairs a Wallet with its cancellation and lifecycle flags.
+///
+/// `sync_running` is set to `true` while `salvium_wallet_sync` is executing
+/// and back to `false` when it returns (even on error / cancel).
+/// `salvium_wallet_close` checks this flag and, if sync is active, sets
+/// `sync_cancel` and spins until sync finishes before dropping the handle.
+/// This prevents use-after-free when the app closes a wallet while sync is
+/// still running on another thread.
 pub(crate) struct WalletHandle {
     pub wallet: Wallet,
     pub sync_cancel: Arc<AtomicBool>,
+    pub sync_running: AtomicBool,
 }
 
 impl WalletHandle {
@@ -21,7 +29,18 @@ impl WalletHandle {
         Self {
             wallet,
             sync_cancel: Arc::new(AtomicBool::new(false)),
+            sync_running: AtomicBool::new(false),
         }
+    }
+}
+
+/// RAII guard that sets `sync_running` to `false` on drop, ensuring
+/// the flag is cleared even if sync panics or returns early.
+struct SyncRunningGuard<'a>(&'a AtomicBool);
+
+impl Drop for SyncRunningGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -107,8 +126,26 @@ pub unsafe extern "C" fn salvium_wallet_open(
 }
 
 /// Close a wallet handle, releasing all resources.
+///
+/// If a sync is in progress, this cancels it and blocks until the sync
+/// loop has exited before dropping the handle. Safe to call from any thread.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_close(handle: *mut c_void) {
+    if handle.is_null() {
+        return;
+    }
+    // Safety: pointer is non-null and was created by into_handle<WalletHandle>.
+    // We read the atomic flags through a shared ref before drop_handle takes ownership.
+    let wh = unsafe { &*(handle as *const WalletHandle) };
+
+    // Signal any running sync to stop.
+    wh.sync_cancel.store(true, Ordering::Relaxed);
+
+    // Wait for sync to finish before dropping.
+    while wh.sync_running.load(Ordering::Acquire) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
     drop_handle::<WalletHandle>(handle);
 }
 
@@ -354,11 +391,19 @@ pub unsafe extern "C" fn salvium_wallet_sync(
 ) -> i32 {
     ffi_try(|| {
         let handle = unsafe { borrow_handle_mut::<WalletHandle>(wallet) }?;
-        let daemon_ref = unsafe { borrow_handle::<salvium_rpc::DaemonRpc>(daemon) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
         let rt = crate::runtime();
 
         // Reset cancel flag before starting.
         handle.sync_cancel.store(false, Ordering::Relaxed);
+
+        // Mark sync as active; the guard clears this on drop (even on panic/early return).
+        handle.sync_running.store(true, Ordering::Release);
+        let _guard = SyncRunningGuard(&handle.sync_running);
+
+        // Register daemon usage so daemon_close waits for us.
+        dh.in_use.fetch_add(1, Ordering::Release);
+        let _daemon_guard = crate::daemon::DaemonUseGuard(&dh.in_use);
 
         rt.block_on(async {
             if let Some(cb) = callback {
@@ -373,7 +418,7 @@ pub unsafe extern "C" fn salvium_wallet_sync(
 
                 let result = handle
                     .wallet
-                    .sync(daemon_ref, Some(&tx), &handle.sync_cancel)
+                    .sync(&dh.daemon, Some(&tx), &handle.sync_cancel)
                     .await;
                 drop(tx); // Close channel so forwarder exits.
                 let _ = forwarder.await;
@@ -382,7 +427,7 @@ pub unsafe extern "C" fn salvium_wallet_sync(
             } else {
                 handle
                     .wallet
-                    .sync(daemon_ref, None, &handle.sync_cancel)
+                    .sync(&dh.daemon, None, &handle.sync_cancel)
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())

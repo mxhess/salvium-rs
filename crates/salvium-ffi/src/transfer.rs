@@ -114,8 +114,8 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
     params_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
-        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
         let json_str = unsafe { c_str_to_str(params_json) }?;
 
         let params: TransferParams =
@@ -125,14 +125,14 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
             return Err("no destinations specified".into());
         }
 
-        if !wallet_ref.can_spend() {
+        if !wh.wallet.can_spend() {
             return Err("wallet is view-only, cannot sign transactions".into());
         }
 
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_transfer(wallet_ref, daemon_ref, &params, priority).await })
+        rt.block_on(async { do_transfer(&wh.wallet, &dh.daemon, &params, priority).await })
     })
 }
 
@@ -158,21 +158,21 @@ pub unsafe extern "C" fn salvium_wallet_stake(
     params_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
-        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
         let json_str = unsafe { c_str_to_str(params_json) }?;
 
         let params: StakeParams =
             serde_json::from_str(json_str).map_err(|e| format!("invalid stake params: {e}"))?;
 
-        if !wallet_ref.can_spend() {
+        if !wh.wallet.can_spend() {
             return Err("wallet is view-only, cannot sign transactions".into());
         }
 
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_stake(wallet_ref, daemon_ref, &params, priority).await })
+        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority).await })
     })
 }
 
@@ -200,21 +200,21 @@ pub unsafe extern "C" fn salvium_wallet_sweep(
     params_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
-        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
         let json_str = unsafe { c_str_to_str(params_json) }?;
 
         let params: SweepParams =
             serde_json::from_str(json_str).map_err(|e| format!("invalid sweep params: {e}"))?;
 
-        if !wallet_ref.can_spend() {
+        if !wh.wallet.can_spend() {
             return Err("wallet is view-only, cannot sign transactions".into());
         }
 
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_sweep(wallet_ref, daemon_ref, &params, priority).await })
+        rt.block_on(async { do_sweep(&wh.wallet, &dh.daemon, &params, priority).await })
     })
 }
 
@@ -233,8 +233,8 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
     params_json: *const c_char,
 ) -> *mut c_char {
     ffi_try_string(|| {
-        let wallet_ref = unsafe { borrow_handle::<Wallet>(wallet) }?;
-        let daemon_ref = unsafe { borrow_handle::<DaemonRpc>(daemon) }?;
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
         let json_str = unsafe { c_str_to_str(params_json) }?;
 
         let mut params: TransferParams =
@@ -244,14 +244,14 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
         if params.destinations.is_empty() {
             return Err("no destinations specified".into());
         }
-        if !wallet_ref.can_spend() {
+        if !wh.wallet.can_spend() {
             return Err("wallet is view-only, cannot sign transactions".into());
         }
 
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_transfer(wallet_ref, daemon_ref, &params, priority).await })
+        rt.block_on(async { do_transfer(&wh.wallet, &dh.daemon, &params, priority).await })
     })
 }
 
