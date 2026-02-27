@@ -988,9 +988,9 @@ impl DaemonRpc {
     /// Get output details by amount and index.
     ///
     /// When `asset_type` is non-empty, indices in `OutputRequest` are treated as
-    /// asset-type-specific indices (unless `is_global_out` is set on individual
-    /// entries). The daemon converts them to global output IDs internally.
-    /// When `asset_type` is empty, indices are treated as global output IDs.
+    /// asset-type-specific indices. The daemon converts them to global output IDs
+    /// internally. When `asset_type` is empty, indices are treated as global
+    /// output IDs.
     pub async fn get_outs(
         &self,
         outputs: &[OutputRequest],
@@ -1556,7 +1556,8 @@ impl DaemonRpc {
 /// Request for a specific output by amount and index.
 ///
 /// When `asset_type` is set on the parent `get_outs` request, `index` is treated
-/// as an asset-type-specific index. Without `asset_type`, it's a global output ID.
+/// as an asset-type-specific index. Without `asset_type`, `index` is a global
+/// output ID.
 #[derive(Debug, Clone, Serialize)]
 pub struct OutputRequest {
     pub amount: u64,

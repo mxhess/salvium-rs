@@ -1,6 +1,6 @@
 [package]
 name = "salvium-explorer"
-version = "1.0.7-r011"
+version = "1.0.7-r012"
 edition = "2021"
 description = "High-level WASM APIs for Salvium blockchain explorers"
 

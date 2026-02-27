@@ -95,7 +95,7 @@ fn parse_priority(s: &str) -> FeePriority {
 /// ```json
 /// {
 ///   "destinations": [{"address": "Svk1...", "amount": "1000000000"}],
-///   "asset_type": "SAL",
+///   "assetType": "SAL1",
 ///   "priority": "normal",
 ///   "ring_size": 16
 /// }
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
 /// ```json
 /// {
 ///   "amount": "1000000000",
-///   "asset_type": "SAL",
+///   "assetType": "SAL1",
 ///   "priority": "normal",
 ///   "ring_size": 16
 /// }
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn salvium_wallet_stake_dry_run(
 /// ```json
 /// {
 ///   "address": "Svk1...",
-///   "asset_type": "SAL",
+///   "assetType": "SAL1",
 ///   "priority": "normal",
 ///   "ring_size": 16,
 ///   "dry_run": false
@@ -560,8 +560,11 @@ async fn build_sign_maybe_broadcast(
     let keys = wallet.keys();
 
     // 1. Get output distribution for decoy selection.
+    // We use global index space (empty asset_type) because our wallet stores
+    // global output indices. Both decoys and the real output use global IDs,
+    // so the index spaces are consistent. This matches salvium-cli's approach.
     let dist = daemon
-        .get_output_distribution(&[0], 0, 0, true, asset_type)
+        .get_output_distribution(&[0], 0, 0, true, "")
         .await
         .map_err(|e| format!("get_output_distribution failed: {e}"))?;
 
@@ -590,7 +593,7 @@ async fn build_sign_maybe_broadcast(
             .collect();
 
         let outs = daemon
-            .get_outs(&requests, true, asset_type)
+            .get_outs(&requests, true, "")
             .await
             .map_err(|e| format!("get_outs failed: {e}"))?;
 

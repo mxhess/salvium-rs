@@ -343,7 +343,88 @@ salvium_string_free(stakes);
 | `returnHeight` | i64/null | Block height of return |
 | `returnAmount` | string | Amount returned (atomic) |
 
-## 11. Cleanup
+## 11. Sending Transactions
+
+All transaction functions take a JSON params string. **`assetType` is required** — there is
+no default. Omitting it returns an error.
+
+All return a JSON string on success (caller must free with `salvium_string_free()`), or
+NULL on error.
+
+### Transfer
+
+```c
+char* result = salvium_wallet_transfer(wallet, daemon, "{\"destinations\":[{\"address\":\"Svk1...\",\"amount\":\"100000000\"}],\"assetType\":\"SAL1\"}");
+salvium_string_free(result);
+```
+
+**Params (camelCase):**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `destinations` | array | yes | `[{"address": "...", "amount": "..."}]` (atomic units) |
+| `assetType` | string | yes | Asset to spend (e.g. `"SAL1"`) |
+| `priority` | string | no | `"low"`, `"normal"` (default), `"elevated"`, `"priority"` |
+| `ringSize` | number | no | Default 16 |
+| `dryRun` | bool | no | If true, build + sign but don't broadcast |
+
+**Result:** `{"txHash": "...", "fee": "...", "amount": "..."}`
+When `dryRun` is true, also includes `txHex` and `weight`.
+
+### Transfer Dry Run
+
+Convenience wrapper — forces `dryRun: true` regardless of params.
+
+```c
+char* result = salvium_wallet_transfer_dry_run(wallet, daemon, params_json);
+```
+
+### Stake
+
+```c
+char* result = salvium_wallet_stake(wallet, daemon, "{\"amount\":\"100000000\",\"assetType\":\"SAL1\"}");
+salvium_string_free(result);
+```
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `amount` | string | yes | Amount to stake (atomic units) |
+| `assetType` | string | yes | Asset to stake |
+| `priority` | string | no | Fee priority (default `"normal"`) |
+| `ringSize` | number | no | Default 16 |
+
+**Result:** `{"txHash": "...", "fee": "...", "amount": "...", "weight": ...}`
+
+### Stake Dry Run
+
+```c
+char* result = salvium_wallet_stake_dry_run(wallet, daemon, params_json);
+```
+
+### Sweep
+
+Sends all unlocked outputs of the specified asset to a single address.
+
+```c
+char* result = salvium_wallet_sweep(wallet, daemon, "{\"address\":\"Svk1...\",\"assetType\":\"SAL1\"}");
+salvium_string_free(result);
+```
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `address` | string | yes | Destination address |
+| `assetType` | string | yes | Asset to sweep |
+| `priority` | string | no | Fee priority (default `"normal"`) |
+| `ringSize` | number | no | Default 16 |
+| `dryRun` | bool | no | If true, build + sign but don't broadcast |
+
+**Result:** `{"txHash": "...", "fee": "...", "amount": "..."}`
+
+## 12. Cleanup
 
 **Close in reverse order.** Always close handles when done.
 
