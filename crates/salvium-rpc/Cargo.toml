@@ -6,7 +6,7 @@ description = "Async and blocking RPC clients for Salvium daemon and wallet"
 
 [dependencies]
 salvium-types = { path = "../salvium-types" }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "time", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

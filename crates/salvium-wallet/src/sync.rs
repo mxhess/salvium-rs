@@ -52,10 +52,6 @@ struct BatchController {
     max_batch: usize,
     target_batch_time_ms: u64,
     consecutive_errors: u32,
-    /// Approximate max bytes per batch (mobile-friendly cap).
-    max_batch_bytes: usize,
-    /// Last observed bytes per second.
-    last_bytes_per_sec: f64,
 }
 
 impl BatchController {
@@ -66,16 +62,11 @@ impl BatchController {
             max_batch: 1000,
             target_batch_time_ms: 1000,
             consecutive_errors: 0,
-            max_batch_bytes: 2 * 1024 * 1024, // 2 MB
-            last_bytes_per_sec: 0.0,
         }
     }
 
-    /// Adjust batch size based on timing and throughput.
-    ///
-    /// `blocks` is the number of blocks in the batch, `bytes` is the total
-    /// response size, `elapsed_ms` is how long the batch took.
-    fn adjust(&mut self, elapsed_ms: u64, had_error: bool, blocks: usize, bytes: usize) {
+    /// Adjust batch size based on elapsed time per batch.
+    fn adjust(&mut self, elapsed_ms: u64, had_error: bool) {
         if had_error {
             self.batch_size = (self.batch_size / 2).max(self.min_batch);
             self.consecutive_errors += 1;
@@ -87,25 +78,10 @@ impl BatchController {
 
         self.consecutive_errors = 0;
 
-        // Track throughput.
-        if elapsed_ms > 0 {
-            self.last_bytes_per_sec = bytes as f64 / (elapsed_ms as f64 / 1000.0);
-        }
-
-        // Time-based scaling.
         if elapsed_ms < self.target_batch_time_ms {
             self.batch_size = (self.batch_size + self.batch_size / 2).min(self.max_batch);
         } else {
             self.batch_size = (self.batch_size - self.batch_size / 4).max(self.min_batch);
-        }
-
-        // Byte-cap: if the batch exceeded the byte limit, scale down proportionally.
-        if blocks > 0 && bytes > self.max_batch_bytes {
-            let avg_block_bytes = bytes / blocks;
-            if avg_block_bytes > 0 {
-                let byte_limited = self.max_batch_bytes / avg_block_bytes;
-                self.batch_size = self.batch_size.min(byte_limited).max(self.min_batch);
-            }
         }
     }
 
@@ -229,7 +205,7 @@ impl SyncEngine {
             let batch_data = match batch_result {
                 Ok(r) => r,
                 Err(e) => {
-                    controller.adjust(batch_timer.elapsed().as_millis() as u64, true, 0, 0);
+                    controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                     if let Some(tx) = event_tx {
                         let _ = tx.send(SyncEvent::Error(e.to_string())).await;
                     }
@@ -275,7 +251,7 @@ impl SyncEngine {
                             }
 
                             current = reorg_start;
-                            controller.adjust(batch_timer.elapsed().as_millis() as u64, true, 0, 0);
+                            controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                             continue;
                         }
                     }
@@ -283,7 +259,7 @@ impl SyncEngine {
             }
 
             if bin_blocks.len() != heights.len() {
-                controller.adjust(batch_timer.elapsed().as_millis() as u64, true, 0, 0);
+                controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                 if let Some(tx) = event_tx {
                     let _ = tx
                         .send(SyncEvent::Error(format!(
@@ -315,12 +291,6 @@ impl SyncEngine {
             }
 
             // ── 3. Parallel parse + sequential store ────────────────────
-            // Estimate batch bytes for throughput tracking.
-            let batch_bytes: usize = bin_blocks
-                .iter()
-                .map(|e| e.block.len() + e.txs.iter().map(|t| t.len()).sum::<usize>())
-                .sum();
-
             // Phase 1: Parse + scan all blocks in parallel via spawn_blocking.
             let scan_ctx_clone = scan_ctx.clone();
             let parse_results: Vec<ParsedBlockResult> = {
@@ -521,13 +491,7 @@ impl SyncEngine {
             }
 
             // ── 6. Adapt batch size + race nodes ────────────────────────
-            let n_blocks = bin_blocks.len();
-            controller.adjust(
-                batch_timer.elapsed().as_millis() as u64,
-                false,
-                n_blocks,
-                batch_bytes,
-            );
+            controller.adjust(batch_timer.elapsed().as_millis() as u64, false);
             pool.maybe_race().await;
         }
 
@@ -2470,9 +2434,9 @@ mod tests {
     fn test_batch_controller_scale_up() {
         let mut ctrl = BatchController::new();
         // Fast batch → scale up by 50%
-        ctrl.adjust(500, false, 64, 100_000); // 500ms < 1s target
+        ctrl.adjust(500, false); // 500ms < 1s target
         assert_eq!(ctrl.batch_size, 96); // 64 + 32
-        ctrl.adjust(500, false, 96, 150_000);
+        ctrl.adjust(500, false);
         assert_eq!(ctrl.batch_size, 144); // 96 + 48
     }
 
@@ -2481,7 +2445,7 @@ mod tests {
         let mut ctrl = BatchController::new();
         ctrl.batch_size = 40;
         // Slow batch → scale down by 25%
-        ctrl.adjust(5000, false, 40, 100_000); // 5s > 3s target
+        ctrl.adjust(5000, false); // 5s > 3s target
         assert_eq!(ctrl.batch_size, 30); // 40 - 10
     }
 
@@ -2489,7 +2453,7 @@ mod tests {
     fn test_batch_controller_error_halves() {
         let mut ctrl = BatchController::new();
         ctrl.batch_size = 20;
-        ctrl.adjust(0, true, 0, 0);
+        ctrl.adjust(0, true);
         assert_eq!(ctrl.batch_size, 10); // 20 / 2
         assert_eq!(ctrl.consecutive_errors, 1);
     }
@@ -2498,9 +2462,9 @@ mod tests {
     fn test_batch_controller_consecutive_errors_drop_to_min() {
         let mut ctrl = BatchController::new();
         ctrl.batch_size = 50;
-        ctrl.adjust(0, true, 0, 0); // 25
-        ctrl.adjust(0, true, 0, 0); // 12
-        ctrl.adjust(0, true, 0, 0); // 3 consecutive → drops to min
+        ctrl.adjust(0, true); // 25
+        ctrl.adjust(0, true); // 12
+        ctrl.adjust(0, true); // 3 consecutive → drops to min
         assert_eq!(ctrl.batch_size, ctrl.min_batch);
         assert_eq!(ctrl.consecutive_errors, 3);
     }
@@ -2508,10 +2472,10 @@ mod tests {
     #[test]
     fn test_batch_controller_error_resets_on_success() {
         let mut ctrl = BatchController::new();
-        ctrl.adjust(0, true, 0, 0);
-        ctrl.adjust(0, true, 0, 0);
+        ctrl.adjust(0, true);
+        ctrl.adjust(0, true);
         assert_eq!(ctrl.consecutive_errors, 2);
-        ctrl.adjust(1000, false, 64, 100_000);
+        ctrl.adjust(1000, false);
         assert_eq!(ctrl.consecutive_errors, 0);
     }
 
@@ -2519,7 +2483,7 @@ mod tests {
     fn test_batch_controller_respects_max() {
         let mut ctrl = BatchController::new();
         ctrl.batch_size = 90;
-        ctrl.adjust(100, false, 90, 100_000); // fast → scale up
+        ctrl.adjust(100, false); // fast → scale up
         assert!(ctrl.batch_size <= ctrl.max_batch);
     }
 
@@ -2527,7 +2491,7 @@ mod tests {
     fn test_batch_controller_respects_min() {
         let mut ctrl = BatchController::new();
         ctrl.batch_size = 2;
-        ctrl.adjust(10000, false, 2, 50_000); // slow → scale down
+        ctrl.adjust(10000, false); // slow → scale down
         assert!(ctrl.batch_size >= ctrl.min_batch);
     }
 

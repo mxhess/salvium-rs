@@ -15,32 +15,32 @@ jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
 
   clippy:
     name: Lint (clippy)
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets
 
   compile-wasm:
     name: Compile WASM target
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      - run: rustup target add wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Check crypto crate compiles for WASM
         run: cargo check -p salvium-crypto --target wasm32-unknown-unknown
@@ -50,9 +50,10 @@ jobs:
     name: Compile workspace
     needs: [fmt, clippy, compile-wasm]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build all crates
         run: cargo build --workspace
@@ -64,9 +65,10 @@ jobs:
     name: "Test: types + consensus rules"
     needs: [compile]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: salvium-types
         run: cargo test -p salvium-types -- --nocapture
@@ -77,9 +79,10 @@ jobs:
     name: "Test: crypto verification"
     needs: [compile]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: salvium-crypto (unit)
         run: cargo test -p salvium-crypto --lib -- --nocapture
@@ -90,9 +93,10 @@ jobs:
     name: "Test: wallet + transactions + CLI"
     needs: [compile]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: salvium-wallet (unit + integration compile)
         run: cargo test -p salvium-wallet -- --nocapture
@@ -105,9 +109,10 @@ jobs:
     name: "Test: miner + multisig + RPC"
     needs: [compile]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: salvium-miner
         run: cargo test -p salvium-miner -- --nocapture
@@ -120,9 +125,10 @@ jobs:
     name: Documentation
     needs: [compile]
     runs-on: ubuntu-latest
+    container: rust:alpine
     steps:
+      - run: apk add --no-cache musl-dev perl make git
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Doc tests
         run: cargo test --workspace --doc
