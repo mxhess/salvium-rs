@@ -220,7 +220,6 @@ pub fn parse_and_analyze_tx(tx_bytes: &[u8]) -> String {
 /// Parse a raw block binary and return an enriched JSON analysis.
 ///
 /// Returns JSON with all fields from `parse_block_bytes()` plus:
-/// - `miner_tx_analysis`: analyzed miner transaction (same as parse_and_analyze_tx)
 /// - `tx_count`: number of transaction hashes (excluding miner tx)
 #[wasm_bindgen]
 pub fn parse_and_analyze_block(block_bytes: &[u8]) -> String {

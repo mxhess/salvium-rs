@@ -6,6 +6,7 @@ How to use the `salvium-explorer` WASM module in a Cloudflare Worker or browser 
 
 ```bash
 # Build the wasm-bindgen package (JS glue + .wasm binary)
+# Option A: build salvium-explorer (includes explorer-specific APIs + all re-exports)
 wasm-pack build crates/salvium-explorer --release --target bundler --out-dir pkg
 
 # Output:
@@ -15,12 +16,16 @@ wasm-pack build crates/salvium-explorer --release --target bundler --out-dir pkg
 #   crates/salvium-explorer/pkg/package.json
 ```
 
-Or use the build script which also produces the C ABI static library:
+Or use the build script which builds salvium-crypto directly (without the explorer-specific APIs) and also produces the C ABI static library:
 
 ```bash
 scripts/build-wasm.sh
-# Output in prebuilt/wasm/
+# Output in prebuilt/wasm/:
+#   salvium_crypto.js, salvium_crypto_bg.wasm, salvium_crypto.d.ts, package.json
+#   libsalvium_crypto.a (C ABI static lib)
 ```
+
+**Note:** The build script builds `salvium-crypto`, not `salvium-explorer`. To get the 3 explorer-specific APIs (`parse_and_analyze_tx`, `parse_and_analyze_block`, `decode_outputs_for_view_key`), use `wasm-pack build crates/salvium-explorer` directly.
 
 ## 2. Initialize the Module
 
@@ -263,7 +268,7 @@ wasm_is_valid_address(address: string): boolean        // Validate
 wasm_describe_address(address: string): string         // Human-readable description
 wasm_create_address(                                   // Create from components
   network: number,   // 0=mainnet, 1=testnet, 2=stagenet
-  format: number,    // 0=CryptoNote, 1=CARROT
+  format: number,    // 0=legacy, 1=carrot
   addrType: number,  // 0=standard, 1=subaddress, 2=integrated
   spendKey: Uint8Array,
   viewKey: Uint8Array
@@ -275,8 +280,8 @@ wasm_to_integrated_address(address: string, paymentId: Uint8Array): string
 ```json
 {
   "network": "mainnet",
-  "format": "CryptoNote",
-  "address_type": "Standard",
+  "format": "legacy",
+  "address_type": "standard",
   "spend_public_key": "hex64",
   "view_public_key": "hex64"
 }
@@ -296,15 +301,15 @@ For full CARROT scanning (beyond what `decode_outputs_for_view_key` provides):
 ```typescript
 // Build input context for a TX
 make_input_context_rct(firstKeyImage: Uint8Array): Uint8Array       // Regular TX
-make_input_context_coinbase(blockHeight: bigint): Uint8Array        // Coinbase TX
+make_input_context_coinbase(blockHeight: number): Uint8Array        // Coinbase TX (u64)
 
 // View tag check (fast rejection)
 compute_carrot_view_tag(sSrUnctx: Uint8Array, inputContext: Uint8Array, ko: Uint8Array): Uint8Array
 
 // After view tag matches — full decryption
-decrypt_carrot_amount(encAmount: Uint8Array, sSrCtx: Uint8Array, ko: Uint8Array): bigint
+decrypt_carrot_amount(encAmount: Uint8Array, sSrCtx: Uint8Array, ko: Uint8Array): number  // u64
 recover_carrot_address_spend_pubkey(ko: Uint8Array, sSrCtx: Uint8Array, commitment: Uint8Array): Uint8Array
-derive_carrot_commitment_mask(sSrCtx: Uint8Array, amount: bigint, addressSpendPubkey: Uint8Array, enoteType: number): Uint8Array
+derive_carrot_commitment_mask(sSrCtx: Uint8Array, amount: number, addressSpendPubkey: Uint8Array, enoteType: number): Uint8Array  // amount is u64
 
 // CARROT key derivation (9 keys from master secret)
 derive_carrot_keys_batch(masterSecret: Uint8Array): Uint8Array      // Returns 288 bytes (9 × 32)
@@ -336,7 +341,7 @@ verify_rct_signatures_wasm(
   sigsFlat: Uint8Array,
   ringPubkeysFlat: Uint8Array,
   ringCommitmentsFlat: Uint8Array
-): Uint8Array  // Returns JSON with verification result
+): Uint8Array  // Returns binary: [0x01] = valid, [0x00, idx_le_4bytes] = invalid at index, [0xFF] = error
 ```
 
 ## 6. Typical Explorer Workflow
@@ -468,7 +473,7 @@ For functions returning `boolean`: they return `false` on invalid input.
 
 | File | What |
 |------|------|
-| `crates/salvium-explorer/src/lib.rs` | Explorer WASM APIs (3 custom + 61 re-exports) |
+| `crates/salvium-explorer/src/lib.rs` | Explorer WASM APIs (3 custom + 67 re-exports) |
 | `crates/salvium-explorer/Cargo.toml` | Crate config |
 | `crates/salvium-explorer/pkg/` | Built wasm-pack output (JS glue, .wasm, .d.ts) |
 | `crates/salvium-crypto/src/lib.rs` | Underlying crypto implementations |

@@ -263,7 +263,7 @@ pub unsafe extern "C" fn salvium_wallet_sync_height(handle: *mut c_void) -> u64 
 
 /// Get the balance for an asset type (e.g. "SAL").
 ///
-/// Returns JSON: `{"balance": "...", "unlocked_balance": "...", "locked_balance": "..."}`
+/// Returns JSON: `{"balance": "...", "unlockedBalance": "...", "lockedBalance": "..."}`
 /// Caller must free with `salvium_string_free()`.
 #[no_mangle]
 pub unsafe extern "C" fn salvium_wallet_get_balance(
@@ -484,9 +484,9 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
 
 /// Get transfers matching a JSON query.
 ///
-/// `filters_json` schema: `{"is_incoming": bool, "is_outgoing": bool,
-///   "is_confirmed": bool, "in_pool": bool, "tx_type": i64,
-///   "min_height": i64, "max_height": i64, "tx_hash": "..."}`
+/// `filters_json` schema: `{"isIncoming": bool, "isOutgoing": bool,
+///   "isConfirmed": bool, "inPool": bool, "txType": i64,
+///   "minHeight": i64, "maxHeight": i64, "txHash": "..."}`
 /// All fields are optional.
 ///
 /// Returns a JSON array. Caller must free with `salvium_string_free()`.
@@ -507,9 +507,9 @@ pub unsafe extern "C" fn salvium_wallet_get_transfers(
 
 /// Get outputs matching a JSON query.
 ///
-/// `query_json` schema: `{"is_spent": bool, "is_frozen": bool,
-///   "asset_type": "SAL", "tx_type": i64, "account_index": i64,
-///   "subaddress_index": i64, "min_amount": "...", "max_amount": "..."}`
+/// `query_json` schema: `{"isSpent": bool, "isFrozen": bool,
+///   "assetType": "SAL", "txType": i64, "accountIndex": i64,
+///   "subaddressIndex": i64, "minAmount": "...", "maxAmount": "..."}`
 /// All fields are optional.
 ///
 /// Returns a JSON array. Caller must free with `salvium_string_free()`.

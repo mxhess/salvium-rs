@@ -179,6 +179,6 @@ For the internal (self-send) path, step 1 is skipped -- `view_balance_secret` is
 
 | File | What |
 |------|------|
-| `crates/salvium-crypto/src/ffi.rs:873-1016` | FFI entry points |
+| `crates/salvium-crypto/src/ffi.rs:960-1153` | FFI entry points |
 | `crates/salvium-crypto/src/carrot_scan.rs` | Scanner algorithm and `CarrotScanResult` |
 | `src/crypto/backend-ffi.js:628-722` | JS reference implementation of marshalling |
