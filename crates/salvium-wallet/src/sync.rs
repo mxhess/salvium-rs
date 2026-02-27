@@ -928,37 +928,51 @@ fn execute_store_batch(
             block_hashes.push((pr.height, pr.block_hash.clone()));
         }
 
-        // Height-based stake return detection.
-        if stake_lock_period > 0 {
-            let locked_stakes = db
-                .get_stakes(Some("locked"), None)
-                .map_err(|e| WalletError::Storage(e.to_string()))?;
-            for stake in &locked_stakes {
-                if stake.return_output_key.is_some() {
-                    continue;
-                }
-                if let Some(stake_height) = stake.stake_height {
-                    let return_height = stake_height as u64 + stake_lock_period + 1;
-                    if pr.height >= return_height {
-                        let ptx_hash =
-                            pr.header_protocol_tx_hash.as_deref().unwrap_or("height-based-return");
-                        if let Err(e) = db.mark_stake_returned(
-                            &stake.stake_tx_hash,
-                            ptx_hash,
-                            pr.height as i64,
-                            pr.block_timestamp as i64,
-                            &stake.amount_staked,
-                        ) {
-                            log::warn!("failed to mark stake as returned: {}", e);
-                        }
+        // Count outputs: coinbase/protocol + regular.
+        outputs_found +=
+            pr.outputs.len() + pr.regular_txs.iter().map(|t| t.found_outputs.len()).sum::<usize>();
+    }
+
+    // Height-based stake return detection (once per batch, not per block).
+    // Query locked stakes once, then check each against the batch's max height.
+    // The per-block protocol_tx_hash is needed for the return record, so we
+    // find the block at or just after the return height for each stake.
+    if stake_lock_period > 0 && max_height > 0 {
+        let locked_stakes =
+            db.get_stakes(Some("locked"), None).map_err(|e| WalletError::Storage(e.to_string()))?;
+        for stake in &locked_stakes {
+            if stake.return_output_key.is_some() {
+                continue;
+            }
+            if let Some(stake_height) = stake.stake_height {
+                let return_height = stake_height as u64 + stake_lock_period + 1;
+                if max_height >= return_height {
+                    // Find the block at or just after the return height for its
+                    // protocol_tx_hash and timestamp.
+                    let matching_block = parse_results
+                        .iter()
+                        .filter(|pr| pr.height >= return_height)
+                        .min_by_key(|pr| pr.height);
+                    let (ptx_hash, block_height, block_timestamp) = match matching_block {
+                        Some(pr) => (
+                            pr.header_protocol_tx_hash.as_deref().unwrap_or("height-based-return"),
+                            pr.height,
+                            pr.block_timestamp,
+                        ),
+                        None => ("height-based-return", max_height, 0),
+                    };
+                    if let Err(e) = db.mark_stake_returned(
+                        &stake.stake_tx_hash,
+                        ptx_hash,
+                        block_height as i64,
+                        block_timestamp as i64,
+                        &stake.amount_staked,
+                    ) {
+                        log::warn!("failed to mark stake as returned: {}", e);
                     }
                 }
             }
         }
-
-        // Count outputs: coinbase/protocol + regular.
-        outputs_found +=
-            pr.outputs.len() + pr.regular_txs.iter().map(|t| t.found_outputs.len()).sum::<usize>();
     }
 
     // Set sync height once at end of batch.

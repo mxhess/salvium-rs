@@ -504,6 +504,10 @@ impl WalletDb {
         let hex_key = hex::encode(key);
         conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\";"))?;
         conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+        // NORMAL is safe with WAL mode: committed data survives process
+        // crashes (OS crash may lose the last transaction, which sync
+        // handles via re-scan). Avoids an fsync per COMMIT (~5-20ms).
+        conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
         conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
         Self::create_tables(&conn)?;
         Ok(WalletDb { conn })
