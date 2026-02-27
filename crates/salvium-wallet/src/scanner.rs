@@ -7,6 +7,7 @@
 use crate::keys::WalletKeys;
 
 /// Keys and subaddress maps needed for output scanning.
+#[derive(Clone)]
 pub struct ScanContext {
     // CryptoNote scanning.
     pub cn_view_secret: [u8; 32],

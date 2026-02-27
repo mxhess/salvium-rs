@@ -38,6 +38,49 @@ int synced = salvium_daemon_is_synchronized(daemon);
 // 1 = synced, 0 = still syncing, -1 = error
 ```
 
+### Multi-Node Setup (Distributed Fetch)
+
+The daemon handle wraps a `NodePool` that automatically includes 3 seed nodes for the
+detected network. You can add any number of custom nodes — the pool races all of them
+but only uses the fastest 4 for block fetching.
+
+```c
+// Option A: Connect with a primary node (seeds included automatically)
+void* daemon = salvium_daemon_connect("http://mynode:19081");
+
+// Option B: Pool with seeds only (no primary)
+void* daemon = salvium_daemon_pool_create(0);  // 0=Mainnet, 1=Testnet, 2=Stagenet
+
+// Add custom nodes (one at a time)
+salvium_daemon_add_node(daemon, "http://fast-node:19081");
+
+// Add custom nodes (batch — JSON array)
+const char* urls = "[\"http://node1:19081\",\"http://node2:19081\",\"http://node3:19081\"]";
+salvium_daemon_add_nodes(daemon, (const uint8_t*)urls, strlen(urls));
+
+// Race all nodes to measure latency (call once after setup)
+salvium_daemon_force_race(daemon);
+
+// Now sync — block fetches are automatically distributed across the fastest 4 nodes
+int rc = salvium_wallet_sync(wallet, daemon, callback);
+```
+
+**How it works:**
+- `force_race()` probes every node in the pool via `get_info` and records latency
+- During sync, each batch of blocks is split across up to 4 nodes proportional to their speed
+- If a node fails its sub-range, the active node retries it automatically
+- Periodic re-racing (every 60s) adapts to changing network conditions
+- Single-node fallback when fewer than 2 nodes have latency data
+
+**FFI functions:**
+
+| Function | Description |
+|----------|-------------|
+| `salvium_daemon_add_node(handle, url)` | Add one node (returns 0/-1) |
+| `salvium_daemon_add_nodes(handle, json, len)` | Add multiple nodes from JSON array (returns 0/-1) |
+| `salvium_daemon_force_race(handle)` | Probe all nodes for latency (returns 0/-1) |
+| `salvium_daemon_active_node(handle)` | Get URL of current fastest node (free with `salvium_string_free`) |
+
 ## 3. Create / Open Wallet
 
 Three options — all return an opaque `void*` handle (null on error).

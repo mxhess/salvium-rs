@@ -2187,6 +2187,7 @@ version = "1.0.7-r012"
 dependencies = [
  "base64",
  "hex",
+ "log",
  "reqwest",
  "salvium-types",
  "serde",

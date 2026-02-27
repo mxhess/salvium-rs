@@ -18,7 +18,8 @@
 //! Resume from a specific fork:
 //!   RESUME_FROM_HF=6 cargo test -p salvium-wallet --test full_testnet -- --ignored --nocapture
 
-use salvium_rpc::daemon::{DaemonRpc, OutputRequest};
+use salvium_rpc::daemon::OutputRequest;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_tx::builder::{Destination, PreparedInput, TransactionBuilder};
 use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
@@ -216,7 +217,7 @@ fn auto_resume_hf(daemon_height: u64) -> u8 {
     resume
 }
 
-async fn get_daemon_height(daemon: &DaemonRpc) -> u64 {
+async fn get_daemon_height(daemon: &NodePool) -> u64 {
     let info = daemon.get_info().await.expect("failed to get daemon info");
     info.height
 }
@@ -249,7 +250,7 @@ struct MiningStats {
 
 /// Mine blocks until the daemon reaches `target_height`.
 async fn mine_to(
-    daemon: &DaemonRpc,
+    daemon: &NodePool,
     target_height: u64,
     address: &str,
     daemon_url: &str,
@@ -397,7 +398,7 @@ impl TestFixture {
 // ─── Test Transactor ─────────────────────────────────────────────────────────
 
 struct TestTransactor<'a> {
-    daemon: &'a DaemonRpc,
+    daemon: &'a NodePool,
     wallet: &'a Wallet,
 }
 
@@ -409,7 +410,7 @@ struct TxResult {
 }
 
 impl<'a> TestTransactor<'a> {
-    fn new(daemon: &'a DaemonRpc, wallet: &'a Wallet) -> Self {
+    fn new(daemon: &'a NodePool, wallet: &'a Wallet) -> Self {
         Self { daemon, wallet }
     }
 
@@ -1035,7 +1036,7 @@ struct SyncStats {
     outputs_found: usize,
 }
 
-async fn sync_wallet_checked(wallet: &mut Wallet, daemon: &DaemonRpc, label: &str) -> SyncStats {
+async fn sync_wallet_checked(wallet: &mut Wallet, daemon: &NodePool, label: &str) -> SyncStats {
     println!("  Syncing wallet {}...", label);
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<SyncEvent>(256);
 
@@ -1438,7 +1439,7 @@ fn diagnose_carrot_scan(tx_bytes: &[u8], wallet: &Wallet, label: &str) {
 
 /// Run full TX tests for era boundaries (HF2, HF6, HF10).
 async fn run_full_tests(
-    daemon: &DaemonRpc,
+    daemon: &NodePool,
     daemon_url: &str,
     fixture: &mut TestFixture,
     fork: &ForkSpec,
@@ -1672,7 +1673,7 @@ async fn run_full_tests(
 
 /// Run lightweight transfer test at intermediate forks.
 async fn run_lightweight_test(
-    daemon: &DaemonRpc,
+    daemon: &NodePool,
     fixture: &mut TestFixture,
     fork: &ForkSpec,
     stats: &mut RunStats,
@@ -1702,7 +1703,11 @@ async fn full_testnet_hardfork_progression() {
 
     let url = daemon_url();
     let env_resume_hf = resume_from_hf();
-    let daemon = DaemonRpc::new(&url);
+    let daemon = NodePool::new(PoolConfig {
+        network: Network::Testnet,
+        primary_url: Some(url.clone()),
+        ..Default::default()
+    });
 
     let info = daemon.get_info().await.expect("cannot connect to daemon");
     println!("  Daemon: {}", url);

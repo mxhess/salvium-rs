@@ -45,7 +45,7 @@
 //! cargo test -p salvium-ffi --test wallet_sync -- --ignored --nocapture
 //! ```
 
-use salvium_rpc::DaemonRpc;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_types::constants::Network;
 use salvium_wallet::{SyncEvent, Wallet, WalletKeys};
 use std::time::Instant;
@@ -178,7 +178,11 @@ async fn wallet_sync_and_balance_check() {
         Wallet::open(keys, db_path.to_str().unwrap(), &db_key).expect("failed to open wallet");
 
     // ── Connect to daemon ───────────────────────────────────────────────
-    let daemon = DaemonRpc::new(&daemon_url);
+    let daemon = NodePool::new(PoolConfig {
+        network,
+        primary_url: Some(daemon_url.clone()),
+        ..Default::default()
+    });
     let info = daemon.get_info().await.expect("failed to connect to daemon");
     println!("\n  Daemon height:       {}", info.height);
     println!("  Daemon synchronized: {}", info.synchronized);

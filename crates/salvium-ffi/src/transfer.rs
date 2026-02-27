@@ -129,7 +129,10 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_transfer(&wh.wallet, &dh.daemon, &params, priority).await })
+        rt.block_on(async {
+            let daemon = dh.pool.active_daemon().await;
+            do_transfer(&wh.wallet, &daemon, &params, priority).await
+        })
     })
 }
 
@@ -169,7 +172,10 @@ pub unsafe extern "C" fn salvium_wallet_stake(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority, false).await })
+        rt.block_on(async {
+            let daemon = dh.pool.active_daemon().await;
+            do_stake(&wh.wallet, &daemon, &params, priority, false).await
+        })
     })
 }
 
@@ -202,7 +208,10 @@ pub unsafe extern "C" fn salvium_wallet_stake_dry_run(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_stake(&wh.wallet, &dh.daemon, &params, priority, true).await })
+        rt.block_on(async {
+            let daemon = dh.pool.active_daemon().await;
+            do_stake(&wh.wallet, &daemon, &params, priority, true).await
+        })
     })
 }
 
@@ -244,7 +253,10 @@ pub unsafe extern "C" fn salvium_wallet_sweep(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_sweep(&wh.wallet, &dh.daemon, &params, priority).await })
+        rt.block_on(async {
+            let daemon = dh.pool.active_daemon().await;
+            do_sweep(&wh.wallet, &daemon, &params, priority).await
+        })
     })
 }
 
@@ -281,7 +293,10 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
         let priority = parse_priority(&params.priority);
         let rt = crate::runtime();
 
-        rt.block_on(async { do_transfer(&wh.wallet, &dh.daemon, &params, priority).await })
+        rt.block_on(async {
+            let daemon = dh.pool.active_daemon().await;
+            do_transfer(&wh.wallet, &daemon, &params, priority).await
+        })
     })
 }
 

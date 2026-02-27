@@ -344,7 +344,91 @@ verify_rct_signatures_wasm(
 ): Uint8Array  // Returns binary: [0x01] = valid, [0x00, idx_le_4bytes] = invalid at index, [0xFF] = error
 ```
 
-## 6. Typical Explorer Workflow
+## 6. Native FFI — Block & Transaction Fetching
+
+The explorer can also use the native FFI (`libsalvium_ffi.so`) to fetch blocks and
+transactions directly from daemon nodes, with automatic multi-node distribution.
+
+### Setup
+
+```c
+// Create a pool with seed nodes
+void* daemon = salvium_daemon_pool_create(0);  // 0=Mainnet
+
+// Add custom nodes (any number — the pool races all, uses fastest 4)
+const char* urls = "[\"http://node1:19081\",\"http://node2:19081\"]";
+salvium_daemon_add_nodes(daemon, (const uint8_t*)urls, strlen(urls));
+
+// Probe all nodes for latency
+salvium_daemon_force_race(daemon);
+```
+
+### Fetch Blocks by Height
+
+```c
+const char* heights = "[100, 101, 102, 103]";
+uint8_t buf[1024 * 1024];  // 1MB output buffer
+
+size_t n = salvium_daemon_get_blocks_by_height(
+    daemon,
+    (const uint8_t*)heights, strlen(heights),
+    buf, sizeof(buf)
+);
+// n = bytes written, 0 = error (check salvium_last_error())
+```
+
+**Output JSON:**
+```json
+[
+  {
+    "height": 100,
+    "block_blob": "hex-encoded raw block bytes",
+    "miner_tx_hash": "abc123...",
+    "tx_hashes": ["def456...", "789abc..."]
+  }
+]
+```
+
+Contiguous height ranges are automatically distributed across multiple nodes.
+
+### Fetch Transactions by Hash
+
+```c
+const char* hashes = "[\"abc123...\", \"def456...\"]";
+uint8_t buf[1024 * 1024];
+
+size_t n = salvium_daemon_get_transactions(
+    daemon,
+    (const uint8_t*)hashes, strlen(hashes),
+    buf, sizeof(buf)
+);
+```
+
+**Output JSON:**
+```json
+[
+  {
+    "tx_hash": "abc123...",
+    "as_hex": "hex-encoded raw transaction"
+  }
+]
+```
+
+### Multi-Node FFI Functions
+
+| Function | Description |
+|----------|-------------|
+| `salvium_daemon_pool_create(network)` | Create pool with seed nodes |
+| `salvium_daemon_add_node(handle, url)` | Add one node |
+| `salvium_daemon_add_nodes(handle, json, len)` | Add multiple nodes (JSON array) |
+| `salvium_daemon_force_race(handle)` | Probe all nodes for latency |
+| `salvium_daemon_get_blocks_by_height(handle, heights, len, buf, buflen)` | Fetch blocks |
+| `salvium_daemon_get_transactions(handle, hashes, len, buf, buflen)` | Fetch transactions |
+| `salvium_daemon_close(handle)` | Close and free |
+
+All buffer-based functions return bytes written (0 on error). Check `salvium_last_error()` for details.
+
+## 7. Typical Explorer Workflow
 
 ### Block Page
 
@@ -424,7 +508,7 @@ if (wasm_is_valid_address(userAddress)) {
 }
 ```
 
-## 7. Data Types — All Inputs are Raw Bytes
+## 8. Data Types — All Inputs are Raw Bytes
 
 Every function that takes transaction or block data expects **raw binary** (`Uint8Array`), not hex strings. If your daemon returns hex, decode first:
 
@@ -443,7 +527,7 @@ const txBytes: Uint8Array = hexToBytes(txHex);
 const result = parse_and_analyze_tx(txBytes);
 ```
 
-## 8. Error Handling
+## 9. Error Handling
 
 All string-returning functions follow the same pattern:
 
@@ -462,7 +546,7 @@ For functions returning `Uint8Array`: an empty array (`length === 0`) indicates 
 
 For functions returning `boolean`: they return `false` on invalid input.
 
-## 9. Memory / Performance Notes
+## 10. Memory / Performance Notes
 
 - The WASM module is ~4MB (uncompressed). Cloudflare Workers supports this.
 - All functions are synchronous — no async/await needed after `initSync()`.

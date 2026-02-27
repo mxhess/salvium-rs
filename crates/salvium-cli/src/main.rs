@@ -19,6 +19,10 @@ struct Cli {
     #[arg(long)]
     daemon: Option<String>,
 
+    /// Additional node URLs (comma-separated) for distributed sync.
+    #[arg(long, value_delimiter = ',')]
+    nodes: Vec<String>,
+
     /// Wallet file path.
     #[arg(long)]
     wallet_file: Option<String>,
@@ -824,6 +828,7 @@ enum MmsAction {
 pub struct AppContext {
     pub network: Network,
     pub daemon_url: String,
+    pub extra_nodes: Vec<String>,
     pub wallet_path: PathBuf,
 }
 
@@ -838,7 +843,7 @@ impl AppContext {
             default_wallet_dir(&cli.network).join("wallet.db")
         };
 
-        Self { network, daemon_url, wallet_path }
+        Self { network, daemon_url, extra_nodes: cli.nodes.clone(), wallet_path }
     }
 }
 

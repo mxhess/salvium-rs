@@ -9,7 +9,8 @@
 //!
 //! Run with: cargo test -p salvium-wallet --test testnet_transfer -- --ignored --nocapture
 
-use salvium_rpc::daemon::{DaemonRpc, OutputRequest};
+use salvium_rpc::daemon::OutputRequest;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_tx::builder::{Destination, PreparedInput, TransactionBuilder};
 use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
@@ -73,7 +74,11 @@ async fn test_real_testnet_transfer() {
 
     // ── Step 3: Sync against daemon ─────────────────────────────────────────
     println!("\n[3/8] Syncing wallet against {}...", DAEMON_URL);
-    let daemon = DaemonRpc::new(DAEMON_URL);
+    let daemon = NodePool::new(PoolConfig {
+        network: Network::Testnet,
+        primary_url: Some(DAEMON_URL.to_string()),
+        ..Default::default()
+    });
 
     let info = daemon.get_info().await.expect("cannot connect to daemon");
     println!("  Daemon height: {}, synchronized: {}", info.height, info.synchronized);

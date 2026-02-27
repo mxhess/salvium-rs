@@ -7,7 +7,7 @@
 //!
 //! Ported from: test/integration-subaddress.test.js
 
-use salvium_rpc::daemon::DaemonRpc;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_tx::builder::{Destination, TransactionBuilder};
 use salvium_tx::types::*;
 use salvium_types::address::{create_address_raw, parse_address, to_integrated_address};
@@ -19,9 +19,13 @@ use std::path::PathBuf;
 
 const DAEMON_URL: &str = "http://node12.whiskymine.io:29081";
 
-fn daemon() -> DaemonRpc {
+fn daemon() -> NodePool {
     let url = std::env::var("TESTNET_DAEMON_URL").unwrap_or_else(|_| DAEMON_URL.to_string());
-    DaemonRpc::new(&url)
+    NodePool::new(PoolConfig {
+        network: Network::Testnet,
+        primary_url: Some(url),
+        ..Default::default()
+    })
 }
 
 fn testnet_wallet_dir() -> PathBuf {

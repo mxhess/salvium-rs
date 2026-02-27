@@ -402,7 +402,7 @@ pub unsafe extern "C" fn salvium_wallet_sync(
                     }
                 });
 
-                let result = handle.wallet.sync(&dh.daemon, Some(&tx), &handle.sync_cancel).await;
+                let result = handle.wallet.sync(&dh.pool, Some(&tx), &handle.sync_cancel).await;
                 drop(tx); // Close channel so forwarder exits.
                 let _ = forwarder.await;
 
@@ -410,7 +410,7 @@ pub unsafe extern "C" fn salvium_wallet_sync(
             } else {
                 handle
                     .wallet
-                    .sync(&dh.daemon, None, &handle.sync_cancel)
+                    .sync(&dh.pool, None, &handle.sync_cancel)
                     .await
                     .map(|_| ())
                     .map_err(|e| e.to_string())

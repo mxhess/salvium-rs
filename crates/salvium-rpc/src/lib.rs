@@ -20,12 +20,14 @@
 pub mod client;
 pub mod daemon;
 pub mod error;
+pub mod pool;
 pub mod portable_storage;
 pub mod wallet_rpc;
 
 pub use client::RpcClient;
 pub use daemon::DaemonRpc;
 pub use error::RpcError;
+pub use pool::{DistributedBatchResult, NodePool, PoolConfig};
 pub use wallet_rpc::WalletRpc;
 
 /// Seed nodes per network.

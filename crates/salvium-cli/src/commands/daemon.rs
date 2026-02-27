@@ -121,9 +121,16 @@ pub async fn save_bc(ctx: &AppContext) -> Result {
 
 pub async fn sync_wallet(ctx: &AppContext) -> Result {
     let mut wallet = open_wallet(ctx)?;
-    let daemon = DaemonRpc::new(&ctx.daemon_url);
+    let pool = salvium_rpc::NodePool::new(salvium_rpc::PoolConfig {
+        network: wallet.network(),
+        primary_url: Some(ctx.daemon_url.clone()),
+        ..Default::default()
+    });
+    for url in &ctx.extra_nodes {
+        pool.add_node(url.trim()).await;
+    }
 
-    let info = daemon.get_info().await?;
+    let info = pool.get_info().await?;
     println!("Connected to daemon at {} (height: {})", ctx.daemon_url, info.height);
 
     let wallet_height = wallet.sync_height().unwrap_or(0);
@@ -182,7 +189,7 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
     });
 
     let no_cancel = std::sync::atomic::AtomicBool::new(false);
-    let _final_height = wallet.sync(&daemon, Some(&tx), &no_cancel).await?;
+    let _final_height = wallet.sync(&pool, Some(&tx), &no_cancel).await?;
     drop(tx);
     let _ = progress_task.await;
 

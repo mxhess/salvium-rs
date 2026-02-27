@@ -8,7 +8,8 @@
 //!
 //! Ported from: test/burn-integration.test.js + test/burn-transaction.test.js
 
-use salvium_rpc::daemon::{DaemonRpc, OutputRequest};
+use salvium_rpc::daemon::OutputRequest;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_tx::builder::{Destination, PreparedInput, TransactionBuilder};
 use salvium_tx::decoy::{DecoySelector, DEFAULT_RING_SIZE};
 use salvium_tx::fee::{self, FeePriority};
@@ -22,9 +23,13 @@ use std::path::PathBuf;
 const DAEMON_URL: &str = "http://node12.whiskymine.io:29081";
 const BURN_AMOUNT: u64 = 10_000_000; // 0.1 SAL
 
-fn daemon() -> DaemonRpc {
+fn daemon() -> NodePool {
     let url = std::env::var("TESTNET_DAEMON_URL").unwrap_or_else(|_| DAEMON_URL.to_string());
-    DaemonRpc::new(&url)
+    NodePool::new(PoolConfig {
+        network: salvium_types::constants::Network::Testnet,
+        primary_url: Some(url),
+        ..Default::default()
+    })
 }
 
 fn testnet_wallet_dir() -> PathBuf {

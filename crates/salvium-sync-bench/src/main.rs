@@ -9,7 +9,7 @@
 
 use clap::Parser;
 use salvium_crypto::storage::{OutputQuery, TxQuery};
-use salvium_rpc::DaemonRpc;
+use salvium_rpc::{NodePool, PoolConfig};
 use salvium_types::constants::{self, Network};
 use salvium_wallet::{SyncEvent, Wallet, WalletKeys, WalletType};
 use std::time::Instant;
@@ -40,9 +40,13 @@ struct Args {
     #[arg(long)]
     spend_pub: Option<String>,
 
-    /// Daemon RPC URL
+    /// Daemon RPC URL (primary node)
     #[arg(long)]
     daemon: Option<String>,
+
+    /// Additional node URLs (comma-separated) for distributed fetch
+    #[arg(long, value_delimiter = ',')]
+    nodes: Vec<String>,
 
     /// Network: mainnet, testnet, stagenet
     #[arg(long, default_value = "mainnet")]
@@ -130,10 +134,17 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ── 1. Determine wallet type and source label ───────────────────────
     let source_label;
 
-    // ── 2. Connect to daemon ────────────────────────────────────────────
-    let daemon = DaemonRpc::new(daemon_url);
+    // ── 2. Connect to daemon (via NodePool) ──────────────────────────────
+    let pool = NodePool::new(PoolConfig {
+        network,
+        primary_url: Some(daemon_url.to_string()),
+        ..Default::default()
+    });
+    for url in &args.nodes {
+        pool.add_node(url.trim()).await;
+    }
     let info =
-        daemon.get_info().await.map_err(|e| format!("cannot reach daemon at {daemon_url}: {e}"))?;
+        pool.get_info().await.map_err(|e| format!("cannot reach daemon at {daemon_url}: {e}"))?;
 
     let daemon_height = info.height;
     let synchronized = info.synchronized;
@@ -211,8 +222,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // ── 4. Sync with progress ───────────────────────────────────────────
-    let blocks_to_sync = daemon_height.saturating_sub(args.restore_height);
-    println!("Syncing {} blocks...", blocks_to_sync);
+    let sync_start_height = wallet.sync_height().unwrap_or(0);
+    let blocks_to_sync = daemon_height.saturating_sub(sync_start_height);
+    println!("Syncing {} blocks (from height {})...", blocks_to_sync, sync_start_height);
 
     let (tx, mut rx) = mpsc::channel::<SyncEvent>(64);
     let start = Instant::now();
@@ -246,7 +258,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                         } else {
                             100.0
                         };
-                        let bps = if elapsed > 0.0 { current_height as f64 / elapsed } else { 0.0 };
+                        let blocks_synced = current_height.saturating_sub(sync_start_height);
+                        let bps = if elapsed > 0.0 { blocks_synced as f64 / elapsed } else { 0.0 };
                         let err_suffix = if parse_errors > 0 {
                             format!("  |  {} parse errors", parse_errors)
                         } else {
@@ -275,7 +288,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SyncEvent::Complete { height } => {
                     let elapsed = start.elapsed().as_secs_f64();
-                    let bps = if elapsed > 0.0 { height as f64 / elapsed } else { 0.0 };
+                    let blocks_synced = height.saturating_sub(sync_start_height);
+                    let bps = if elapsed > 0.0 { blocks_synced as f64 / elapsed } else { 0.0 };
                     println!(
                         "  Height {:>6}/{} (100.0%)  |  sync complete  |  {:.1}s  |  {:.0} blocks/s",
                         height, height, elapsed, bps
@@ -292,7 +306,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let no_cancel = std::sync::atomic::AtomicBool::new(false);
-    let sync_result = wallet.sync(&daemon, Some(&tx), &no_cancel).await;
+    let sync_result = wallet.sync(&pool, Some(&tx), &no_cancel).await;
     drop(tx); // close channel so progress task finishes
     let (final_parse_errors, final_empty_blobs) = progress_handle.await.unwrap_or((0, 0));
 
@@ -300,7 +314,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = start.elapsed();
 
     // ── 5. Gather and print results ─────────────────────────────────────
-    let actual_blocks_synced = sync_height.saturating_sub(args.restore_height);
+    let actual_blocks_synced = sync_height.saturating_sub(sync_start_height);
     let blocks_per_sec = if elapsed.as_secs_f64() > 0.0 {
         actual_blocks_synced as f64 / elapsed.as_secs_f64()
     } else {
