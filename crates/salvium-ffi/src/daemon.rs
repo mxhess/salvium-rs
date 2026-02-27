@@ -75,10 +75,7 @@ pub unsafe extern "C" fn salvium_daemon_pool_create(network: i32) -> *mut c_void
                 ))
             }
         };
-        let pool = NodePool::new(PoolConfig {
-            network: net,
-            ..Default::default()
-        });
+        let pool = NodePool::new(PoolConfig { network: net, ..Default::default() });
         Ok(DaemonHandle::new(pool))
     })
 }
@@ -87,10 +84,7 @@ pub unsafe extern "C" fn salvium_daemon_pool_create(network: i32) -> *mut c_void
 ///
 /// Returns 0 on success, -1 on error.
 #[no_mangle]
-pub unsafe extern "C" fn salvium_daemon_add_node(
-    handle: *mut c_void,
-    url: *const c_char,
-) -> i32 {
+pub unsafe extern "C" fn salvium_daemon_add_node(handle: *mut c_void, url: *const c_char) -> i32 {
     ffi_try(|| {
         let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
         let url_str = unsafe { c_str_to_str(url) }?;
@@ -280,82 +274,80 @@ pub unsafe extern "C" fn salvium_daemon_get_blocks_by_height(
     out_buf: *mut u8,
     out_len: usize,
 ) -> usize {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize, String> {
-        let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
-        let json_slice =
-            unsafe { std::slice::from_raw_parts(heights_json, heights_json_len) };
-        let json_str = std::str::from_utf8(json_slice).map_err(|e| e.to_string())?;
-        let heights: Vec<u64> =
-            serde_json::from_str(json_str).map_err(|e| format!("invalid heights JSON: {e}"))?;
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize, String> {
+            let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
+            let json_slice = unsafe { std::slice::from_raw_parts(heights_json, heights_json_len) };
+            let json_str = std::str::from_utf8(json_slice).map_err(|e| e.to_string())?;
+            let heights: Vec<u64> =
+                serde_json::from_str(json_str).map_err(|e| format!("invalid heights JSON: {e}"))?;
 
-        if heights.is_empty() {
-            let out = b"[]";
-            if out.len() > out_len {
-                return Err("output buffer too small".into());
+            if heights.is_empty() {
+                let out = b"[]";
+                if out.len() > out_len {
+                    return Err("output buffer too small".into());
+                }
+                unsafe { std::ptr::copy_nonoverlapping(out.as_ptr(), out_buf, out.len()) };
+                return Ok(out.len());
             }
-            unsafe { std::ptr::copy_nonoverlapping(out.as_ptr(), out_buf, out.len()) };
-            return Ok(out.len());
-        }
 
-        let rt = crate::runtime();
+            let rt = crate::runtime();
 
-        // Determine if heights form a contiguous range for distributed fetch.
-        let min_h = *heights.iter().min().unwrap();
-        let max_h = *heights.iter().max().unwrap();
-        let is_contiguous = (max_h - min_h + 1) as usize == heights.len();
+            // Determine if heights form a contiguous range for distributed fetch.
+            let min_h = *heights.iter().min().unwrap();
+            let max_h = *heights.iter().max().unwrap();
+            let is_contiguous = (max_h - min_h + 1) as usize == heights.len();
 
-        let (headers, bin_blocks) = if is_contiguous && heights.len() > 1 {
-            let result = rt
-                .block_on(dh.pool.fetch_batch_distributed(min_h, max_h))
-                .map_err(|e| e.to_string())?;
-            (result.headers, result.bin_blocks)
-        } else {
-            let (h, b) = rt.block_on(async {
-                let h = dh.pool.get_block_headers_range(min_h, max_h).await;
-                let b = dh.pool.get_blocks_by_height_bin(&heights).await;
-                (h, b)
-            });
-            (h.map_err(|e| e.to_string())?, b.map_err(|e| e.to_string())?)
-        };
-
-        // Build JSON output array.
-        let mut entries = Vec::with_capacity(heights.len());
-        for (i, height) in heights.iter().enumerate() {
-            let header = headers.iter().find(|h| h.height == *height);
-            let block_blob_hex = if i < bin_blocks.len() {
-                hex::encode(&bin_blocks[i].block)
+            let (headers, bin_blocks) = if is_contiguous && heights.len() > 1 {
+                let result = rt
+                    .block_on(dh.pool.fetch_batch_distributed(min_h, max_h))
+                    .map_err(|e| e.to_string())?;
+                (result.headers, result.bin_blocks)
             } else {
-                String::new()
+                let (h, b) = rt.block_on(async {
+                    let h = dh.pool.get_block_headers_range(min_h, max_h).await;
+                    let b = dh.pool.get_blocks_by_height_bin(&heights).await;
+                    (h, b)
+                });
+                (h.map_err(|e| e.to_string())?, b.map_err(|e| e.to_string())?)
             };
-            let miner_tx_hash = header
-                .and_then(|h| h.miner_tx_hash.as_deref())
-                .unwrap_or("");
-            let tx_hashes: Vec<&str> = header
-                .and_then(|h| h.extra.get("tx_hashes"))
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                .unwrap_or_default();
 
-            entries.push(serde_json::json!({
-                "height": height,
-                "block_blob": block_blob_hex,
-                "miner_tx_hash": miner_tx_hash,
-                "tx_hashes": tx_hashes,
-            }));
-        }
+            // Build JSON output array.
+            let mut entries = Vec::with_capacity(heights.len());
+            for (i, height) in heights.iter().enumerate() {
+                let header = headers.iter().find(|h| h.height == *height);
+                let block_blob_hex = if i < bin_blocks.len() {
+                    hex::encode(&bin_blocks[i].block)
+                } else {
+                    String::new()
+                };
+                let miner_tx_hash = header.and_then(|h| h.miner_tx_hash.as_deref()).unwrap_or("");
+                let tx_hashes: Vec<&str> = header
+                    .and_then(|h| h.extra.get("tx_hashes"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
 
-        let json_out = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
-        let bytes = json_out.as_bytes();
-        if bytes.len() > out_len {
-            return Err(format!(
-                "output buffer too small: need {} bytes, have {}",
-                bytes.len(),
-                out_len
-            ));
-        }
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len()) };
-        Ok(bytes.len())
-    }));
+                entries.push(serde_json::json!({
+                    "height": height,
+                    "block_blob": block_blob_hex,
+                    "miner_tx_hash": miner_tx_hash,
+                    "tx_hashes": tx_hashes,
+                }));
+            }
+
+            let json_out = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+            let bytes = json_out.as_bytes();
+            if bytes.len() > out_len {
+                return Err(format!(
+                    "output buffer too small: need {} bytes, have {}",
+                    bytes.len(),
+                    out_len
+                ));
+            }
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len()) };
+            Ok(bytes.len())
+        }));
 
     match result {
         Ok(Ok(n)) => n,
@@ -386,51 +378,51 @@ pub unsafe extern "C" fn salvium_daemon_get_transactions(
     out_buf: *mut u8,
     out_len: usize,
 ) -> usize {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize, String> {
-        let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
-        let json_slice =
-            unsafe { std::slice::from_raw_parts(hashes_json, hashes_json_len) };
-        let json_str = std::str::from_utf8(json_slice).map_err(|e| e.to_string())?;
-        let hashes: Vec<String> =
-            serde_json::from_str(json_str).map_err(|e| format!("invalid hashes JSON: {e}"))?;
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<usize, String> {
+            let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
+            let json_slice = unsafe { std::slice::from_raw_parts(hashes_json, hashes_json_len) };
+            let json_str = std::str::from_utf8(json_slice).map_err(|e| e.to_string())?;
+            let hashes: Vec<String> =
+                serde_json::from_str(json_str).map_err(|e| format!("invalid hashes JSON: {e}"))?;
 
-        if hashes.is_empty() {
-            let out = b"[]";
-            if out.len() > out_len {
-                return Err("output buffer too small".into());
+            if hashes.is_empty() {
+                let out = b"[]";
+                if out.len() > out_len {
+                    return Err("output buffer too small".into());
+                }
+                unsafe { std::ptr::copy_nonoverlapping(out.as_ptr(), out_buf, out.len()) };
+                return Ok(out.len());
             }
-            unsafe { std::ptr::copy_nonoverlapping(out.as_ptr(), out_buf, out.len()) };
-            return Ok(out.len());
-        }
 
-        let rt = crate::runtime();
-        let hash_refs: Vec<&str> = hashes.iter().map(|s| s.as_str()).collect();
-        let txs = rt
-            .block_on(dh.pool.get_transactions(&hash_refs, false))
-            .map_err(|e| e.to_string())?;
+            let rt = crate::runtime();
+            let hash_refs: Vec<&str> = hashes.iter().map(|s| s.as_str()).collect();
+            let txs = rt
+                .block_on(dh.pool.get_transactions(&hash_refs, false))
+                .map_err(|e| e.to_string())?;
 
-        let entries: Vec<serde_json::Value> = txs
-            .iter()
-            .map(|tx| {
-                serde_json::json!({
-                    "tx_hash": tx.tx_hash,
-                    "as_hex": tx.as_hex,
+            let entries: Vec<serde_json::Value> = txs
+                .iter()
+                .map(|tx| {
+                    serde_json::json!({
+                        "tx_hash": tx.tx_hash,
+                        "as_hex": tx.as_hex,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        let json_out = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
-        let bytes = json_out.as_bytes();
-        if bytes.len() > out_len {
-            return Err(format!(
-                "output buffer too small: need {} bytes, have {}",
-                bytes.len(),
-                out_len
-            ));
-        }
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len()) };
-        Ok(bytes.len())
-    }));
+            let json_out = serde_json::to_string(&entries).map_err(|e| e.to_string())?;
+            let bytes = json_out.as_bytes();
+            if bytes.len() > out_len {
+                return Err(format!(
+                    "output buffer too small: need {} bytes, have {}",
+                    bytes.len(),
+                    out_len
+                ));
+            }
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len()) };
+            Ok(bytes.len())
+        }));
 
     match result {
         Ok(Ok(n)) => n,

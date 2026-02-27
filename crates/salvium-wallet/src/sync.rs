@@ -309,22 +309,17 @@ impl SyncEngine {
                 let next_end = batch_end + next_size as u64;
                 let pool_clone = pool.clone();
                 prefetch = Some(tokio::spawn(async move {
-                    let result = pool_clone
-                        .fetch_batch_distributed(next_start, next_end)
-                        .await;
-                    PrefetchResult {
-                        batch_start: next_start,
-                        batch_end: next_end,
-                        result,
-                    }
+                    let result = pool_clone.fetch_batch_distributed(next_start, next_end).await;
+                    PrefetchResult { batch_start: next_start, batch_end: next_end, result }
                 }));
             }
 
             // ── 3. Parallel parse + sequential store ────────────────────
             // Estimate batch bytes for throughput tracking.
-            let batch_bytes: usize = bin_blocks.iter().map(|e| {
-                e.block.len() + e.txs.iter().map(|t| t.len()).sum::<usize>()
-            }).sum();
+            let batch_bytes: usize = bin_blocks
+                .iter()
+                .map(|e| e.block.len() + e.txs.iter().map(|t| t.len()).sum::<usize>())
+                .sum();
 
             // Phase 1: Parse + scan all blocks in parallel via spawn_blocking.
             let scan_ctx_clone = scan_ctx.clone();
@@ -492,10 +487,7 @@ impl SyncEngine {
 
                 // Count outputs: coinbase/protocol + regular.
                 total_outputs_found += pr.outputs.len()
-                    + pr.regular_txs
-                        .iter()
-                        .map(|t| t.found_outputs.len())
-                        .sum::<usize>();
+                    + pr.regular_txs.iter().map(|t| t.found_outputs.len()).sum::<usize>();
 
                 // Update sync height per block for crash safety.
                 if pr.height > 0 {
@@ -670,8 +662,6 @@ fn parse_and_scan_block(
                             block_height: height,
                             tx_type: scan_data.tx_type,
                             unlock_time: scan_data.unlock_time,
-
-
                         },
                     ));
                 }
@@ -727,8 +717,7 @@ fn parse_and_scan_block(
 
         // CARROT/CN scanning for protocol TX.
         if let Some(ref ptx_hash) = protocol_tx_hash_opt {
-            if let Some(scan_data) =
-                parse_tx_for_scanning(protocol_tx_json, ptx_hash, height, true)
+            if let Some(scan_data) = parse_tx_for_scanning(protocol_tx_json, ptx_hash, height, true)
             {
                 let found = scanner::scan_transaction(&scan_ctx, &scan_data);
                 for fo in &found {
@@ -742,8 +731,6 @@ fn parse_and_scan_block(
                             block_height: height,
                             tx_type: scan_data.tx_type,
                             unlock_time: scan_data.unlock_time,
-
-
                         },
                     ));
                 }
@@ -878,7 +865,13 @@ fn store_found_output_row(
         unlock_time: info.unlock_time,
     };
 
-    store_found_outputs(db, scan_ctx, std::slice::from_ref(found), &scan_data, info.block_timestamp)?;
+    store_found_outputs(
+        db,
+        scan_ctx,
+        std::slice::from_ref(found),
+        &scan_data,
+        info.block_timestamp,
+    )?;
     Ok(())
 }
 

@@ -154,8 +154,7 @@ impl NodePool {
         let mut inner = self.inner.write().await;
         let already = inner.nodes.iter().any(|n| n.url == url);
         if !already {
-            let daemon =
-                make_daemon(url, &inner.config.username, &inner.config.password);
+            let daemon = make_daemon(url, &inner.config.username, &inner.config.password);
             inner.nodes.push(NodeState {
                 daemon,
                 url: url.to_string(),
@@ -218,12 +217,7 @@ impl NodePool {
         // Collect (index, daemon_clone) for all nodes.
         let node_daemons: Vec<(usize, DaemonRpc)> = {
             let inner = self.inner.read().await;
-            inner
-                .nodes
-                .iter()
-                .enumerate()
-                .map(|(i, n)| (i, n.daemon.clone()))
-                .collect()
+            inner.nodes.iter().enumerate().map(|(i, n)| (i, n.daemon.clone())).collect()
         };
 
         // Results: (node_index, latency | None).
@@ -355,16 +349,19 @@ impl NodePool {
     ) -> Result<DistributedBatchResult, RpcError> {
         let total = (end_height - start_height + 1) as usize;
         if total == 0 {
-            return Ok(DistributedBatchResult {
-                headers: Vec::new(),
-                bin_blocks: Vec::new(),
-            });
+            return Ok(DistributedBatchResult { headers: Vec::new(), bin_blocks: Vec::new() });
         }
 
         // Gather assignments under a read lock.
         let assignments = {
             let inner = self.inner.read().await;
-            compute_assignments(&inner.nodes, inner.active_index, inner.config.max_fetch_nodes, start_height, total)
+            compute_assignments(
+                &inner.nodes,
+                inner.active_index,
+                inner.config.max_fetch_nodes,
+                start_height,
+                total,
+            )
         };
 
         if assignments.len() <= 1 {
@@ -379,16 +376,15 @@ impl NodePool {
                 (Ok(_), Ok(_)) => self.report_success().await,
                 _ => self.report_failure().await,
             }
-            return Ok(DistributedBatchResult {
-                headers: h?,
-                bin_blocks: b?,
-            });
+            return Ok(DistributedBatchResult { headers: h?, bin_blocks: b? });
         }
 
         // Multi-node path: spawn one task per sub-range.
         log::info!(
             "NodePool: distributed fetch [{}-{}] across {} nodes",
-            start_height, end_height, assignments.len()
+            start_height,
+            end_height,
+            assignments.len()
         );
 
         let mut set = tokio::task::JoinSet::new();
@@ -413,18 +409,16 @@ impl NodePool {
 
         while let Some(join_result) = set.join_next().await {
             match join_result {
-                Ok((node_idx, ss, se, h_res, b_res)) => {
-                    match (h_res, b_res) {
-                        (Ok(h), Ok(b)) => {
-                            self.report_success_for(node_idx).await;
-                            results.push((ss, h, b));
-                        }
-                        _ => {
-                            self.report_failure_for(node_idx).await;
-                            failed_ranges.push((ss, se));
-                        }
+                Ok((node_idx, ss, se, h_res, b_res)) => match (h_res, b_res) {
+                    (Ok(h), Ok(b)) => {
+                        self.report_success_for(node_idx).await;
+                        results.push((ss, h, b));
                     }
-                }
+                    _ => {
+                        self.report_failure_for(node_idx).await;
+                        failed_ranges.push((ss, se));
+                    }
+                },
                 Err(_) => {
                     // JoinError (panic) — we don't know which node, just collect
                     // the sub-range from assignments if we can figure it out.
@@ -597,10 +591,7 @@ impl NodePool {
         result
     }
 
-    pub async fn get_block_header_by_height(
-        &self,
-        height: u64,
-    ) -> Result<BlockHeader, RpcError> {
+    pub async fn get_block_header_by_height(&self, height: u64) -> Result<BlockHeader, RpcError> {
         let daemon = self.active().await;
         let result = daemon.get_block_header_by_height(height).await;
         match &result {
@@ -676,10 +667,7 @@ impl NodePool {
         result
     }
 
-    pub async fn get_fee_estimate(
-        &self,
-        grace_blocks: u64,
-    ) -> Result<FeeEstimate, RpcError> {
+    pub async fn get_fee_estimate(&self, grace_blocks: u64) -> Result<FeeEstimate, RpcError> {
         let daemon = self.active().await;
         let result = daemon.get_fee_estimate(grace_blocks).await;
         match &result {
@@ -719,9 +707,7 @@ impl NodePool {
         result
     }
 
-    pub async fn network_type(
-        &self,
-    ) -> Result<salvium_types::constants::Network, RpcError> {
+    pub async fn network_type(&self) -> Result<salvium_types::constants::Network, RpcError> {
         let daemon = self.active().await;
         let result = daemon.network_type().await;
         match &result {
@@ -777,10 +763,8 @@ fn compute_assignments(
     }
 
     // Speed weights: speed_i = 1.0 / latency_i (in seconds).
-    let speeds: Vec<f64> = candidates
-        .iter()
-        .map(|(_, lat)| 1.0 / lat.as_secs_f64().max(0.001))
-        .collect();
+    let speeds: Vec<f64> =
+        candidates.iter().map(|(_, lat)| 1.0 / lat.as_secs_f64().max(0.001)).collect();
     let total_speed: f64 = speeds.iter().sum();
 
     // Blocks per node (proportional), ensuring at least 1 each.
@@ -793,12 +777,8 @@ fn compute_assignments(
     let sum: usize = block_counts.iter().sum();
     if sum != total_blocks {
         // Find the node with the largest allocation.
-        let max_idx = block_counts
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, c)| **c)
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+        let max_idx =
+            block_counts.iter().enumerate().max_by_key(|(_, c)| **c).map(|(i, _)| i).unwrap_or(0);
         if sum > total_blocks {
             let excess = sum - total_blocks;
             block_counts[max_idx] = block_counts[max_idx].saturating_sub(excess).max(1);
@@ -861,10 +841,7 @@ mod tests {
 
     #[tokio::test]
     async fn pool_creates_seed_nodes() {
-        let pool = NodePool::new(PoolConfig {
-            network: Network::Testnet,
-            ..Default::default()
-        });
+        let pool = NodePool::new(PoolConfig { network: Network::Testnet, ..Default::default() });
         let inner = pool.inner.read().await;
         assert_eq!(inner.nodes.len(), crate::seed_nodes::TESTNET.len());
         assert!(inner.nodes.iter().all(|n| n.is_seed));
@@ -887,10 +864,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_node_dedup() {
-        let pool = NodePool::new(PoolConfig {
-            network: Network::Testnet,
-            ..Default::default()
-        });
+        let pool = NodePool::new(PoolConfig { network: Network::Testnet, ..Default::default() });
         let initial_count = pool.inner.read().await.nodes.len();
 
         pool.add_node("http://new-node:29081").await;
@@ -923,23 +897,16 @@ mod tests {
     #[test]
     fn compute_assignments_single_node_fallback() {
         // Only 1 node with latency data → single-node path.
-        let nodes = vec![
-            fake_node(Some(100), true),
-            fake_node(None, true),
-            fake_node(None, true),
-        ];
+        let nodes = vec![fake_node(Some(100), true), fake_node(None, true), fake_node(None, true)];
         let a = compute_assignments(&nodes, 0, 4, 1, 100);
         assert_eq!(a.len(), 1);
-        assert_eq!(a[0].1, 1);   // sub_start
+        assert_eq!(a[0].1, 1); // sub_start
         assert_eq!(a[0].2, 100); // sub_end
     }
 
     #[test]
     fn compute_assignments_no_latency_data() {
-        let nodes = vec![
-            fake_node(None, true),
-            fake_node(None, true),
-        ];
+        let nodes = vec![fake_node(None, true), fake_node(None, true)];
         let a = compute_assignments(&nodes, 0, 4, 1, 50);
         assert_eq!(a.len(), 1);
     }
