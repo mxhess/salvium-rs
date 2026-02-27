@@ -1880,7 +1880,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "salvium-cli"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "clap",
  "dirs",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-consensus"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "hex",
  "salvium-types",
@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-crypto"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-ffi"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "hex",
  "log",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-miner"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "clap",
  "hex",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-miner-gr"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "cc",
  "clap",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-miner-v2"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "cc",
  "clap",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-multisig"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "curve25519-dalek",
  "hex",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-rpc"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "base64",
  "hex",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-sync-bench"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "clap",
  "env_logger",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-tx"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "curve25519-dalek",
  "getrandom 0.2.17",
@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-types"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "hex",
  "serde",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "salvium-wallet"
-version = "1.0.7-r012"
+version = "1.0.7-r013"
 dependencies = [
  "aes-gcm",
  "chacha20",

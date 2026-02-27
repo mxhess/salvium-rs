@@ -4,6 +4,8 @@
 //! blockchain sync, balance tracking, and UTXO selection into a single
 //! high-level API.
 
+use std::sync::Arc;
+
 use crate::account::SubaddressMaps;
 use crate::error::WalletError;
 use crate::keys::{WalletKeys, WalletType};
@@ -38,7 +40,7 @@ pub struct Wallet {
     scan_context: ScanContext,
 
     #[cfg(not(target_arch = "wasm32"))]
-    db: std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: Arc<std::sync::Mutex<salvium_crypto::storage::WalletDb>>,
 
     /// Retained copy of the database encryption key (needed for blob export).
     #[cfg(not(target_arch = "wasm32"))]
@@ -92,7 +94,7 @@ impl Wallet {
             keys,
             subaddress_maps: maps,
             scan_context,
-            db: std::sync::Mutex::new(db),
+            db: Arc::new(std::sync::Mutex::new(db)),
             db_key: db_key.to_vec(),
             multisig: None,
         })
@@ -210,8 +212,15 @@ impl Wallet {
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
-        SyncEngine::sync(pool, &self.db, &mut self.scan_context, lock_period, event_tx, cancel)
-            .await
+        SyncEngine::sync(
+            pool,
+            self.db.clone(),
+            &mut self.scan_context,
+            lock_period,
+            event_tx,
+            cancel,
+        )
+        .await
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────

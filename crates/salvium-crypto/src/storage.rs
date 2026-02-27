@@ -2034,6 +2034,23 @@ impl WalletDb {
         self.conn.execute("DELETE FROM mms_signers", [])?;
         Ok(())
     }
+
+    /// Begin an explicit SQLite transaction (IMMEDIATE to avoid BUSY on first write).
+    /// Call `commit_batch` when done. If neither commit nor rollback is called,
+    /// the transaction auto-rolls-back on drop (SQLite default).
+    pub fn begin_batch(&self) -> Result<(), rusqlite::Error> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")
+    }
+
+    /// Commit the current batch transaction.
+    pub fn commit_batch(&self) -> Result<(), rusqlite::Error> {
+        self.conn.execute_batch("COMMIT")
+    }
+
+    /// Rollback the current batch transaction.
+    pub fn rollback_batch(&self) -> Result<(), rusqlite::Error> {
+        self.conn.execute_batch("ROLLBACK")
+    }
 }
 
 // ─── Unlock Logic ───────────────────────────────────────────────────────────

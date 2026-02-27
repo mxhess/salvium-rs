@@ -7,6 +7,8 @@
 //! endpoint to fetch hundreds of blocks (with all their transactions) in a
 //! single HTTP request. The batch size tunes itself based on throughput.
 
+use std::sync::Arc;
+
 use crate::error::WalletError;
 use crate::scanner::{self, FoundOutput, ScanContext, ScanTxData, TxOutput};
 use salvium_rpc::NodePool;
@@ -104,6 +106,48 @@ struct PrefetchResult {
     result: Result<salvium_rpc::DistributedBatchResult, salvium_rpc::RpcError>,
 }
 
+/// Message sent from the sync loop to the store worker thread.
+#[cfg(not(target_arch = "wasm32"))]
+struct StoreBatchMsg {
+    parse_results: Vec<ParsedBlockResult>,
+    scan_ctx: ScanContext,
+    stake_lock_period: u64,
+    batch_start: u64,
+    batch_end: u64,
+    fetch_ms: u64,
+    parse_ms: u64,
+    pool: NodePool,
+}
+
+/// Result sent back from the store worker to the sync loop.
+#[cfg(not(target_arch = "wasm32"))]
+struct StoreResultMsg {
+    /// New cn_subaddress_map entries discovered during store (STAKE/CONVERT/AUDIT change outputs).
+    new_cn_subaddr_entries: Vec<([u8; 32], u32, u32)>,
+    /// Block hashes from the committed batch (for reorg checking without DB lock).
+    block_hashes: Vec<(u64, String)>,
+    /// The highest block height committed in this batch.
+    _committed_height: u64,
+    /// Number of outputs found in this batch.
+    outputs_found: usize,
+    /// Number of parse errors in this batch.
+    parse_errors: usize,
+    /// Number of empty blobs in this batch.
+    empty_blobs: usize,
+    /// Error that occurred during store, if any.
+    error: Option<WalletError>,
+}
+
+/// Result of executing the store logic for a batch (used internally by store worker).
+#[cfg(not(target_arch = "wasm32"))]
+struct StoreBatchResult {
+    max_height: u64,
+    outputs_found: usize,
+    parse_errors: usize,
+    empty_blobs: usize,
+    block_hashes: Vec<(u64, String)>,
+}
+
 impl SyncEngine {
     /// Sync the wallet from the current sync height to the daemon's tip.
     ///
@@ -118,7 +162,7 @@ impl SyncEngine {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn sync(
         pool: &NodePool,
-        db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+        db: Arc<std::sync::Mutex<salvium_crypto::storage::WalletDb>>,
         scan_ctx: &mut ScanContext,
         stake_lock_period: u64,
         event_tx: Option<&tokio::sync::mpsc::Sender<SyncEvent>>,
@@ -167,339 +211,324 @@ impl SyncEngine {
         let mut controller = BatchController::new();
         let mut prefetch: Option<tokio::task::JoinHandle<PrefetchResult>> = None;
 
+        // Block hash cache: populated from StoreResultMsg so we can check
+        // for reorgs without locking the DB (which the store worker may hold).
+        let mut block_hash_cache: std::collections::HashMap<u64, String> =
+            std::collections::HashMap::new();
+
+        // ── Store worker pipeline ──────────────────────────────────────
+        // Bounded channel (capacity 2) provides backpressure.
+        let (store_tx, store_rx) = std::sync::mpsc::sync_channel::<StoreBatchMsg>(2);
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel::<StoreResultMsg>(2);
+
+        let store_db = db.clone();
+        let store_handle = std::thread::spawn(move || {
+            store_worker_loop(store_db, store_rx, result_tx);
+        });
+
         // Populate latency data across all nodes before the first fetch so
         // fetch_batch_distributed can distribute work effectively.
         pool.force_race().await;
 
-        while current < top_block {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                if let Some(tx) = event_tx {
-                    let _ = tx.send(SyncEvent::Cancelled { height: current }).await;
-                }
-                return Err(WalletError::Cancelled);
-            }
-
-            let remaining = top_block - current;
-            let batch_size = controller.next_batch_size(remaining);
-            let batch_start = current + 1;
-            let batch_end = current + batch_size as u64;
-
-            let batch_timer = std::time::Instant::now();
-            let heights: Vec<u64> = (batch_start..=batch_end).collect();
-
-            // ── 1. Get batch data (from prefetch or fresh fetch) ────────
-            let batch_result = if let Some(handle) = prefetch.take() {
-                match handle.await {
-                    Ok(pf) if pf.batch_start == batch_start && pf.batch_end == batch_end => {
-                        pf.result
+        // Track the final result to return after cleanup.
+        let sync_result: Result<u64, WalletError> = async {
+            while current < top_block {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(tx) = event_tx {
+                        let _ = tx.send(SyncEvent::Cancelled { height: current }).await;
                     }
-                    _ => {
-                        // Prefetch range doesn't match (batch size changed) — fetch fresh.
-                        pool.fetch_batch_distributed(batch_start, batch_end).await
+                    return Err(WalletError::Cancelled);
+                }
+
+                // ── 0. Drain completed store results ────────────────────────
+                while let Ok(result) = result_rx.try_recv() {
+                    apply_store_result(
+                        scan_ctx,
+                        &mut block_hash_cache,
+                        &mut total_outputs_found,
+                        &mut total_parse_errors,
+                        &mut total_empty_blobs,
+                        &result,
+                    )?;
+                }
+
+                let remaining = top_block - current;
+                let batch_size = controller.next_batch_size(remaining);
+                let batch_start = current + 1;
+                let batch_end = current + batch_size as u64;
+
+                let batch_timer = std::time::Instant::now();
+                let heights: Vec<u64> = (batch_start..=batch_end).collect();
+
+                // ── 1. Get batch data (from prefetch or fresh fetch) ────────
+                let batch_result = if let Some(handle) = prefetch.take() {
+                    match handle.await {
+                        Ok(pf) if pf.batch_start == batch_start && pf.batch_end == batch_end => {
+                            pf.result
+                        }
+                        _ => {
+                            // Prefetch range doesn't match (batch size changed) — fetch fresh.
+                            pool.fetch_batch_distributed(batch_start, batch_end).await
+                        }
+                    }
+                } else {
+                    pool.fetch_batch_distributed(batch_start, batch_end).await
+                };
+
+                let batch_data = match batch_result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
+                        if let Some(tx) = event_tx {
+                            let _ = tx.send(SyncEvent::Error(e.to_string())).await;
+                        }
+                        if controller.should_abort() {
+                            return Err(WalletError::Sync(format!(
+                                "aborting after {} consecutive errors: {}",
+                                controller.consecutive_errors, e
+                            )));
+                        }
+                        continue;
+                    }
+                };
+                let headers = batch_data.headers;
+                let bin_blocks = batch_data.bin_blocks;
+
+                // Reorg check: verify first header's prev_hash matches our stored hash.
+                // Primary: check block_hash_cache (populated from store results).
+                // Fallback: query DB (may briefly block if store worker holds the lock).
+                if current > 0 {
+                    let expected_hash = if let Some(cached) = block_hash_cache.get(&current) {
+                        Some(cached.clone())
+                    } else {
+                        let db_guard =
+                            db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+                        db_guard
+                            .get_block_hash(current as i64)
+                            .map_err(|e| WalletError::Storage(e.to_string()))?
+                    };
+
+                    if let Some(expected) = expected_hash {
+                        if let Some(first) = headers.first() {
+                            if first.prev_hash != expected {
+                                // Drain all pending store results before handling reorg.
+                                while let Ok(result) = result_rx.try_recv() {
+                                    apply_store_result(
+                                        scan_ctx,
+                                        &mut block_hash_cache,
+                                        &mut total_outputs_found,
+                                        &mut total_parse_errors,
+                                        &mut total_empty_blobs,
+                                        &result,
+                                    )?;
+                                }
+
+                                let reorg_start = find_fork_point(pool, &db, current).await?;
+
+                                if let Some(tx) = event_tx {
+                                    let _ = tx
+                                        .send(SyncEvent::Reorg {
+                                            from_height: current,
+                                            to_height: reorg_start,
+                                        })
+                                        .await;
+                                }
+
+                                {
+                                    let db_guard = db
+                                        .lock()
+                                        .map_err(|e| WalletError::Storage(e.to_string()))?;
+                                    db_guard
+                                        .rollback(reorg_start as i64)
+                                        .map_err(|e| WalletError::Storage(e.to_string()))?;
+                                }
+
+                                // Clear block hash cache since we rolled back.
+                                block_hash_cache.retain(|&h, _| h <= reorg_start);
+
+                                current = reorg_start;
+                                controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
+                                continue;
+                            }
+                        }
                     }
                 }
-            } else {
-                pool.fetch_batch_distributed(batch_start, batch_end).await
-            };
 
-            let batch_data = match batch_result {
-                Ok(r) => r,
-                Err(e) => {
+                if bin_blocks.len() != heights.len() {
                     controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
                     if let Some(tx) = event_tx {
-                        let _ = tx.send(SyncEvent::Error(e.to_string())).await;
+                        let _ = tx
+                            .send(SyncEvent::Error(format!(
+                                "get_blocks_by_height.bin: expected {} blocks, got {}",
+                                heights.len(),
+                                bin_blocks.len()
+                            )))
+                            .await;
                     }
                     if controller.should_abort() {
                         return Err(WalletError::Sync(format!(
-                            "aborting after {} consecutive errors: {}",
-                            controller.consecutive_errors, e
+                            "aborting: block count mismatch after {} errors",
+                            controller.consecutive_errors
                         )));
                     }
                     continue;
                 }
-            };
-            let headers = batch_data.headers;
-            let bin_blocks = batch_data.bin_blocks;
 
-            // Reorg check: verify first header's prev_hash matches our stored hash.
-            if current > 0 {
-                let expected_hash = {
-                    let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                    db.get_block_hash(current as i64)
-                        .map_err(|e| WalletError::Storage(e.to_string()))?
-                };
+                let fetch_ms = batch_timer.elapsed().as_millis() as u64;
 
-                if let Some(expected) = expected_hash {
-                    if let Some(first) = headers.first() {
-                        if first.prev_hash != expected {
-                            let reorg_start = find_fork_point(pool, db, current).await?;
-
-                            if let Some(tx) = event_tx {
-                                let _ = tx
-                                    .send(SyncEvent::Reorg {
-                                        from_height: current,
-                                        to_height: reorg_start,
-                                    })
-                                    .await;
-                            }
-
-                            {
-                                let db =
-                                    db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                                db.rollback(reorg_start as i64)
-                                    .map_err(|e| WalletError::Storage(e.to_string()))?;
-                            }
-
-                            current = reorg_start;
-                            controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            if bin_blocks.len() != heights.len() {
-                controller.adjust(batch_timer.elapsed().as_millis() as u64, true);
-                if let Some(tx) = event_tx {
-                    let _ = tx
-                        .send(SyncEvent::Error(format!(
-                            "get_blocks_by_height.bin: expected {} blocks, got {}",
-                            heights.len(),
-                            bin_blocks.len()
-                        )))
-                        .await;
-                }
-                if controller.should_abort() {
-                    return Err(WalletError::Sync(format!(
-                        "aborting: block count mismatch after {} errors",
-                        controller.consecutive_errors
-                    )));
-                }
-                continue;
-            }
-
-            // ── 2b. Start prefetching next batch ────────────────────────
-            let next_start = batch_end + 1;
-            if next_start <= top_block {
-                let next_size = controller.next_batch_size(top_block - batch_end);
-                let next_end = batch_end + next_size as u64;
-                let pool_clone = pool.clone();
-                prefetch = Some(tokio::spawn(async move {
-                    let result = pool_clone.fetch_batch_distributed(next_start, next_end).await;
-                    PrefetchResult { batch_start: next_start, batch_end: next_end, result }
-                }));
-            }
-
-            // ── 3. Parallel parse + sequential store ────────────────────
-            // Phase 1: Parse + scan all blocks in parallel via spawn_blocking.
-            let scan_ctx_clone = scan_ctx.clone();
-            let parse_results: Vec<ParsedBlockResult> = {
-                let mut handles = Vec::with_capacity(bin_blocks.len());
-                for (i, entry) in bin_blocks.iter().enumerate() {
-                    let height = heights[i];
-                    let header = if i < headers.len() {
-                        headers[i].clone()
-                    } else {
-                        continue;
-                    };
-                    let entry_block = entry.block.clone();
-                    let entry_txs = entry.txs.clone();
-                    let ctx = scan_ctx_clone.clone();
-
-                    handles.push(tokio::task::spawn_blocking(move || {
-                        parse_and_scan_block(ctx, height, &entry_block, &entry_txs, &header)
+                // ── 2b. Start prefetching next batch ────────────────────────
+                let next_start = batch_end + 1;
+                if next_start <= top_block {
+                    let next_size = controller.next_batch_size(top_block - batch_end);
+                    let next_end = batch_end + next_size as u64;
+                    let pool_clone = pool.clone();
+                    prefetch = Some(tokio::spawn(async move {
+                        let result = pool_clone.fetch_batch_distributed(next_start, next_end).await;
+                        PrefetchResult { batch_start: next_start, batch_end: next_end, result }
                     }));
                 }
 
-                let mut results = Vec::with_capacity(handles.len());
-                for handle in handles {
-                    match handle.await {
-                        Ok(r) => results.push(r),
-                        Err(e) => {
-                            log::error!("block parse task panicked: {}", e);
-                            results.push(ParsedBlockResult {
-                                height: 0,
-                                outputs: Vec::new(),
-                                tx_rows: Vec::new(),
-                                regular_txs: Vec::new(),
-                                block_hash: String::new(),
-                                parse_error: true,
-                                empty_blob: false,
-                                block_timestamp: 0,
-                                header_protocol_tx_hash: None,
-                                ptx_kos: Vec::new(),
-                            });
-                        }
-                    }
-                }
-                results
-            };
+                // ── 3. Parallel parse ───────────────────────────────────────
+                let parse_timer = std::time::Instant::now();
 
-            // Phase 2: Store results sequentially (needs &mut scan_ctx + DB).
-            for pr in &parse_results {
-                if pr.empty_blob {
-                    total_empty_blobs += 1;
-                }
-                if pr.parse_error {
-                    total_parse_errors += 1;
-                }
-
-                // Store coinbase/protocol found outputs.
-                for (found_output, scan_data_info) in &pr.outputs {
-                    store_found_output_row(db, scan_ctx, found_output, scan_data_info)?;
-                }
-
-                // Store coinbase/protocol transaction rows.
-                for row in &pr.tx_rows {
-                    db.lock()
-                        .map_err(|e| WalletError::Storage(e.to_string()))?
-                        .put_tx(row)
-                        .map_err(|e| WalletError::Storage(e.to_string()))?;
-                }
-
-                // Process regular transactions: store outputs, detect spent, build tx rows.
-                for tx_data in &pr.regular_txs {
-                    // Store found outputs first (so they exist for subsequent spent detection).
-                    for (found_output, info) in &tx_data.found_outputs {
-                        store_found_output_row(db, scan_ctx, found_output, info)?;
-                    }
-
-                    // Detect spent outputs (key image matching, stake recording).
-                    let spent_info = detect_spent_outputs(
-                        db,
-                        &tx_data.tx_json,
-                        &tx_data.tx_hash_hex,
-                        pr.height,
+                // Drain results before cloning scan_ctx so new cn_subaddr entries
+                // from previous batches are included in the parse.
+                while let Ok(result) = result_rx.try_recv() {
+                    apply_store_result(
+                        scan_ctx,
+                        &mut block_hash_cache,
+                        &mut total_outputs_found,
+                        &mut total_parse_errors,
+                        &mut total_empty_blobs,
+                        &result,
                     )?;
-
-                    // Build and store transaction row if we have outputs or spent inputs.
-                    let found_outputs: Vec<&FoundOutput> =
-                        tx_data.found_outputs.iter().map(|(fo, _)| fo).collect();
-                    if !found_outputs.is_empty() || spent_info.count > 0 {
-                        let row = build_transaction_row(
-                            &tx_data.tx_hash_hex,
-                            &hex::encode(tx_data.tx_pub_key),
-                            pr.height,
-                            pr.block_timestamp,
-                            &found_outputs.iter().map(|fo| (*fo).clone()).collect::<Vec<_>>(),
-                            &spent_info,
-                            tx_data.fee,
-                            tx_data.tx_type,
-                            false,
-                            tx_data.unlock_time,
-                        );
-                        db.lock()
-                            .map_err(|e| WalletError::Storage(e.to_string()))?
-                            .put_tx(&row)
-                            .map_err(|e| WalletError::Storage(e.to_string()))?;
-                    }
                 }
 
-                // TX-ID stake return matching.
-                for (key_hex, _ptx_hash_hint, _amount_hint) in &pr.ptx_kos {
-                    let ptx_hash = pr.header_protocol_tx_hash.as_deref().unwrap_or("");
-                    if !ptx_hash.is_empty() {
-                        let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                        if let Ok(Some(stake)) =
-                            db_lock.get_locked_stake_by_return_output_key(key_hex)
-                        {
-                            if let Err(e) = db_lock.mark_stake_returned(
-                                &stake.stake_tx_hash,
-                                ptx_hash,
-                                pr.height as i64,
-                                pr.block_timestamp as i64,
-                                &stake.amount_staked,
-                            ) {
-                                log::warn!("failed to mark stake as returned: {}", e);
-                            }
-                        }
-                    }
-                }
-
-                // Store block hash.
-                if !pr.block_hash.is_empty() {
-                    let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                    db_lock
-                        .put_block_hash(pr.height as i64, &pr.block_hash)
-                        .map_err(|e| WalletError::Storage(e.to_string()))?;
-                }
-
-                // Height-based stake return detection.
-                if stake_lock_period > 0 {
-                    let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                    let locked_stakes = db_lock
-                        .get_stakes(Some("locked"), None)
-                        .map_err(|e| WalletError::Storage(e.to_string()))?;
-                    for stake in &locked_stakes {
-                        if stake.return_output_key.is_some() {
+                let scan_ctx_clone = scan_ctx.clone();
+                let parse_results: Vec<ParsedBlockResult> = {
+                    let mut handles = Vec::with_capacity(bin_blocks.len());
+                    for (i, entry) in bin_blocks.iter().enumerate() {
+                        let height = heights[i];
+                        let header = if i < headers.len() {
+                            headers[i].clone()
+                        } else {
                             continue;
-                        }
-                        if let Some(stake_height) = stake.stake_height {
-                            let return_height = stake_height as u64 + stake_lock_period + 1;
-                            if pr.height >= return_height {
-                                let ptx_hash = pr
-                                    .header_protocol_tx_hash
-                                    .as_deref()
-                                    .unwrap_or("height-based-return");
-                                if let Err(e) = db_lock.mark_stake_returned(
-                                    &stake.stake_tx_hash,
-                                    ptx_hash,
-                                    pr.height as i64,
-                                    pr.block_timestamp as i64,
-                                    &stake.amount_staked,
-                                ) {
-                                    log::warn!("failed to mark stake as returned: {}", e);
-                                }
+                        };
+                        let entry_block = entry.block.clone();
+                        let entry_txs = entry.txs.clone();
+                        let ctx = scan_ctx_clone.clone();
+
+                        handles.push(tokio::task::spawn_blocking(move || {
+                            parse_and_scan_block(ctx, height, &entry_block, &entry_txs, &header)
+                        }));
+                    }
+
+                    let mut results = Vec::with_capacity(handles.len());
+                    for handle in handles {
+                        match handle.await {
+                            Ok(r) => results.push(r),
+                            Err(e) => {
+                                log::error!("block parse task panicked: {}", e);
+                                results.push(ParsedBlockResult {
+                                    height: 0,
+                                    outputs: Vec::new(),
+                                    tx_rows: Vec::new(),
+                                    regular_txs: Vec::new(),
+                                    block_hash: String::new(),
+                                    parse_error: true,
+                                    empty_blob: false,
+                                    block_timestamp: 0,
+                                    header_protocol_tx_hash: None,
+                                    ptx_kos: Vec::new(),
+                                });
                             }
                         }
                     }
-                }
+                    results
+                };
 
-                // Count outputs: coinbase/protocol + regular.
-                total_outputs_found += pr.outputs.len()
-                    + pr.regular_txs.iter().map(|t| t.found_outputs.len()).sum::<usize>();
+                let parse_ms = parse_timer.elapsed().as_millis() as u64;
 
-                // Update sync height per block for crash safety.
-                if pr.height > 0 {
-                    let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
-                    db_lock
-                        .set_sync_height(pr.height as i64)
-                        .map_err(|e| WalletError::Storage(e.to_string()))?;
-                }
-            }
-
-            current = batch_end;
-
-            // ── 4. Progress event (one per batch) ───────────────────────
-            if let Some(tx) = event_tx {
-                let _ = tx
-                    .send(SyncEvent::Progress {
-                        current_height: current,
-                        target_height: top_block,
-                        outputs_found: total_outputs_found,
-                        parse_errors: total_parse_errors,
-                        empty_blobs: total_empty_blobs,
+                // ── 4. Send to store worker (pipelined) ─────────────────────
+                // The store worker processes this batch on its dedicated thread
+                // while we proceed to fetch+parse the next batch.
+                if store_tx
+                    .send(StoreBatchMsg {
+                        parse_results,
+                        scan_ctx: scan_ctx.clone(),
+                        stake_lock_period,
+                        batch_start,
+                        batch_end,
+                        fetch_ms,
+                        parse_ms,
+                        pool: pool.clone(),
                     })
-                    .await;
+                    .is_err()
+                {
+                    return Err(WalletError::Sync(
+                        "store worker channel closed unexpectedly".into(),
+                    ));
+                }
+
+                current = batch_end;
+
+                // ── 5. Progress event (one per batch) ───────────────────────
+                if let Some(tx) = event_tx {
+                    let _ = tx
+                        .send(SyncEvent::Progress {
+                            current_height: current,
+                            target_height: top_block,
+                            outputs_found: total_outputs_found,
+                            parse_errors: total_parse_errors,
+                            empty_blobs: total_empty_blobs,
+                        })
+                        .await;
+                }
+
+                // ── 6. Adapt batch size + race nodes ────────────────────────
+                controller.adjust(batch_timer.elapsed().as_millis() as u64, false);
+                pool.maybe_race().await;
             }
 
-            // ── 5. Resolve global output indices ─────────────────────────
-            if total_outputs_found > 0 {
-                if let Err(e) = resolve_global_indices(pool, db).await {
-                    log::warn!("global index resolution failed: {}", e);
+            Ok(top_block)
+        }
+        .await;
+
+        // ── Shutdown store worker ───────────────────────────────────────
+        // Drop the send channel to signal the worker to exit after finishing
+        // its current batch.
+        drop(store_tx);
+
+        // Drain all remaining store results.
+        while let Ok(result) = result_rx.recv() {
+            if let Err(e) = apply_store_result(
+                scan_ctx,
+                &mut block_hash_cache,
+                &mut total_outputs_found,
+                &mut total_parse_errors,
+                &mut total_empty_blobs,
+                &result,
+            ) {
+                // If we already have an error from the sync loop, keep that;
+                // otherwise propagate the store error.
+                if sync_result.is_ok() {
+                    let _ = store_handle.join();
+                    return Err(e);
                 }
             }
-
-            // ── 6. Adapt batch size + race nodes ────────────────────────
-            controller.adjust(batch_timer.elapsed().as_millis() as u64, false);
-            pool.maybe_race().await;
         }
+
+        // Wait for the store thread to exit.
+        let _ = store_handle.join();
+
+        // Propagate sync loop error if any.
+        let final_height = sync_result?;
 
         if let Some(tx) = event_tx {
-            let _ = tx.send(SyncEvent::Complete { height: top_block }).await;
+            let _ = tx.send(SyncEvent::Complete { height: final_height }).await;
         }
 
-        Ok(top_block)
+        Ok(final_height)
     }
 }
 
@@ -808,10 +837,289 @@ fn parse_and_scan_block(
     }
 }
 
+/// Execute the store phase for one batch: write all parsed block data to the DB.
+///
+/// Called by the store worker thread with the DB lock already held.
+/// Returns aggregated stats and block hashes for the sync loop.
+#[cfg(not(target_arch = "wasm32"))]
+fn execute_store_batch(
+    db: &salvium_crypto::storage::WalletDb,
+    scan_ctx: &mut ScanContext,
+    parse_results: &[ParsedBlockResult],
+    stake_lock_period: u64,
+) -> Result<StoreBatchResult, WalletError> {
+    let mut max_height = 0u64;
+    let mut outputs_found = 0usize;
+    let mut parse_errors = 0usize;
+    let mut empty_blobs = 0usize;
+    let mut block_hashes = Vec::new();
+
+    for pr in parse_results {
+        if pr.empty_blob {
+            empty_blobs += 1;
+        }
+        if pr.parse_error {
+            parse_errors += 1;
+        }
+        if pr.height > max_height {
+            max_height = pr.height;
+        }
+
+        // Store coinbase/protocol found outputs.
+        for (found_output, scan_data_info) in &pr.outputs {
+            store_found_output_row(db, scan_ctx, found_output, scan_data_info)?;
+        }
+
+        // Store coinbase/protocol transaction rows.
+        for row in &pr.tx_rows {
+            db.put_tx(row).map_err(|e| WalletError::Storage(e.to_string()))?;
+        }
+
+        // Process regular transactions: store outputs, detect spent, build tx rows.
+        for tx_data in &pr.regular_txs {
+            for (found_output, info) in &tx_data.found_outputs {
+                store_found_output_row(db, scan_ctx, found_output, info)?;
+            }
+
+            let spent_info =
+                detect_spent_outputs(db, &tx_data.tx_json, &tx_data.tx_hash_hex, pr.height)?;
+
+            let found_outputs: Vec<&FoundOutput> =
+                tx_data.found_outputs.iter().map(|(fo, _)| fo).collect();
+            if !found_outputs.is_empty() || spent_info.count > 0 {
+                let row = build_transaction_row(
+                    &tx_data.tx_hash_hex,
+                    &hex::encode(tx_data.tx_pub_key),
+                    pr.height,
+                    pr.block_timestamp,
+                    &found_outputs.iter().map(|fo| (*fo).clone()).collect::<Vec<_>>(),
+                    &spent_info,
+                    tx_data.fee,
+                    tx_data.tx_type,
+                    false,
+                    tx_data.unlock_time,
+                );
+                db.put_tx(&row).map_err(|e| WalletError::Storage(e.to_string()))?;
+            }
+        }
+
+        // TX-ID stake return matching.
+        for (key_hex, _ptx_hash_hint, _amount_hint) in &pr.ptx_kos {
+            let ptx_hash = pr.header_protocol_tx_hash.as_deref().unwrap_or("");
+            if !ptx_hash.is_empty() {
+                if let Ok(Some(stake)) = db.get_locked_stake_by_return_output_key(key_hex) {
+                    if let Err(e) = db.mark_stake_returned(
+                        &stake.stake_tx_hash,
+                        ptx_hash,
+                        pr.height as i64,
+                        pr.block_timestamp as i64,
+                        &stake.amount_staked,
+                    ) {
+                        log::warn!("failed to mark stake as returned: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Store block hash.
+        if !pr.block_hash.is_empty() {
+            db.put_block_hash(pr.height as i64, &pr.block_hash)
+                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            block_hashes.push((pr.height, pr.block_hash.clone()));
+        }
+
+        // Height-based stake return detection.
+        if stake_lock_period > 0 {
+            let locked_stakes = db
+                .get_stakes(Some("locked"), None)
+                .map_err(|e| WalletError::Storage(e.to_string()))?;
+            for stake in &locked_stakes {
+                if stake.return_output_key.is_some() {
+                    continue;
+                }
+                if let Some(stake_height) = stake.stake_height {
+                    let return_height = stake_height as u64 + stake_lock_period + 1;
+                    if pr.height >= return_height {
+                        let ptx_hash =
+                            pr.header_protocol_tx_hash.as_deref().unwrap_or("height-based-return");
+                        if let Err(e) = db.mark_stake_returned(
+                            &stake.stake_tx_hash,
+                            ptx_hash,
+                            pr.height as i64,
+                            pr.block_timestamp as i64,
+                            &stake.amount_staked,
+                        ) {
+                            log::warn!("failed to mark stake as returned: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Count outputs: coinbase/protocol + regular.
+        outputs_found +=
+            pr.outputs.len() + pr.regular_txs.iter().map(|t| t.found_outputs.len()).sum::<usize>();
+    }
+
+    // Set sync height once at end of batch.
+    if max_height > 0 {
+        db.set_sync_height(max_height as i64).map_err(|e| WalletError::Storage(e.to_string()))?;
+    }
+
+    Ok(StoreBatchResult { max_height, outputs_found, parse_errors, empty_blobs, block_hashes })
+}
+
+/// Store worker loop: runs on a dedicated std::thread.
+///
+/// Receives `StoreBatchMsg` from the sync loop, locks the DB, writes data,
+/// commits, resolves global indices, and sends `StoreResultMsg` back.
+/// Exits when the channel closes (sender dropped).
+#[cfg(not(target_arch = "wasm32"))]
+fn store_worker_loop(
+    db: Arc<std::sync::Mutex<salvium_crypto::storage::WalletDb>>,
+    work_rx: std::sync::mpsc::Receiver<StoreBatchMsg>,
+    result_tx: std::sync::mpsc::SyncSender<StoreResultMsg>,
+) {
+    while let Ok(mut msg) = work_rx.recv() {
+        let store_timer = std::time::Instant::now();
+
+        // Snapshot the cn_subaddress_map before store to diff afterwards.
+        let cn_map_len_before = msg.scan_ctx.cn_subaddress_map.len();
+
+        // Lock DB and execute the store batch inside a transaction.
+        let store_result = (|| -> Result<StoreBatchResult, WalletError> {
+            let db_lock = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+            db_lock.begin_batch().map_err(|e| WalletError::Storage(e.to_string()))?;
+
+            match execute_store_batch(
+                &db_lock,
+                &mut msg.scan_ctx,
+                &msg.parse_results,
+                msg.stake_lock_period,
+            ) {
+                Ok(result) => {
+                    db_lock.commit_batch().map_err(|e| WalletError::Storage(e.to_string()))?;
+                    Ok(result)
+                }
+                Err(e) => {
+                    let _ = db_lock.rollback_batch();
+                    Err(e)
+                }
+            }
+        })();
+
+        match store_result {
+            Ok(batch_result) => {
+                // Resolve global indices (needs async RPC — create a temporary tokio runtime).
+                if batch_result.outputs_found > 0 {
+                    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                    if let Ok(rt) = rt {
+                        if let Err(e) = rt.block_on(resolve_global_indices(&msg.pool, &db)) {
+                            log::warn!("global index resolution failed: {}", e);
+                        }
+                    }
+                }
+
+                // Diff cn_subaddress_map to find new entries added during store.
+                let new_entries: Vec<([u8; 32], u32, u32)> = msg
+                    .scan_ctx
+                    .cn_subaddress_map
+                    .iter()
+                    .skip(cn_map_len_before)
+                    .cloned()
+                    .collect();
+
+                let store_ms = store_timer.elapsed().as_millis() as u64;
+                log::info!(
+                    "store worker batch {}-{}: fetch={}ms parse={}ms store={}ms ({} outputs)",
+                    msg.batch_start,
+                    msg.batch_end,
+                    msg.fetch_ms,
+                    msg.parse_ms,
+                    store_ms,
+                    batch_result.outputs_found
+                );
+
+                let _ = result_tx.send(StoreResultMsg {
+                    new_cn_subaddr_entries: new_entries,
+                    block_hashes: batch_result.block_hashes,
+                    _committed_height: batch_result.max_height,
+                    outputs_found: batch_result.outputs_found,
+                    parse_errors: batch_result.parse_errors,
+                    empty_blobs: batch_result.empty_blobs,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                log::error!(
+                    "store worker batch {}-{} failed: {}",
+                    msg.batch_start,
+                    msg.batch_end,
+                    e
+                );
+                let _ = result_tx.send(StoreResultMsg {
+                    new_cn_subaddr_entries: Vec::new(),
+                    block_hashes: Vec::new(),
+                    _committed_height: 0,
+                    outputs_found: 0,
+                    parse_errors: 0,
+                    empty_blobs: 0,
+                    error: Some(e),
+                });
+            }
+        }
+    }
+}
+
+/// Apply a store result to the sync loop's state.
+///
+/// Merges new cn_subaddress_map entries, updates the block hash cache,
+/// and accumulates output/error/blob counts.
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_store_result(
+    scan_ctx: &mut ScanContext,
+    block_hash_cache: &mut std::collections::HashMap<u64, String>,
+    total_outputs_found: &mut usize,
+    total_parse_errors: &mut usize,
+    total_empty_blobs: &mut usize,
+    result: &StoreResultMsg,
+) -> Result<(), WalletError> {
+    if let Some(ref e) = result.error {
+        return Err(WalletError::Sync(format!("store worker error: {}", e)));
+    }
+
+    // Merge new cn_subaddress_map entries.
+    for &(ko, major, minor) in &result.new_cn_subaddr_entries {
+        if !scan_ctx.cn_subaddress_map.iter().any(|(k, _, _)| *k == ko) {
+            scan_ctx.cn_subaddress_map.push((ko, major, minor));
+        }
+    }
+
+    // Update block hash cache.
+    for (height, hash) in &result.block_hashes {
+        block_hash_cache.insert(*height, hash.clone());
+    }
+    // Prune to ~2000 entries — remove the lowest heights.
+    if block_hash_cache.len() > 2500 {
+        let mut heights: Vec<u64> = block_hash_cache.keys().copied().collect();
+        heights.sort_unstable();
+        for &h in heights.iter().take(block_hash_cache.len() - 2000) {
+            block_hash_cache.remove(&h);
+        }
+    }
+
+    // Accumulate counts.
+    *total_outputs_found += result.outputs_found;
+    *total_parse_errors += result.parse_errors;
+    *total_empty_blobs += result.empty_blobs;
+
+    Ok(())
+}
+
 /// Store a single found output row into the DB (sequential phase).
 #[cfg(not(target_arch = "wasm32"))]
 fn store_found_output_row(
-    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: &salvium_crypto::storage::WalletDb,
     scan_ctx: &mut ScanContext,
     found: &FoundOutput,
     info: &FoundOutputInfo,
@@ -1428,7 +1736,7 @@ fn build_transaction_row(
 /// Called during the sequential store phase for each regular transaction.
 #[cfg(not(target_arch = "wasm32"))]
 fn detect_spent_outputs(
-    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: &salvium_crypto::storage::WalletDb,
     tx_json: &serde_json::Value,
     tx_hash_hex: &str,
     block_height: u64,
@@ -1447,7 +1755,6 @@ fn detect_spent_outputs(
         .and_then(|v| v.as_u64())
         .unwrap_or(3);
 
-    let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
     let mut spent_info = SpentInfo::default();
 
     // ── Pass 1: Key image matching (primary mechanism) ──────────────────
@@ -1577,7 +1884,7 @@ fn detect_spent_outputs(
 /// and Fix #3 (burning bug detection).
 #[cfg(not(target_arch = "wasm32"))]
 fn store_found_outputs(
-    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: &salvium_crypto::storage::WalletDb,
     scan_ctx: &mut ScanContext,
     found: &[FoundOutput],
     tx: &ScanTxData,
@@ -1586,8 +1893,6 @@ fn store_found_outputs(
     if found.is_empty() {
         return Ok(());
     }
-
-    let db = db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
 
     for output in found {
         let pub_key_hex = hex::encode(output.output_public_key);
@@ -1948,7 +2253,7 @@ fn hex_to_32(s: &str) -> Option<[u8; 32]> {
 #[cfg(not(target_arch = "wasm32"))]
 async fn resolve_global_indices(
     daemon: &NodePool,
-    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: &Arc<std::sync::Mutex<salvium_crypto::storage::WalletDb>>,
 ) -> Result<usize, WalletError> {
     // Get outputs that need global_index resolution.
     let pending = {
@@ -2009,7 +2314,7 @@ async fn resolve_global_indices(
 #[cfg(not(target_arch = "wasm32"))]
 async fn find_fork_point(
     daemon: &NodePool,
-    db: &std::sync::Mutex<salvium_crypto::storage::WalletDb>,
+    db: &Arc<std::sync::Mutex<salvium_crypto::storage::WalletDb>>,
     mut height: u64,
 ) -> Result<u64, WalletError> {
     while height > 0 {
