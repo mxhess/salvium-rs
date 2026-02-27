@@ -28,7 +28,7 @@ use salvium_wallet::Wallet;
 #[derive(serde::Deserialize)]
 struct TransferParams {
     destinations: Vec<DestinationParam>,
-    #[serde(default = "default_asset")]
+    #[serde(default)]
     asset_type: String,
     #[serde(default = "default_priority")]
     priority: String,
@@ -49,7 +49,7 @@ struct DestinationParam {
 #[derive(serde::Deserialize)]
 struct StakeParams {
     amount: String,
-    #[serde(default = "default_asset")]
+    #[serde(default)]
     asset_type: String,
     #[serde(default = "default_priority")]
     priority: String,
@@ -61,7 +61,7 @@ struct StakeParams {
 #[derive(serde::Deserialize)]
 struct SweepParams {
     address: String,
-    #[serde(default = "default_asset")]
+    #[serde(default)]
     asset_type: String,
     #[serde(default = "default_priority")]
     priority: String,
@@ -72,9 +72,6 @@ struct SweepParams {
     dry_run: bool,
 }
 
-fn default_asset() -> String {
-    "SAL".into()
-}
 fn default_priority() -> String {
     "normal".into()
 }
@@ -292,19 +289,19 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
 // Internal Transfer Flow
 // =============================================================================
 
-/// Determine the fork-appropriate asset type and rct_type from the daemon.
-async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(String, u8, bool), String> {
+/// Determine the fork-appropriate rct_type and output format from the daemon.
+async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(u8, bool), String> {
     let hf = daemon.hard_fork_info().await.map_err(|e| format!("hard_fork_info failed: {e}"))?;
 
-    let (asset, rct, is_carrot) = if hf.version >= 10 {
-        ("SAL1".to_string(), rct_type::SALVIUM_ONE, true)
+    let (rct, is_carrot) = if hf.version >= 10 {
+        (rct_type::SALVIUM_ONE, true)
     } else if hf.version >= 6 {
-        ("SAL1".to_string(), rct_type::SALVIUM_ZERO, false)
+        (rct_type::SALVIUM_ZERO, false)
     } else {
-        ("SAL".to_string(), rct_type::BULLETPROOF_PLUS, false)
+        (rct_type::BULLETPROOF_PLUS, false)
     };
 
-    Ok((asset, rct, is_carrot))
+    Ok((rct, is_carrot))
 }
 
 async fn do_transfer(
@@ -313,7 +310,11 @@ async fn do_transfer(
     params: &TransferParams,
     priority: FeePriority,
 ) -> Result<String, String> {
-    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
+    if params.asset_type.is_empty() {
+        return Err("asset_type is required".into());
+    }
 
     // 1. Parse and validate destinations.
     let mut destinations = Vec::new();
@@ -333,7 +334,7 @@ async fn do_transfer(
             spend_pubkey: parsed.spend_public_key,
             view_pubkey: parsed.view_public_key,
             amount,
-            asset_type: fork_asset.clone(),
+            asset_type: params.asset_type.clone(),
             payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
             is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
         });
@@ -345,26 +346,10 @@ async fn do_transfer(
     let est_fee =
         fee::estimate_tx_fee(2, num_outputs, params.ring_size, is_carrot, out_type, priority);
 
-    // 3. Select UTXOs (CARROT-only for SALVIUM_ONE).
-    let selection = if is_carrot {
-        wallet
-            .select_carrot_outputs(
-                total_amount,
-                est_fee,
-                &params.asset_type,
-                salvium_wallet::SelectionStrategy::Default,
-            )
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    } else {
-        wallet
-            .select_outputs(
-                total_amount,
-                est_fee,
-                &params.asset_type,
-                salvium_wallet::SelectionStrategy::Default,
-            )
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    };
+    // 3. Select UTXOs — caller specifies asset type, no output format filter.
+    let selection = wallet
+        .select_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+        .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     // 4. Build the transaction.
     let built = build_sign_maybe_broadcast(
@@ -372,7 +357,7 @@ async fn do_transfer(
         daemon,
         &destinations,
         &selection,
-        &fork_asset,
+        &params.asset_type,
         tx_type::TRANSFER,
         params.ring_size,
         priority,
@@ -402,7 +387,11 @@ async fn do_stake(
     priority: FeePriority,
     dry_run: bool,
 ) -> Result<String, String> {
-    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
+    if params.asset_type.is_empty() {
+        return Err("asset_type is required".into());
+    }
 
     let amount: u64 =
         params.amount.parse().map_err(|e| format!("invalid amount '{}': {e}", params.amount))?;
@@ -422,7 +411,7 @@ async fn do_stake(
         spend_pubkey: spend_pub,
         view_pubkey: view_pub,
         amount,
-        asset_type: fork_asset.clone(),
+        asset_type: params.asset_type.clone(),
         payment_id: [0u8; 8],
         is_subaddress: false,
     }];
@@ -430,32 +419,16 @@ async fn do_stake(
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
     let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, priority);
 
-    let selection = if is_carrot {
-        wallet
-            .select_carrot_outputs(
-                amount,
-                est_fee,
-                &params.asset_type,
-                salvium_wallet::SelectionStrategy::Default,
-            )
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    } else {
-        wallet
-            .select_outputs(
-                amount,
-                est_fee,
-                &params.asset_type,
-                salvium_wallet::SelectionStrategy::Default,
-            )
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    };
+    let selection = wallet
+        .select_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+        .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     let built = build_sign_maybe_broadcast(
         wallet,
         daemon,
         &destinations,
         &selection,
-        &fork_asset,
+        &params.asset_type,
         tx_type::STAKE,
         params.ring_size,
         priority,
@@ -481,21 +454,19 @@ async fn do_sweep(
     params: &SweepParams,
     priority: FeePriority,
 ) -> Result<String, String> {
-    let (fork_asset, fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
+
+    if params.asset_type.is_empty() {
+        return Err("asset_type is required".into());
+    }
 
     let parsed = salvium_types::address::parse_address(&params.address)
         .map_err(|e| format!("invalid address '{}': {e}", params.address))?;
 
     // 1. Select ALL unlocked outputs.
-    let all_selection = if is_carrot {
-        wallet
-            .select_carrot_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    } else {
-        wallet
-            .select_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
-            .map_err(|e| format!("UTXO selection failed: {e}"))?
-    };
+    let all_selection = wallet
+        .select_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+        .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     if all_selection.selected.is_empty() {
         return Err("no unlocked outputs to sweep".into());
@@ -518,7 +489,7 @@ async fn do_sweep(
         spend_pubkey: parsed.spend_public_key,
         view_pubkey: parsed.view_public_key,
         amount: sweep_amount,
-        asset_type: fork_asset.clone(),
+        asset_type: params.asset_type.clone(),
         payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
         is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
     }];
@@ -529,7 +500,7 @@ async fn do_sweep(
         daemon,
         &destinations,
         &all_selection,
-        &fork_asset,
+        &params.asset_type,
         tx_type::TRANSFER,
         params.ring_size,
         priority,
