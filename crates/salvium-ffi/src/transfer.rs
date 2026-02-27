@@ -348,7 +348,12 @@ async fn do_transfer(
 
     // 3. Select UTXOs — caller specifies asset type, no output format filter.
     let selection = wallet
-        .select_outputs(total_amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+        .select_outputs(
+            total_amount,
+            est_fee,
+            &params.asset_type,
+            salvium_wallet::SelectionStrategy::Default,
+        )
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     // 4. Build the transaction.
@@ -420,7 +425,12 @@ async fn do_stake(
     let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, priority);
 
     let selection = wallet
-        .select_outputs(amount, est_fee, &params.asset_type, salvium_wallet::SelectionStrategy::Default)
+        .select_outputs(
+            amount,
+            est_fee,
+            &params.asset_type,
+            salvium_wallet::SelectionStrategy::Default,
+        )
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     let built = build_sign_maybe_broadcast(
