@@ -1793,7 +1793,11 @@ fn store_found_outputs(
             block_timestamp: Some(block_timestamp as i64),
             amount: output.amount.to_string(),
             asset_type: output.asset_type.clone(),
-            commitment: None,
+            commitment: tx
+                .outputs
+                .get(output.output_index as usize)
+                .and_then(|o| o.commitment)
+                .map(hex::encode),
             mask: Some(hex::encode(output.mask)),
             subaddress_index: salvium_crypto::storage::SubaddressIndex {
                 major: output.subaddress_major as i64,
