@@ -44,6 +44,44 @@ pub fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("failed to create tokio runtime"))
 }
 
+/// Return the Salvium protocol version this library was built against (e.g. `"1.0.7"`).
+///
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub extern "C" fn salvium_version() -> *mut std::ffi::c_char {
+    let pkg = env!("CARGO_PKG_VERSION"); // e.g. "1.0.7-r012"
+    let base = match pkg.split_once('-') {
+        Some((base, _)) => base,
+        None => pkg,
+    };
+    match std::ffi::CString::new(base) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Return the library version string derived from the `rXXX` pre-release tag.
+///
+/// The Cargo version `1.0.7-r012` becomes `"v0.1.2"` — each digit of the
+/// three-digit `rXXX` code maps to major.minor.patch.
+///
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub extern "C" fn salvium_rs_version() -> *mut std::ffi::c_char {
+    let pkg = env!("CARGO_PKG_VERSION"); // e.g. "1.0.7-r012"
+    let version = match pkg.rsplit_once("-r") {
+        Some((_, digits)) if digits.len() == 3 => {
+            let d: Vec<u8> = digits.bytes().map(|b| b - b'0').collect();
+            format!("v{}.{}.{}", d[0], d[1], d[2])
+        }
+        _ => pkg.to_string(),
+    };
+    match std::ffi::CString::new(version) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 /// Explicitly initialize the FFI runtime.
 ///
 /// This is optional — the runtime is lazily created on first use.
