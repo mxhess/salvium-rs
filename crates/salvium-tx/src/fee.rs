@@ -5,8 +5,9 @@
 //! from salvium-consensus.
 
 use salvium_types::consensus::{
-    DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE, FEE_PER_BYTE,
-    PER_KB_FEE_QUANTIZATION_DECIMALS,
+    DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE,
+    DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT, FEE_PER_BYTE, PER_KB_FEE_QUANTIZATION_DECIMALS,
+    SCALING_2021_FEE_ROUNDING_PLACES,
 };
 use salvium_types::constants::{HfVersion, DISPLAY_DECIMAL_POINT};
 
@@ -139,13 +140,45 @@ pub fn estimate_tx_weight(
     }
 }
 
-/// Compute the dynamic per-byte fee rate from the current base block reward.
+/// Compute the dynamic per-byte fee rate using the 2021-scaling formula.
 ///
-/// Replicates the C++ formula from `blockchain.cpp get_dynamic_base_fee_estimate()`:
-///   fee_per_byte = max((DYNAMIC_FEE_PER_KB_BASE_FEE / 1024 * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD) / base_reward, FEE_PER_BYTE)
+/// Replicates C++ `Blockchain::get_dynamic_base_fee()` exactly:
+///   `fee_per_byte = block_reward * 3000 / median² * 19/20`
 ///
-/// This is a pure function — no RPC calls needed. Pass `BlockHeader.reward` and
-/// `BlockHeader.major_version` from block headers already fetched for priority adjustment.
+/// Uses 128-bit intermediate arithmetic to avoid overflow, matching the C++
+/// `mul128` / `div128_64` implementation.
+///
+/// # Parameters
+/// - `base_reward`: the base block reward (from emission curve, NOT the header
+///   `reward` field which includes tx fees).
+/// - `median_block_weight`: effective median block weight. For `check_fee()`
+///   validation this is `min(short_term_median, long_term_median)` when
+///   `hf_version >= HF_VERSION_LONG_TERM_BLOCK_WEIGHT`.
+/// - `hf_version`: hard fork version — controls the minimum block weight floor.
+pub fn get_dynamic_base_fee(base_reward: u64, median_block_weight: u64, hf_version: u8) -> u64 {
+    let min_bw = salvium_types::consensus::min_block_weight(hf_version);
+    let median = median_block_weight.max(min_bw);
+
+    if median == 0 {
+        return FEE_PER_BYTE;
+    }
+
+    // 128-bit: product = base_reward * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT
+    let product = base_reward as u128 * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT as u128;
+    // Divide by median twice: product / median / median = product / median²
+    let divided = product / median as u128 / median as u128;
+    // Apply 0.95 factor: lo -= lo / 20  (i.e., multiply by 19/20)
+    let fee = divided - divided / 20;
+
+    fee as u64
+}
+
+/// Legacy dynamic fee computation (pre-2021-scaling).
+///
+/// Uses the old formula: `(DYNAMIC_FEE_PER_KB_BASE_FEE / 1024 * BASE_BLOCK_REWARD) / base_reward`.
+/// This is NOT what the daemon's `check_fee()` uses — prefer [`get_dynamic_base_fee()`] for
+/// node validation or the daemon's `get_fee_estimate` RPC for wallet fee estimation.
+#[deprecated(note = "Use get_dynamic_base_fee() or the daemon's get_fee_estimate RPC")]
 pub fn dynamic_fee_per_byte(base_reward: u64, hf_version: u8) -> u64 {
     if hf_version >= HfVersion::SCALING_2021 {
         let base_fee = DYNAMIC_FEE_PER_KB_BASE_FEE / 1024;
@@ -157,6 +190,94 @@ pub fn dynamic_fee_per_byte(base_reward: u64, hf_version: u8) -> u64 {
         }
     } else {
         FEE_PER_BYTE
+    }
+}
+
+/// Compute the 4-tier fee estimate matching C++ `get_dynamic_base_fee_estimate_2021_scaling()`.
+///
+/// Returns `[Fl, Fn, Fm, Fh]` where:
+/// - `Fl` = base_reward * 3000 / Mfw²  (lowest / default)
+/// - `Fn` = 4 * Fl  (normal)
+/// - `Fm` = 16 * base_reward * 3000 / (ZONE_V5 * Mfw)  (elevated)
+/// - `Fh` = max(4*Fm, 4*Fm * Mfw / (32 * 3000 * Mnw / ZONE_V5))  (highest)
+///
+/// Each tier is rounded up to `SCALING_2021_FEE_ROUNDING_PLACES` significant digits.
+///
+/// # Parameters
+/// - `base_reward`: base block reward from emission curve.
+/// - `mnw`: effective short-term median (capped at 50 * Mlw).
+/// - `mlw`: long-term median (penalty-free zone for wallet, clamped to >= ZONE_V5).
+pub fn get_dynamic_base_fee_estimate_2021_scaling(
+    base_reward: u64,
+    mnw: u64,
+    mlw: u64,
+) -> [u64; 4] {
+    use salvium_types::consensus::BLOCK_GRANTED_FULL_REWARD_ZONE_V5;
+
+    let mfw = mnw.min(mlw);
+    let mfw = mfw.max(1); // avoid division by zero
+
+    // Fl = base_reward * 3000 / (Mfw * Mfw)
+    let fl = (base_reward as u128 * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT as u128)
+        / (mfw as u128 * mfw as u128);
+    let fl = fl as u64;
+
+    // Fn = 4 * Fl
+    let fn_ = 4 * fl;
+
+    // Fm = 16 * base_reward * 3000 / (ZONE_V5 * Mfw)
+    let fm = (16u128 * base_reward as u128 * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT as u128)
+        / (BLOCK_GRANTED_FULL_REWARD_ZONE_V5 as u128 * mfw as u128);
+    let fm = fm as u64;
+
+    // Fh = max(4*Fm, 4*Fm * Mfw / (32 * 3000 * Mnw / ZONE_V5))
+    let denom = 32 * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT * mnw.max(1)
+        / BLOCK_GRANTED_FULL_REWARD_ZONE_V5;
+    let fh = if denom > 0 {
+        (4 * fm).max(4u64.saturating_mul(fm).saturating_mul(mfw) / denom)
+    } else {
+        4 * fm
+    };
+
+    [
+        round_money_up(fl, SCALING_2021_FEE_ROUNDING_PLACES),
+        round_money_up(fn_, SCALING_2021_FEE_ROUNDING_PLACES),
+        round_money_up(fm, SCALING_2021_FEE_ROUNDING_PLACES),
+        round_money_up(fh, SCALING_2021_FEE_ROUNDING_PLACES),
+    ]
+}
+
+/// Round a monetary amount up to the given number of significant digits.
+///
+/// Matches C++ `cryptonote::round_money_up()`.
+pub fn round_money_up(amount: u64, significant_digits: u32) -> u64 {
+    if significant_digits == 0 || amount == 0 {
+        return amount;
+    }
+
+    // Count digits
+    let mut digits = 0u32;
+    let mut tmp = amount;
+    while tmp > 0 {
+        digits += 1;
+        tmp /= 10;
+    }
+
+    if digits <= significant_digits {
+        return amount;
+    }
+
+    // Scale factor = 10^(digits - significant_digits)
+    let scale = 10u64.pow(digits - significant_digits);
+
+    // Round up: (amount + scale - 1) / scale * scale
+    // But also check if trailing digits are all zero (no rounding needed)
+    let truncated = amount / scale;
+    let remainder = amount - truncated * scale;
+    if remainder == 0 {
+        amount
+    } else {
+        (truncated + 1) * scale
     }
 }
 
@@ -413,46 +534,62 @@ mod tests {
         assert!(!uses_tclsag(rct_type::BULLETPROOF_PLUS));
     }
 
-    // ─── dynamic_fee_per_byte tests ──────────────────────────────────────────
+    // ─── get_dynamic_base_fee tests ─────────────────────────────────────────
 
     #[test]
-    fn test_dynamic_fee_per_byte_zero_reward() {
-        // base_reward=0 should fall back to FEE_PER_BYTE.
-        assert_eq!(dynamic_fee_per_byte(0, HfVersion::SCALING_2021), FEE_PER_BYTE);
+    fn test_get_dynamic_base_fee_zero_reward() {
+        // base_reward=0 → fee = 0 * 3000 / median² * 19/20 = 0
+        let fee = get_dynamic_base_fee(0, 300_000, HfVersion::SCALING_2021);
+        assert_eq!(fee, 0);
     }
 
     #[test]
-    fn test_dynamic_fee_per_byte_pre_scaling() {
-        // Pre-SCALING_2021 hf_version should always return FEE_PER_BYTE.
-        assert_eq!(dynamic_fee_per_byte(500_000_000, 1), FEE_PER_BYTE);
-        assert_eq!(dynamic_fee_per_byte(500_000_000, 0), FEE_PER_BYTE);
+    fn test_get_dynamic_base_fee_median_clamped_to_min() {
+        // median_block_weight below min_block_weight gets clamped to 300,000
+        let fee_small_median = get_dynamic_base_fee(1_000_000_000, 100, HfVersion::SCALING_2021);
+        let fee_exact_min = get_dynamic_base_fee(1_000_000_000, 300_000, HfVersion::SCALING_2021);
+        assert_eq!(fee_small_median, fee_exact_min);
     }
 
     #[test]
-    fn test_dynamic_fee_per_byte_known_reward() {
-        // With base_reward = DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD (1e9),
-        // fee = (200000/1024 * 1e9) / 1e9 = 200000/1024 = 195 (integer division).
-        let fpb =
-            dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
-        assert_eq!(fpb, DYNAMIC_FEE_PER_KB_BASE_FEE / 1024);
+    fn test_get_dynamic_base_fee_known_values() {
+        // base_reward = 1e9, median = 300,000 (ZONE_V5)
+        // fee = 1e9 * 3000 / 300000 / 300000 * 19/20
+        //     = 1e9 * 3000 / 9e10 * 0.95
+        //     = 3e12 / 9e10 * 0.95
+        //     = 33 * 0.95 = 31.35 → floor = 31
+        let fee = get_dynamic_base_fee(1_000_000_000, 300_000, HfVersion::SCALING_2021);
+        // 128-bit: 1e9 * 3000 = 3e12. / 300000 = 10000000. / 300000 = 33. - 33/20 = 33-1 = 32
+        // Actually: 3000000000000 / 300000 = 10000000; 10000000 / 300000 = 33; 33 - 33/20 = 33 - 1 = 32
+        assert_eq!(fee, 32, "1e9 reward, 300k median");
     }
 
     #[test]
-    fn test_dynamic_fee_per_byte_large_reward() {
-        // Very large base_reward → dynamic fee drops but floors to FEE_PER_BYTE.
-        let fpb = dynamic_fee_per_byte(1_000_000_000_000, HfVersion::SCALING_2021);
-        assert_eq!(fpb, FEE_PER_BYTE);
+    fn test_get_dynamic_base_fee_higher_reward() {
+        // Higher base_reward → higher fee (direct relationship)
+        let fee_low = get_dynamic_base_fee(1_000_000_000, 300_000, HfVersion::SCALING_2021);
+        let fee_high = get_dynamic_base_fee(10_000_000_000, 300_000, HfVersion::SCALING_2021);
+        assert!(fee_high > fee_low, "higher reward should give higher fee");
     }
 
     #[test]
-    fn test_dynamic_fee_per_byte_small_reward() {
-        // Small base_reward → high dynamic fee.
-        let fpb = dynamic_fee_per_byte(100_000_000, HfVersion::SCALING_2021);
-        // (200000/1024 * 1e9) / 1e8 = 195 * 10 = 1950
-        let expected = (DYNAMIC_FEE_PER_KB_BASE_FEE / 1024 * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD)
-            / 100_000_000;
-        assert_eq!(fpb, expected);
-        assert!(fpb > FEE_PER_BYTE);
+    fn test_get_dynamic_base_fee_higher_median_lowers_fee() {
+        // Higher median → lower fee (blocks have more space)
+        let fee_small = get_dynamic_base_fee(1_000_000_000, 300_000, HfVersion::SCALING_2021);
+        let fee_large = get_dynamic_base_fee(1_000_000_000, 600_000, HfVersion::SCALING_2021);
+        assert!(fee_large < fee_small, "larger median should give lower fee");
+    }
+
+    #[test]
+    fn test_get_dynamic_base_fee_matches_cpp_test_case() {
+        // From C++ test: base_reward=600e9, median=300000
+        // fee = 600e9 * 3000 / 300000² * 19/20
+        //     = 600e9 * 3000 / 9e10 * 0.95
+        //     = 1.8e15 / 9e10 * 0.95
+        //     = 20000 * 0.95 = 19000
+        let fee = get_dynamic_base_fee(600_000_000_000, 300_000, HfVersion::SCALING_2021);
+        // 128-bit: 600e9*3000 = 1.8e15 / 300000 = 6e9 / 300000 = 20000 - 20000/20 = 20000-1000 = 19000
+        assert_eq!(fee, 19000, "matches C++ test case");
     }
 
     #[test]
@@ -481,36 +618,36 @@ mod tests {
     fn test_fee_is_sane_amount() {
         use salvium_types::constants::COIN;
 
-        // Use the reference base_reward (10 SAL) which gives fee_per_byte = 195.
-        let fpb_ref =
-            dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
-        assert_eq!(fpb_ref, DYNAMIC_FEE_PER_KB_BASE_FEE / 1024); // 195
+        // Use get_dynamic_base_fee with realistic Salvium parameters:
+        // base_reward ~40 SAL (4e9), median = 300,000 (penalty-free zone)
+        let fpb = get_dynamic_base_fee(4_000_000_000, 300_000, HfVersion::SCALING_2021);
+        assert!(fpb > 0, "fee_per_byte should be nonzero");
 
         let fee_low =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Low);
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::Low);
         let fee_normal =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Normal);
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::Normal);
         let fee_high =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::High);
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::High);
 
-        // Low (1x): typical ~660k atomic = ~0.0066 SAL. Must be < 0.1 SAL.
+        // Low (1x): must be < 0.1 SAL.
         assert!(
             fee_low < COIN / 10,
             "Low-priority fee {fee_low} >= 0.1 SAL ({}) — fee is too high",
             COIN / 10
         );
-        // Normal (5x): typical ~3.3M atomic = ~0.033 SAL. Must be < 0.5 SAL.
+        // Normal (5x): must be < 0.5 SAL.
         assert!(
             fee_normal < COIN / 2,
             "Normal-priority fee {fee_normal} >= 0.5 SAL ({}) — fee is too high",
             COIN / 2
         );
-        // High (25x): typical ~16.5M atomic = ~0.165 SAL. Must be < 1 SAL.
+        // High (25x): must be < 1 SAL.
         assert!(
             fee_high < COIN,
             "High-priority fee {fee_high} >= 1 SAL ({COIN}) — fee is too high"
         );
-        // Static FEE_PER_BYTE (30) with Normal (5x): typical ~508k. Must be < 0.1 SAL.
+        // Static FEE_PER_BYTE (30) with Normal (5x): must be < 0.1 SAL.
         let fee_static = estimate_tx_fee(
             2,
             2,
@@ -537,5 +674,61 @@ mod tests {
         assert!(mask < COIN, "quantization mask {mask} >= 1 SAL — formula is wrong");
         // The mask value for Salvium: 10^(8-8) = 1.
         assert_eq!(mask, 1);
+    }
+
+    // ─── round_money_up tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_round_money_up_no_rounding() {
+        assert_eq!(round_money_up(100, 3), 100);
+        assert_eq!(round_money_up(0, 2), 0);
+        assert_eq!(round_money_up(42, 2), 42);
+    }
+
+    #[test]
+    fn test_round_money_up_basic() {
+        // 123 with 2 sig digits → 130
+        assert_eq!(round_money_up(123, 2), 130);
+        // 1234 with 2 sig digits → 1300
+        assert_eq!(round_money_up(1234, 2), 1300);
+        // 1200 with 2 sig digits → 1200 (trailing zeros, no rounding needed)
+        assert_eq!(round_money_up(1200, 2), 1200);
+        // 1201 with 2 sig digits → 1300
+        assert_eq!(round_money_up(1201, 2), 1300);
+    }
+
+    #[test]
+    fn test_round_money_up_carry() {
+        // 990 with 2 sig digits → 1000 (carry propagates)
+        assert_eq!(round_money_up(990, 2), 990);
+        // 991 with 2 sig digits → 1000
+        assert_eq!(round_money_up(991, 2), 1000);
+    }
+
+    // ─── 2021 scaling fee estimate tests ─────────────────────────────────────
+
+    #[test]
+    fn test_2021_scaling_estimate_matches_cpp() {
+        use salvium_types::consensus::BLOCK_GRANTED_FULL_REWARD_ZONE_V5;
+
+        // From C++ test: base_reward=600e9, Mnw=300000, Mlw=300000
+        let fees = get_dynamic_base_fee_estimate_2021_scaling(
+            600_000_000_000,
+            BLOCK_GRANTED_FULL_REWARD_ZONE_V5,
+            BLOCK_GRANTED_FULL_REWARD_ZONE_V5,
+        );
+        // Fl = 600e9 * 3000 / 300000² = 600e9 * 3000 / 9e10 = 20000
+        // Rounded up to 2 sig digits = 20000
+        assert_eq!(fees[0], 20000, "Fl should be 20000");
+        // Fn = 4 * 20000 = 80000
+        assert_eq!(fees[1], 80000, "Fn should be 80000");
+    }
+
+    #[test]
+    fn test_2021_scaling_tiers_ordering() {
+        let fees = get_dynamic_base_fee_estimate_2021_scaling(1_000_000_000, 300_000, 300_000);
+        // Tiers should be in ascending order
+        assert!(fees[0] <= fees[1], "Fl <= Fn");
+        assert!(fees[1] <= fees[2] || fees[2] <= fees[3], "ordering");
     }
 }

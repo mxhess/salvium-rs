@@ -77,6 +77,9 @@ pub const LONG_TERM_BLOCK_WEIGHT_WINDOW_SIZE: u64 = 100_000;
 /// Short-term block weight surge factor.
 pub const SHORT_TERM_BLOCK_WEIGHT_SURGE_FACTOR: u64 = 50;
 
+/// Reward blocks window (short-term median for fee estimate).
+pub const REWARD_BLOCKS_WINDOW: u64 = 100;
+
 // Transaction limits
 /// Maximum transaction size (bytes).
 pub const MAX_TX_SIZE: u64 = 1_000_000;
@@ -118,6 +121,10 @@ pub const DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT: u64 = 3000;
 
 /// Fee quantization decimals.
 pub const PER_KB_FEE_QUANTIZATION_DECIMALS: u32 = 8;
+
+/// Significant digits for 2021-scaling fee rounding.
+/// Matches C++ `CRYPTONOTE_SCALING_2021_FEE_ROUNDING_PLACES`.
+pub const SCALING_2021_FEE_ROUNDING_PLACES: u32 = 2;
 
 /// Fee estimate grace blocks.
 pub const FEE_ESTIMATE_GRACE_BLOCKS: u64 = 10;

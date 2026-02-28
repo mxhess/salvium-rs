@@ -10,8 +10,8 @@
 //!            salvium/src/cryptonote_core/tx_verification_utils.cpp
 
 use salvium_types::consensus::{
-    min_block_weight, DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE,
-    FEE_PER_BYTE, PER_KB_FEE_QUANTIZATION_DECIMALS,
+    min_block_weight, DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT, FEE_PER_BYTE,
+    PER_KB_FEE_QUANTIZATION_DECIMALS,
 };
 use salvium_types::constants::{
     network_config, HfVersion, Network, RctType, TxType, DEFAULT_RING_SIZE, DISPLAY_DECIMAL_POINT,
@@ -618,19 +618,18 @@ pub fn fee_quantization_mask() -> u64 {
 
 /// Calculate the required fee for a transaction.
 ///
-/// Reference: blockchain.cpp:4411-4440
-pub fn calculate_required_fee(tx_weight: u64, base_reward: u64, hf_version: u8) -> u64 {
-    let fee_per_byte = if hf_version >= HfVersion::SCALING_2021 {
-        let base_fee = DYNAMIC_FEE_PER_KB_BASE_FEE / 1024;
-        if base_reward > 0 {
-            let f = (base_fee * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD) / base_reward;
-            f.max(FEE_PER_BYTE)
-        } else {
-            FEE_PER_BYTE
-        }
-    } else {
-        FEE_PER_BYTE
-    };
+/// Uses the 2021-scaling formula matching C++ `Blockchain::check_fee()`:
+///   `fee_per_byte = block_reward * 3000 / median² * 19/20`
+///
+/// Reference: blockchain.cpp:4376-4408 (get_dynamic_base_fee)
+///            blockchain.cpp:4411-4440 (check_fee)
+pub fn calculate_required_fee(
+    tx_weight: u64,
+    base_reward: u64,
+    median_block_weight: u64,
+    hf_version: u8,
+) -> u64 {
+    let fee_per_byte = get_dynamic_base_fee(base_reward, median_block_weight, hf_version);
 
     let mut needed_fee = tx_weight * fee_per_byte;
 
@@ -642,16 +641,41 @@ pub fn calculate_required_fee(tx_weight: u64, base_reward: u64, hf_version: u8) 
     needed_fee
 }
 
+/// Compute the dynamic per-byte fee rate using the 2021-scaling formula.
+///
+/// Replicates C++ `Blockchain::get_dynamic_base_fee()`:
+///   `fee_per_byte = block_reward * 3000 / median² * 19/20`
+///
+/// Uses 128-bit intermediate arithmetic to avoid overflow.
+fn get_dynamic_base_fee(base_reward: u64, median_block_weight: u64, hf_version: u8) -> u64 {
+    let min_bw = min_block_weight(hf_version);
+    let median = median_block_weight.max(min_bw);
+
+    if median == 0 {
+        return FEE_PER_BYTE;
+    }
+
+    // 128-bit: product = base_reward * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT
+    let product = base_reward as u128 * DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT as u128;
+    // Divide by median twice: product / median² (matches two div128_64 calls in C++)
+    let divided = product / median as u128 / median as u128;
+    // Apply 0.95 factor: lo -= lo / 20
+    let fee = divided - divided / 20;
+
+    fee as u64
+}
+
 /// Validate that a transaction fee meets the minimum requirement.
 ///
-/// Allows 2% tolerance.
+/// Allows 2% tolerance (matching C++ `check_fee` behavior).
 pub fn validate_fee(
     fee: u64,
     tx_weight: u64,
     base_reward: u64,
+    median_block_weight: u64,
     hf_version: u8,
 ) -> Result<(), ValidationError> {
-    let needed = calculate_required_fee(tx_weight, base_reward, hf_version);
+    let needed = calculate_required_fee(tx_weight, base_reward, median_block_weight, hf_version);
 
     // Allow 2% tolerance
     let min_fee = needed - (needed / 50);

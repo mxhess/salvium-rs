@@ -265,13 +265,12 @@ pub fn parse_fee_priority(s: &str) -> salvium_tx::fee::FeePriority {
     }
 }
 
-/// Adjust priority from network conditions AND compute the dynamic `fee_per_byte`.
+/// Adjust priority from network conditions AND fetch the dynamic `fee_per_byte`.
 ///
-/// Uses the same block-header data for both — **zero extra RPC calls** compared to
-/// the old `adjust_priority()`:
 /// - Priority: mempool check + block fullness from the last 10 headers.
-/// - Fee rate: `BlockHeader.reward` + `BlockHeader.major_version` from the most
-///   recent header, fed into [`salvium_tx::fee::dynamic_fee_per_byte()`].
+/// - Fee rate: fetched from the daemon via `get_fee_estimate` RPC, which uses
+///   the 2021-scaling formula (`base_reward * 3000 / median²`) — the same formula
+///   the daemon's `check_fee()` validates against.
 ///
 /// Falls back to `Normal` priority and the static `FEE_PER_BYTE` on any RPC failure.
 pub async fn resolve_fee_context(
@@ -282,14 +281,14 @@ pub async fn resolve_fee_context(
         Ok(ctx) => ctx,
         Err(e) => {
             log::debug!("resolve_fee_context failed: {e}");
-            // Safe fallback: Normal priority, base_reward=0 → FEE_PER_BYTE.
+            // Safe fallback: Normal priority, static FEE_PER_BYTE.
             FeeContext {
                 priority: if priority == salvium_tx::fee::FeePriority::Default {
                     salvium_tx::fee::FeePriority::Normal
                 } else {
                     priority
                 },
-                fee_per_byte: salvium_tx::fee::dynamic_fee_per_byte(0, 0),
+                fee_per_byte: salvium_types::consensus::FEE_PER_BYTE,
             }
         }
     }
@@ -342,15 +341,12 @@ async fn try_resolve_fee_context(
         }
     };
 
-    // --- Fee per byte from last block header ---
-    // Fetch the most recent block header for base_reward + hf_version.
-    // If we already fetched headers above we could reuse them, but the
-    // mempool-early-return path may skip the header fetch, so do a
-    // targeted single-header fetch here (cheap).
-    let last_header =
-        pool.get_block_headers_range(height - 1, height - 1).await.map_err(|e| e.to_string())?;
-    let hdr = last_header.first().ok_or("no headers returned for last block")?;
-    let fee_per_byte = salvium_tx::fee::dynamic_fee_per_byte(hdr.reward, hdr.major_version);
+    // --- Fee per byte from daemon's get_fee_estimate RPC ---
+    // This uses the 2021-scaling formula internally (base_reward * 3000 / median²),
+    // matching what check_fee() validates. 10 grace blocks = standard wallet default.
+    let fee_estimate = pool.get_fee_estimate(10).await.map_err(|e| e.to_string())?;
+    let fee_per_byte = fee_estimate.fee;
+    log::info!("resolve_fee_context: daemon fee_per_byte={fee_per_byte}");
 
     Ok(FeeContext { priority: adjusted, fee_per_byte })
 }

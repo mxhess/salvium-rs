@@ -109,7 +109,7 @@ async fn resolve_fee_context(pool: &salvium_rpc::NodePool, priority: FeePriority
                 } else {
                     priority
                 },
-                fee_per_byte: fee::dynamic_fee_per_byte(0, 0),
+                fee_per_byte: salvium_types::consensus::FEE_PER_BYTE,
             }
         }
     }
@@ -160,11 +160,12 @@ async fn try_resolve_fee_context(
         }
     };
 
-    // --- Fee per byte from last block header ---
-    let last_header =
-        pool.get_block_headers_range(height - 1, height - 1).await.map_err(|e| e.to_string())?;
-    let hdr = last_header.first().ok_or("no headers returned for last block")?;
-    let fee_per_byte = fee::dynamic_fee_per_byte(hdr.reward, hdr.major_version);
+    // --- Fee per byte from daemon's get_fee_estimate RPC ---
+    // This uses the 2021-scaling formula internally (base_reward * 3000 / median²),
+    // matching what check_fee() validates. 10 grace blocks = standard wallet default.
+    let fee_estimate = pool.get_fee_estimate(10).await.map_err(|e| e.to_string())?;
+    let fee_per_byte = fee_estimate.fee;
+    log::info!("resolve_fee_context: daemon fee_per_byte={fee_per_byte}");
 
     Ok(FeeContext { priority: adjusted, fee_per_byte })
 }
