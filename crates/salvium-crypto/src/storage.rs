@@ -796,7 +796,8 @@ impl WalletDb {
     /// spent-output detection (the vast majority of on-chain key images don't
     /// match any wallet output).
     pub fn get_all_key_images(&self) -> Result<std::collections::HashSet<String>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare("SELECT key_image FROM outputs WHERE key_image IS NOT NULL")?;
+        let mut stmt =
+            self.conn.prepare("SELECT key_image FROM outputs WHERE key_image IS NOT NULL")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut set = std::collections::HashSet::new();
         for row in rows {
@@ -809,13 +810,13 @@ impl WalletDb {
     ///
     /// Used by the sync engine's output tracker cache to check if any of our
     /// outputs appear as ring members, without per-index DB queries.
-    pub fn get_all_global_indices(&self) -> Result<std::collections::HashSet<(String, i64)>, rusqlite::Error> {
+    pub fn get_all_global_indices(
+        &self,
+    ) -> Result<std::collections::HashSet<(String, i64)>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT asset_type, global_index FROM outputs WHERE global_index IS NOT NULL"
+            "SELECT asset_type, global_index FROM outputs WHERE global_index IS NOT NULL",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         let mut set = std::collections::HashSet::new();
         for row in rows {
             set.insert(row?);

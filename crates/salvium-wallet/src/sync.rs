@@ -855,12 +855,8 @@ fn execute_store_batch(
     let mut block_hashes = Vec::new();
 
     // Load in-memory caches for detect_spent_outputs to avoid ~51k DB queries per batch.
-    let mut ki_cache = db
-        .get_all_key_images()
-        .map_err(|e| WalletError::Storage(e.to_string()))?;
-    let gi_cache = db
-        .get_all_global_indices()
-        .map_err(|e| WalletError::Storage(e.to_string()))?;
+    let mut ki_cache = db.get_all_key_images().map_err(|e| WalletError::Storage(e.to_string()))?;
+    let gi_cache = db.get_all_global_indices().map_err(|e| WalletError::Storage(e.to_string()))?;
 
     for pr in parse_results {
         if pr.empty_blob {
