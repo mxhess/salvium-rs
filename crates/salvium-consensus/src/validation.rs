@@ -14,7 +14,7 @@ use salvium_types::consensus::{
     FEE_PER_BYTE, PER_KB_FEE_QUANTIZATION_DECIMALS,
 };
 use salvium_types::constants::{
-    network_config, HfVersion, Network, RctType, TxType, DISPLAY_DECIMAL_POINT, DEFAULT_RING_SIZE,
+    network_config, HfVersion, Network, RctType, TxType, DEFAULT_RING_SIZE, DISPLAY_DECIMAL_POINT,
     TRANSACTION_VERSION_2_OUTS, TRANSACTION_VERSION_CARROT,
 };
 use thiserror::Error;
@@ -637,7 +637,7 @@ pub fn calculate_required_fee(tx_weight: u64, base_reward: u64, hf_version: u8) 
     // Quantize — matches C++ `calculate_fee_from_weight`:
     //   fee = (fee + mask - 1) / mask * mask
     let mask = fee_quantization_mask();
-    needed_fee = (needed_fee + mask - 1) / mask * mask;
+    needed_fee = needed_fee.div_ceil(mask) * mask;
 
     needed_fee
 }

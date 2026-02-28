@@ -188,7 +188,7 @@ pub fn estimate_tx_fee(
     // Quantize — matches C++ `calculate_fee_from_weight`:
     //   fee = (fee + fee_quantization_mask - 1) / fee_quantization_mask * fee_quantization_mask
     let mask = fee_quantization_mask();
-    fee = (fee + mask - 1) / mask * mask;
+    fee = fee.div_ceil(mask) * mask;
     fee
 }
 
@@ -482,22 +482,28 @@ mod tests {
         use salvium_types::constants::COIN;
 
         // Use the reference base_reward (10 SAL) which gives fee_per_byte = 195.
-        let fpb_ref = dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
+        let fpb_ref =
+            dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
         assert_eq!(fpb_ref, DYNAMIC_FEE_PER_KB_BASE_FEE / 1024); // 195
 
-        let fee_low = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Low);
-        let fee_normal = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Normal);
-        let fee_high = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::High);
+        let fee_low =
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Low);
+        let fee_normal =
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Normal);
+        let fee_high =
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::High);
 
         // Low (1x): typical ~660k atomic = ~0.0066 SAL. Must be < 0.1 SAL.
         assert!(
             fee_low < COIN / 10,
-            "Low-priority fee {fee_low} >= 0.1 SAL ({}) — fee is too high", COIN / 10
+            "Low-priority fee {fee_low} >= 0.1 SAL ({}) — fee is too high",
+            COIN / 10
         );
         // Normal (5x): typical ~3.3M atomic = ~0.033 SAL. Must be < 0.5 SAL.
         assert!(
             fee_normal < COIN / 2,
-            "Normal-priority fee {fee_normal} >= 0.5 SAL ({}) — fee is too high", COIN / 2
+            "Normal-priority fee {fee_normal} >= 0.5 SAL ({}) — fee is too high",
+            COIN / 2
         );
         // High (25x): typical ~16.5M atomic = ~0.165 SAL. Must be < 1 SAL.
         assert!(
@@ -505,7 +511,15 @@ mod tests {
             "High-priority fee {fee_high} >= 1 SAL ({COIN}) — fee is too high"
         );
         // Static FEE_PER_BYTE (30) with Normal (5x): typical ~508k. Must be < 0.1 SAL.
-        let fee_static = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Normal);
+        let fee_static = estimate_tx_fee(
+            2,
+            2,
+            16,
+            true,
+            output_type::CARROT_V1,
+            FEE_PER_BYTE,
+            FeePriority::Normal,
+        );
         assert!(
             fee_static < COIN / 10,
             "Static-rate Normal fee {fee_static} >= 0.1 SAL — fee is too high"
