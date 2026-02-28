@@ -55,7 +55,7 @@ impl ScanContext {
 }
 
 /// A single transaction output ready for scanning.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TxOutput {
     /// Output index within the transaction.
     pub index: u32,

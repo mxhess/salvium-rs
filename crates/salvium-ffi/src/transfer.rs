@@ -644,9 +644,19 @@ async fn build_sign_maybe_broadcast(
                     .ok_or("CARROT output missing shared_secret")?,
             )?;
 
-            let commitment = hex_to_32(
-                output_row.commitment.as_deref().ok_or("CARROT output missing commitment")?,
-            )?;
+            let commitment = if let Some(c) = output_row.commitment.as_deref() {
+                hex_to_32(c)?
+            } else {
+                // Fallback: recompute commitment from mask + amount (matches C++ wallet2 approach).
+                let mask_hex = output_row.mask.as_deref().ok_or("CARROT output missing mask")?;
+                let mask = hex_to_32(mask_hex)?;
+                let amount =
+                    output_row.amount.parse::<u64>().map_err(|e| format!("bad amount: {e}"))?;
+                let c = salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &mask);
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&c[..32]);
+                arr
+            };
 
             // Adjust keys for subaddress outputs.
             let (adj_gik, adj_psk) = salvium_crypto::subaddress::carrot_adjust_keys_for_subaddress(

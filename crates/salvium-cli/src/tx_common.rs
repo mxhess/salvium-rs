@@ -81,9 +81,19 @@ impl<'a> TxPipeline<'a> {
                         .as_deref()
                         .ok_or("CARROT output missing shared_secret")?,
                 )?;
-                let commitment = hex_to_32(
-                    output.commitment.as_deref().ok_or("CARROT output missing commitment")?,
-                )?;
+                let commitment = if let Some(c) = output.commitment.as_deref() {
+                    hex_to_32(c)?
+                } else {
+                    // Fallback: recompute from mask + amount (matches C++ wallet2).
+                    let mask_hex = output.mask.as_deref().ok_or("CARROT output missing mask")?;
+                    let mask = hex_to_32(mask_hex)?;
+                    let amount =
+                        output.amount.parse::<u64>().map_err(|e| format!("bad amount: {e}"))?;
+                    let c = salvium_crypto::pedersen_commit(&amount.to_le_bytes(), &mask);
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&c[..32]);
+                    arr
+                };
                 let (sk_x, sk_y) = salvium_crypto::carrot_scan::derive_carrot_spend_keys(
                     &carrot_prove_spend,
                     &keys.carrot.generate_image_key,

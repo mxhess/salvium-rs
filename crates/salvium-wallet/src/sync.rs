@@ -127,7 +127,7 @@ struct StoreResultMsg {
     /// Block hashes from the committed batch (for reorg checking without DB lock).
     block_hashes: Vec<(u64, String)>,
     /// The highest block height committed in this batch.
-    _committed_height: u64,
+    committed_height: u64,
     /// Number of outputs found in this batch.
     outputs_found: usize,
     /// Number of parse errors in this batch.
@@ -205,6 +205,7 @@ impl SyncEngine {
         }
 
         let mut current = sync_height as u64;
+        let mut committed_height = sync_height as u64;
         let mut total_outputs_found = 0usize;
         let mut total_parse_errors = 0usize;
         let mut total_empty_blobs = 0usize;
@@ -245,6 +246,7 @@ impl SyncEngine {
                     apply_store_result(
                         scan_ctx,
                         &mut block_hash_cache,
+                        &mut committed_height,
                         &mut total_outputs_found,
                         &mut total_parse_errors,
                         &mut total_empty_blobs,
@@ -316,6 +318,7 @@ impl SyncEngine {
                                     apply_store_result(
                                         scan_ctx,
                                         &mut block_hash_cache,
+                                        &mut committed_height,
                                         &mut total_outputs_found,
                                         &mut total_parse_errors,
                                         &mut total_empty_blobs,
@@ -397,6 +400,7 @@ impl SyncEngine {
                     apply_store_result(
                         scan_ctx,
                         &mut block_hash_cache,
+                        &mut committed_height,
                         &mut total_outputs_found,
                         &mut total_parse_errors,
                         &mut total_empty_blobs,
@@ -473,10 +477,12 @@ impl SyncEngine {
                 current = batch_end;
 
                 // ── 5. Progress event (one per batch) ───────────────────────
+                // Report committed_height (what the store worker has persisted)
+                // so it stays consistent with salvium_wallet_sync_height().
                 if let Some(tx) = event_tx {
                     let _ = tx
                         .send(SyncEvent::Progress {
-                            current_height: current,
+                            current_height: committed_height,
                             target_height: top_block,
                             outputs_found: total_outputs_found,
                             parse_errors: total_parse_errors,
@@ -504,6 +510,7 @@ impl SyncEngine {
             if let Err(e) = apply_store_result(
                 scan_ctx,
                 &mut block_hash_cache,
+                &mut committed_height,
                 &mut total_outputs_found,
                 &mut total_parse_errors,
                 &mut total_empty_blobs,
@@ -546,6 +553,10 @@ struct FoundOutputInfo {
     block_height: u64,
     tx_type: u8,
     unlock_time: u64,
+    /// Pedersen commitment (outPk) for this output — needed for CARROT spend key derivation.
+    commitment: Option<[u8; 32]>,
+    /// Per-output unlock_time from the on-chain output target struct.
+    output_unlock_time: u64,
 }
 
 /// Data from a regular (non-coinbase) transaction carried from the parallel
@@ -645,6 +656,7 @@ fn parse_and_scan_block(
             {
                 let found = scanner::scan_transaction(&scan_ctx, &scan_data);
                 for fo in &found {
+                    let tx_out = scan_data.outputs.get(fo.output_index as usize);
                     outputs.push((
                         fo.clone(),
                         FoundOutputInfo {
@@ -655,6 +667,10 @@ fn parse_and_scan_block(
                             block_height: height,
                             tx_type: scan_data.tx_type,
                             unlock_time: scan_data.unlock_time,
+                            commitment: tx_out.and_then(|o| o.commitment),
+                            output_unlock_time: tx_out
+                                .map(|o| o.unlock_time)
+                                .unwrap_or(scan_data.unlock_time),
                         },
                     ));
                 }
@@ -714,6 +730,7 @@ fn parse_and_scan_block(
             {
                 let found = scanner::scan_transaction(&scan_ctx, &scan_data);
                 for fo in &found {
+                    let tx_out = scan_data.outputs.get(fo.output_index as usize);
                     outputs.push((
                         fo.clone(),
                         FoundOutputInfo {
@@ -724,6 +741,10 @@ fn parse_and_scan_block(
                             block_height: height,
                             tx_type: scan_data.tx_type,
                             unlock_time: scan_data.unlock_time,
+                            commitment: tx_out.and_then(|o| o.commitment),
+                            output_unlock_time: tx_out
+                                .map(|o| o.unlock_time)
+                                .unwrap_or(scan_data.unlock_time),
                         },
                     ));
                 }
@@ -781,6 +802,7 @@ fn parse_and_scan_block(
                 let (tx_pub_key, tx_type, unlock_time) = if let Some(ref sd) = scan_result {
                     let found = scanner::scan_transaction(&scan_ctx, sd);
                     for fo in &found {
+                        let tx_out = sd.outputs.get(fo.output_index as usize);
                         found_pairs.push((
                             fo.clone(),
                             FoundOutputInfo {
@@ -791,6 +813,10 @@ fn parse_and_scan_block(
                                 block_height: height,
                                 tx_type: sd.tx_type,
                                 unlock_time: sd.unlock_time,
+                                commitment: tx_out.and_then(|o| o.commitment),
+                                output_unlock_time: tx_out
+                                    .map(|o| o.unlock_time)
+                                    .unwrap_or(sd.unlock_time),
                             },
                         ));
                     }
@@ -1073,7 +1099,7 @@ fn store_worker_loop(
                 let _ = result_tx.send(StoreResultMsg {
                     new_cn_subaddr_entries: new_entries,
                     block_hashes: batch_result.block_hashes,
-                    _committed_height: batch_result.max_height,
+                    committed_height: batch_result.max_height,
                     outputs_found: batch_result.outputs_found,
                     parse_errors: batch_result.parse_errors,
                     empty_blobs: batch_result.empty_blobs,
@@ -1090,7 +1116,7 @@ fn store_worker_loop(
                 let _ = result_tx.send(StoreResultMsg {
                     new_cn_subaddr_entries: Vec::new(),
                     block_hashes: Vec::new(),
-                    _committed_height: 0,
+                    committed_height: 0,
                     outputs_found: 0,
                     parse_errors: 0,
                     empty_blobs: 0,
@@ -1109,6 +1135,7 @@ fn store_worker_loop(
 fn apply_store_result(
     scan_ctx: &mut ScanContext,
     block_hash_cache: &mut std::collections::HashMap<u64, String>,
+    committed_height: &mut u64,
     total_outputs_found: &mut usize,
     total_parse_errors: &mut usize,
     total_empty_blobs: &mut usize,
@@ -1116,6 +1143,11 @@ fn apply_store_result(
 ) -> Result<(), WalletError> {
     if let Some(ref e) = result.error {
         return Err(WalletError::Sync(format!("store worker error: {}", e)));
+    }
+
+    // Update committed height to reflect what the store worker has actually persisted.
+    if result.committed_height > *committed_height {
+        *committed_height = result.committed_height;
     }
 
     // Merge new cn_subaddress_map entries.
@@ -1155,11 +1187,16 @@ fn store_found_output_row(
     info: &FoundOutputInfo,
 ) -> Result<(), WalletError> {
     // Build a minimal ScanTxData for store_found_outputs compatibility.
+    // Include a stub TxOutput at the correct index so commitment and
+    // per-output unlock_time are available during storage.
+    let mut outputs = vec![TxOutput::default(); found.output_index as usize + 1];
+    outputs[found.output_index as usize].commitment = info.commitment;
+    outputs[found.output_index as usize].unlock_time = info.output_unlock_time;
     let scan_data = ScanTxData {
         tx_hash: info.tx_hash,
         tx_pub_key: info.tx_pub_key,
         additional_pubkeys: vec![],
-        outputs: vec![], // not needed for storage
+        outputs,
         is_coinbase: info.is_coinbase,
         block_height: info.block_height,
         first_key_image: None,
