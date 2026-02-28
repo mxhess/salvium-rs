@@ -8,7 +8,7 @@ use salvium_types::consensus::{
     DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE, FEE_PER_BYTE,
     PER_KB_FEE_QUANTIZATION_DECIMALS,
 };
-use salvium_types::constants::HfVersion;
+use salvium_types::constants::{HfVersion, DISPLAY_DECIMAL_POINT};
 
 use crate::types::{output_type, rct_type};
 
@@ -160,12 +160,14 @@ pub fn dynamic_fee_per_byte(base_reward: u64, hf_version: u8) -> u64 {
     }
 }
 
-/// Fee quantization mask: `10^PER_KB_FEE_QUANTIZATION_DECIMALS - 1`.
+/// Fee quantization mask: `10^(DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS)`.
 ///
-/// Fees are rounded up to the next multiple of `(mask + 1)` to match the C++ daemon's
-/// `fee_quantization_mask` logic.
+/// Matches C++ `Blockchain::get_fee_quantization_mask()` which computes:
+///   `PowerOf<10, CRYPTONOTE_DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS>::Value`
+///
+/// With DISPLAY_DECIMAL_POINT=8 and QUANTIZATION_DECIMALS=8, mask = 10^0 = 1 (no quantization).
 pub fn fee_quantization_mask() -> u64 {
-    10u64.pow(PER_KB_FEE_QUANTIZATION_DECIMALS) - 1
+    10u64.pow(DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS)
 }
 
 /// Estimate the fee for a transaction.
@@ -183,9 +185,10 @@ pub fn estimate_tx_fee(
 ) -> u64 {
     let weight = estimate_tx_weight(num_inputs, num_outputs, ring_size, use_tclsag, out_type);
     let mut fee = weight as u64 * fee_per_byte * priority.multiplier();
-    // Quantize (matches C++ fee_quantization_mask logic).
+    // Quantize — matches C++ `calculate_fee_from_weight`:
+    //   fee = (fee + fee_quantization_mask - 1) / fee_quantization_mask * fee_quantization_mask
     let mask = fee_quantization_mask();
-    fee = ((fee + mask) / (mask + 1)) * (mask + 1);
+    fee = (fee + mask - 1) / mask * mask;
     fee
 }
 
@@ -362,11 +365,9 @@ mod tests {
     fn test_estimate_fee_simple() {
         let fee = estimate_fee_simple(2, 2, FEE_PER_BYTE);
         assert!(fee > 0);
-        // Should be quantized: weight * FEE_PER_BYTE * 5 rounded up to quantization boundary.
+        // With mask=1, fee = weight * FEE_PER_BYTE * Normal(5), no rounding.
         let weight = estimate_tx_weight(2, 2, 16, true, output_type::CARROT_V1);
-        let raw = (weight as u64) * FEE_PER_BYTE * 5;
-        let mask = fee_quantization_mask();
-        let expected = ((raw + mask) / (mask + 1)) * (mask + 1);
+        let expected = (weight as u64) * FEE_PER_BYTE * 5;
         assert_eq!(fee, expected);
     }
 
@@ -456,16 +457,71 @@ mod tests {
 
     #[test]
     fn test_fee_quantization_mask() {
-        // PER_KB_FEE_QUANTIZATION_DECIMALS = 8, so mask = 10^8 - 1 = 99_999_999.
-        assert_eq!(fee_quantization_mask(), 99_999_999);
+        // C++ formula: 10^(DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS) = 10^(8-8) = 1.
+        assert_eq!(fee_quantization_mask(), 1);
     }
 
     #[test]
     fn test_fee_quantization_applied() {
-        // Fees should be rounded up to next multiple of (mask+1) = 100_000_000.
+        // With mask=1, fees are multiples of 1 (every integer), so no rounding occurs.
         let fee =
             estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Low);
-        let quantum = fee_quantization_mask() + 1; // 100_000_000
-        assert_eq!(fee % quantum, 0, "fee {} should be a multiple of {}", fee, quantum);
+        let mask = fee_quantization_mask();
+        assert_eq!(mask, 1, "mask should be 1");
+        // Fee should equal raw weight * fee_per_byte * priority (no rounding with mask=1).
+        let weight = estimate_tx_weight(2, 2, 16, true, output_type::CARROT_V1);
+        let expected = weight as u64 * FEE_PER_BYTE * FeePriority::Low.multiplier();
+        assert_eq!(fee, expected);
+    }
+
+    /// Sanity check: a standard 2-in 2-out transaction fee must never approach
+    /// 1 SAL. The old quantization bug (mask=10^8-1) rounded every fee UP to
+    /// 100,000,000 atomic units = 1 whole SAL. This test catches that class of bug.
+    #[test]
+    fn test_fee_is_sane_amount() {
+        use salvium_types::constants::COIN;
+
+        // Use the reference base_reward (10 SAL) which gives fee_per_byte = 195.
+        let fpb_ref = dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
+        assert_eq!(fpb_ref, DYNAMIC_FEE_PER_KB_BASE_FEE / 1024); // 195
+
+        let fee_low = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Low);
+        let fee_normal = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::Normal);
+        let fee_high = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb_ref, FeePriority::High);
+
+        // Low (1x): typical ~660k atomic = ~0.0066 SAL. Must be < 0.1 SAL.
+        assert!(
+            fee_low < COIN / 10,
+            "Low-priority fee {fee_low} >= 0.1 SAL ({}) — fee is too high", COIN / 10
+        );
+        // Normal (5x): typical ~3.3M atomic = ~0.033 SAL. Must be < 0.5 SAL.
+        assert!(
+            fee_normal < COIN / 2,
+            "Normal-priority fee {fee_normal} >= 0.5 SAL ({}) — fee is too high", COIN / 2
+        );
+        // High (25x): typical ~16.5M atomic = ~0.165 SAL. Must be < 1 SAL.
+        assert!(
+            fee_high < COIN,
+            "High-priority fee {fee_high} >= 1 SAL ({COIN}) — fee is too high"
+        );
+        // Static FEE_PER_BYTE (30) with Normal (5x): typical ~508k. Must be < 0.1 SAL.
+        let fee_static = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Normal);
+        assert!(
+            fee_static < COIN / 10,
+            "Static-rate Normal fee {fee_static} >= 0.1 SAL — fee is too high"
+        );
+    }
+
+    /// The fee quantization mask must match the C++ formula exactly:
+    /// `10^(CRYPTONOTE_DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS)`
+    /// NOT `10^PER_KB_FEE_QUANTIZATION_DECIMALS - 1` (which was the previous bug).
+    #[test]
+    fn test_fee_quantization_mask_matches_cpp() {
+        use salvium_types::constants::COIN;
+        let mask = fee_quantization_mask();
+        // With DISPLAY=8, QUANT=8: mask = 10^0 = 1. Must never be >= COIN.
+        assert!(mask < COIN, "quantization mask {mask} >= 1 SAL — formula is wrong");
+        // The mask value for Salvium: 10^(8-8) = 1.
+        assert_eq!(mask, 1);
     }
 }

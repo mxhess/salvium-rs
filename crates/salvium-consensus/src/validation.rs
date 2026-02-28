@@ -14,7 +14,7 @@ use salvium_types::consensus::{
     FEE_PER_BYTE, PER_KB_FEE_QUANTIZATION_DECIMALS,
 };
 use salvium_types::constants::{
-    network_config, HfVersion, Network, RctType, TxType, DEFAULT_RING_SIZE,
+    network_config, HfVersion, Network, RctType, TxType, DISPLAY_DECIMAL_POINT, DEFAULT_RING_SIZE,
     TRANSACTION_VERSION_2_OUTS, TRANSACTION_VERSION_CARROT,
 };
 use thiserror::Error;
@@ -610,8 +610,10 @@ pub fn validate_output_amounts_overflow(amounts: &[u64]) -> Result<(), Validatio
 // =============================================================================
 
 /// Get the fee quantization mask.
+/// Matches C++ `Blockchain::get_fee_quantization_mask()`:
+///   `PowerOf<10, CRYPTONOTE_DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS>::Value`
 pub fn fee_quantization_mask() -> u64 {
-    10u64.pow(PER_KB_FEE_QUANTIZATION_DECIMALS) - 1
+    10u64.pow(DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS)
 }
 
 /// Calculate the required fee for a transaction.
@@ -632,9 +634,10 @@ pub fn calculate_required_fee(tx_weight: u64, base_reward: u64, hf_version: u8) 
 
     let mut needed_fee = tx_weight * fee_per_byte;
 
-    // Quantize
+    // Quantize — matches C++ `calculate_fee_from_weight`:
+    //   fee = (fee + mask - 1) / mask * mask
     let mask = fee_quantization_mask();
-    needed_fee = ((needed_fee + mask) / (mask + 1)) * (mask + 1);
+    needed_fee = (needed_fee + mask - 1) / mask * mask;
 
     needed_fee
 }
@@ -975,7 +978,8 @@ mod tests {
     #[test]
     fn test_fee_quantization() {
         let mask = fee_quantization_mask();
-        assert_eq!(mask, 99_999_999); // 10^8 - 1
+        // C++ formula: 10^(DISPLAY_DECIMAL_POINT - PER_KB_FEE_QUANTIZATION_DECIMALS) = 10^(8-8) = 1
+        assert_eq!(mask, 1);
     }
 
     #[test]
