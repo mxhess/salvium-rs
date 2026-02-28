@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: Build all crates
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: salvium-types
@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: salvium-crypto (unit)
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: salvium-wallet (unit + integration compile)
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: salvium-miner
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     container: rust:alpine
     steps:
-      - run: apk add --no-cache musl-dev perl make git g++ cmake
+      - run: apk add --no-cache musl-dev perl make git g++ cmake tar
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: Doc tests
