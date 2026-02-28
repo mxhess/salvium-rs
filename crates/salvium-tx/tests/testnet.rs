@@ -233,8 +233,10 @@ async fn test_address_generation_testnet() {
 async fn test_fee_estimation_realistic() {
     use salvium_tx::fee::{estimate_tx_fee, FeePriority};
 
+    use salvium_types::consensus::FEE_PER_BYTE;
+
     // Standard transfer: 2 inputs, 2 outputs, ring size 16, TCLSAG, CARROT.
-    let fee = estimate_tx_fee(2, 2, 16, true, 0x04, FeePriority::Normal);
+    let fee = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Normal);
     assert!(fee > 0, "fee should be positive");
 
     let fee_sal = fee as f64 / 1e9;
@@ -242,9 +244,9 @@ async fn test_fee_estimation_realistic() {
     assert!(fee_sal < 1.0, "fee should be less than 1 SAL for a normal TX");
 
     // Compare priorities.
-    let fee_low = estimate_tx_fee(2, 2, 16, true, 0x04, FeePriority::Low);
-    let fee_high = estimate_tx_fee(2, 2, 16, true, 0x04, FeePriority::High);
-    let fee_highest = estimate_tx_fee(2, 2, 16, true, 0x04, FeePriority::Highest);
+    let fee_low = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Low);
+    let fee_high = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::High);
+    let fee_highest = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Highest);
 
     assert!(fee_low <= fee, "low priority fee should be <= normal");
     assert!(fee_high >= fee, "high priority fee should be >= normal");
@@ -319,6 +321,7 @@ async fn test_build_and_sign_with_real_decoys() {
         DEFAULT_RING_SIZE,
         true,
         0x04,
+        salvium_types::consensus::FEE_PER_BYTE,
         salvium_tx::fee::FeePriority::Normal,
     );
     let change = amount - send_amount - fee;

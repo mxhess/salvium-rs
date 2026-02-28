@@ -265,6 +265,7 @@ impl TransactionBuilder {
                 ring_size,
                 use_tclsag,
                 out_type,
+                salvium_types::consensus::FEE_PER_BYTE,
                 self.priority,
             )
         });

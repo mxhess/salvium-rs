@@ -264,9 +264,10 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     println!("  Amount: {} SAL", format_sal_u64(amount));
     println!();
 
-    let fee_priority =
-        tx_common::adjust_priority(salvium_tx::fee::FeePriority::Default, &ctx.pool).await;
-    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
+    let fee_ctx =
+        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await;
+    let est_fee =
+        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
 
     let balance = wallet.get_balance("SAL", 0)?;
@@ -286,7 +287,7 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     }
 
     // 1. Select UTXOs and derive per-output secret keys.
-    let pipeline = TxPipeline::new(&wallet, ctx, fee_priority);
+    let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
     let (input_data, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,

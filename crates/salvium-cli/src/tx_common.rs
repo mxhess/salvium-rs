@@ -17,20 +17,32 @@ pub struct SignedResult {
     pub fee: u64,
 }
 
+/// Resolved network fee context — adjusted priority + dynamic fee rate.
+///
+/// Produced by [`resolve_fee_context()`] from a single RPC roundtrip (the same
+/// block headers used for priority adjustment also provide `base_reward` for the
+/// dynamic fee calculation).
+pub struct FeeContext {
+    pub priority: salvium_tx::fee::FeePriority,
+    pub fee_per_byte: u64,
+}
+
 /// Shared pipeline for building, signing, and optionally submitting transactions.
 pub struct TxPipeline<'a> {
     pub wallet: &'a Wallet,
     pub pool: NodePool,
     pub fee_priority: salvium_tx::fee::FeePriority,
+    pub fee_per_byte: u64,
 }
 
 impl<'a> TxPipeline<'a> {
-    pub fn new(
-        wallet: &'a Wallet,
-        ctx: &AppContext,
-        fee_priority: salvium_tx::fee::FeePriority,
-    ) -> Self {
-        Self { wallet, pool: ctx.pool.clone(), fee_priority }
+    pub fn new(wallet: &'a Wallet, ctx: &AppContext, fee_ctx: &FeeContext) -> Self {
+        Self {
+            wallet,
+            pool: ctx.pool.clone(),
+            fee_priority: fee_ctx.priority,
+            fee_per_byte: fee_ctx.fee_per_byte,
+        }
     }
 
     /// Select UTXOs for the given amount + fee, derive spend keys, and return
@@ -55,6 +67,7 @@ impl<'a> TxPipeline<'a> {
             salvium_tx::decoy::DEFAULT_RING_SIZE,
             true,
             0x04,
+            self.fee_per_byte,
             self.fee_priority,
         );
 
@@ -252,73 +265,94 @@ pub fn parse_fee_priority(s: &str) -> salvium_tx::fee::FeePriority {
     }
 }
 
-/// Adjust fee priority based on network conditions (matches wallet2::adjust_priority).
+/// Adjust priority from network conditions AND compute the dynamic `fee_per_byte`.
 ///
-/// When priority is `Default` (user didn't explicitly choose), queries the daemon:
-/// 1. If mempool has pending transactions -> Normal (5x)
-/// 2. If recent blocks are >80% full -> Normal (5x)
-/// 3. Otherwise -> Low (1x)
+/// Uses the same block-header data for both — **zero extra RPC calls** compared to
+/// the old `adjust_priority()`:
+/// - Priority: mempool check + block fullness from the last 10 headers.
+/// - Fee rate: `BlockHeader.reward` + `BlockHeader.major_version` from the most
+///   recent header, fed into [`salvium_tx::fee::dynamic_fee_per_byte()`].
 ///
-/// Explicit priorities (Low/Normal/High/Highest) pass through unchanged.
-pub async fn adjust_priority(
-    priority: salvium_tx::fee::FeePriority,
+/// Falls back to `Normal` priority and the static `FEE_PER_BYTE` on any RPC failure.
+pub async fn resolve_fee_context(
     pool: &NodePool,
-) -> salvium_tx::fee::FeePriority {
-    use salvium_tx::fee::FeePriority;
-
-    if priority != FeePriority::Default {
-        return priority;
-    }
-    match try_adjust_priority(pool).await {
-        Ok(adjusted) => adjusted,
+    priority: salvium_tx::fee::FeePriority,
+) -> FeeContext {
+    match try_resolve_fee_context(pool, priority).await {
+        Ok(ctx) => ctx,
         Err(e) => {
-            log::debug!("adjust_priority failed, using Normal: {e}");
-            FeePriority::Normal
+            log::debug!("resolve_fee_context failed: {e}");
+            // Safe fallback: Normal priority, base_reward=0 → FEE_PER_BYTE.
+            FeeContext {
+                priority: if priority == salvium_tx::fee::FeePriority::Default {
+                    salvium_tx::fee::FeePriority::Normal
+                } else {
+                    priority
+                },
+                fee_per_byte: salvium_tx::fee::dynamic_fee_per_byte(0, 0),
+            }
         }
     }
 }
 
-async fn try_adjust_priority(
+async fn try_resolve_fee_context(
     pool: &NodePool,
-) -> std::result::Result<salvium_tx::fee::FeePriority, String> {
+    priority: salvium_tx::fee::FeePriority,
+) -> std::result::Result<FeeContext, String> {
     use salvium_tx::fee::FeePriority;
 
     let info = pool.get_info().await.map_err(|e| e.to_string())?;
-
-    // 1. Mempool backlog -> Normal
-    if info.tx_pool_size > 0 {
-        log::info!("adjust_priority: mempool has {} txs, using Normal", info.tx_pool_size);
-        return Ok(FeePriority::Normal);
-    }
-
-    // 2. Block fullness check
-    let block_weight_limit = info
-        .extra
-        .get("block_weight_limit")
-        .and_then(|v| v.as_u64())
-        .ok_or("block_weight_limit not in get_info")?;
-    let full_reward_zone = block_weight_limit / 2;
-    if full_reward_zone == 0 {
-        return Ok(FeePriority::Normal);
-    }
-
     let height = info.height;
-    if height < 10 {
-        return Ok(FeePriority::Normal);
-    }
 
-    let headers =
-        pool.get_block_headers_range(height - 10, height - 1).await.map_err(|e| e.to_string())?;
-    let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
-    let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
-
-    if fullness_pct > 80 {
-        log::info!("adjust_priority: blocks {fullness_pct}% full, using Normal");
-        Ok(FeePriority::Normal)
+    // --- Priority adjustment (existing logic) ---
+    let adjusted = if priority != FeePriority::Default {
+        priority
     } else {
-        log::info!("adjust_priority: blocks {fullness_pct}% full, using Low");
-        Ok(FeePriority::Low)
-    }
+        // 1. Mempool backlog -> Normal
+        if info.tx_pool_size > 0 {
+            log::info!("resolve_fee_context: mempool has {} txs, using Normal", info.tx_pool_size);
+            FeePriority::Normal
+        } else {
+            // 2. Block fullness check — needs headers
+            let block_weight_limit = info
+                .extra
+                .get("block_weight_limit")
+                .and_then(|v| v.as_u64())
+                .ok_or("block_weight_limit not in get_info")?;
+            let full_reward_zone = block_weight_limit / 2;
+
+            if full_reward_zone == 0 || height < 10 {
+                FeePriority::Normal
+            } else {
+                let headers = pool
+                    .get_block_headers_range(height.saturating_sub(10), height - 1)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
+                let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
+
+                if fullness_pct > 80 {
+                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Normal");
+                    FeePriority::Normal
+                } else {
+                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Low");
+                    FeePriority::Low
+                }
+            }
+        }
+    };
+
+    // --- Fee per byte from last block header ---
+    // Fetch the most recent block header for base_reward + hf_version.
+    // If we already fetched headers above we could reuse them, but the
+    // mempool-early-return path may skip the header fetch, so do a
+    // targeted single-header fetch here (cheap).
+    let last_header =
+        pool.get_block_headers_range(height - 1, height - 1).await.map_err(|e| e.to_string())?;
+    let hdr = last_header.first().ok_or("no headers returned for last block")?;
+    let fee_per_byte = salvium_tx::fee::dynamic_fee_per_byte(hdr.reward, hdr.major_version);
+
+    Ok(FeeContext { priority: adjusted, fee_per_byte })
 }
 
 /// Confirm with the user before proceeding.

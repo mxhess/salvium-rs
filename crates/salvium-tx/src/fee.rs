@@ -4,10 +4,11 @@
 //! output count, ring size) and computes fees using per-byte fee constants
 //! from salvium-consensus.
 
-use salvium_types::consensus::minimum_fee;
-
-#[cfg(test)]
-use salvium_types::consensus::FEE_PER_BYTE;
+use salvium_types::consensus::{
+    DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, DYNAMIC_FEE_PER_KB_BASE_FEE, FEE_PER_BYTE,
+    PER_KB_FEE_QUANTIZATION_DECIMALS,
+};
+use salvium_types::constants::HfVersion;
 
 use crate::types::{output_type, rct_type};
 
@@ -138,28 +139,65 @@ pub fn estimate_tx_weight(
     }
 }
 
+/// Compute the dynamic per-byte fee rate from the current base block reward.
+///
+/// Replicates the C++ formula from `blockchain.cpp get_dynamic_base_fee_estimate()`:
+///   fee_per_byte = max((DYNAMIC_FEE_PER_KB_BASE_FEE / 1024 * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD) / base_reward, FEE_PER_BYTE)
+///
+/// This is a pure function — no RPC calls needed. Pass `BlockHeader.reward` and
+/// `BlockHeader.major_version` from block headers already fetched for priority adjustment.
+pub fn dynamic_fee_per_byte(base_reward: u64, hf_version: u8) -> u64 {
+    if hf_version >= HfVersion::SCALING_2021 {
+        let base_fee = DYNAMIC_FEE_PER_KB_BASE_FEE / 1024;
+        if base_reward > 0 {
+            let f = (base_fee * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD) / base_reward;
+            f.max(FEE_PER_BYTE)
+        } else {
+            FEE_PER_BYTE
+        }
+    } else {
+        FEE_PER_BYTE
+    }
+}
+
+/// Fee quantization mask: `10^PER_KB_FEE_QUANTIZATION_DECIMALS - 1`.
+///
+/// Fees are rounded up to the next multiple of `(mask + 1)` to match the C++ daemon's
+/// `fee_quantization_mask` logic.
+pub fn fee_quantization_mask() -> u64 {
+    10u64.pow(PER_KB_FEE_QUANTIZATION_DECIMALS) - 1
+}
+
 /// Estimate the fee for a transaction.
+///
+/// `fee_per_byte` should come from [`dynamic_fee_per_byte()`]. The fee is quantized
+/// upward to match the daemon's rounding.
 pub fn estimate_tx_fee(
     num_inputs: usize,
     num_outputs: usize,
     ring_size: usize,
     use_tclsag: bool,
     out_type: u8,
+    fee_per_byte: u64,
     priority: FeePriority,
 ) -> u64 {
     let weight = estimate_tx_weight(num_inputs, num_outputs, ring_size, use_tclsag, out_type);
-    let base_fee = minimum_fee(weight as u64, 0, 2);
-    base_fee * priority.multiplier()
+    let mut fee = weight as u64 * fee_per_byte * priority.multiplier();
+    // Quantize (matches C++ fee_quantization_mask logic).
+    let mask = fee_quantization_mask();
+    fee = ((fee + mask) / (mask + 1)) * (mask + 1);
+    fee
 }
 
 /// Quick fee estimate using defaults (CARROT, TCLSAG, Normal priority).
-pub fn estimate_fee_simple(num_inputs: usize, num_outputs: usize) -> u64 {
+pub fn estimate_fee_simple(num_inputs: usize, num_outputs: usize, fee_per_byte: u64) -> u64 {
     estimate_tx_fee(
         num_inputs,
         num_outputs,
         DEFAULT_RING_SIZE,
         true,
         output_type::CARROT_V1,
+        fee_per_byte,
         FeePriority::Normal,
     )
 }
@@ -269,26 +307,67 @@ mod tests {
 
     #[test]
     fn test_fee_estimation_nonzero() {
-        let fee = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FeePriority::Normal);
+        let fee = estimate_tx_fee(
+            2,
+            2,
+            16,
+            true,
+            output_type::CARROT_V1,
+            FEE_PER_BYTE,
+            FeePriority::Normal,
+        );
         assert!(fee > 0, "fee should be nonzero");
     }
 
     #[test]
     fn test_fee_increases_with_priority() {
-        let low = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FeePriority::Low);
-        let normal = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FeePriority::Normal);
-        let high = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FeePriority::High);
-        assert!(normal > low);
-        assert!(high > normal);
+        let low =
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Low);
+        let normal = estimate_tx_fee(
+            2,
+            2,
+            16,
+            true,
+            output_type::CARROT_V1,
+            FEE_PER_BYTE,
+            FeePriority::Normal,
+        );
+        let high = estimate_tx_fee(
+            2,
+            2,
+            16,
+            true,
+            output_type::CARROT_V1,
+            FEE_PER_BYTE,
+            FeePriority::High,
+        );
+        let highest = estimate_tx_fee(
+            2,
+            2,
+            16,
+            true,
+            output_type::CARROT_V1,
+            FEE_PER_BYTE,
+            FeePriority::Highest,
+        );
+        // With quantization, low/normal may round to the same quantum.
+        // But the ordering must hold weakly (>=), and extreme priorities must differ.
+        assert!(normal >= low);
+        assert!(high >= normal);
+        assert!(highest > high, "Highest priority should exceed High");
+        assert!(highest > low, "Highest priority should exceed Low");
     }
 
     #[test]
     fn test_estimate_fee_simple() {
-        let fee = estimate_fee_simple(2, 2);
+        let fee = estimate_fee_simple(2, 2, FEE_PER_BYTE);
         assert!(fee > 0);
-        // Should be around FEE_PER_BYTE * weight * 5 (normal priority).
+        // Should be quantized: weight * FEE_PER_BYTE * 5 rounded up to quantization boundary.
         let weight = estimate_tx_weight(2, 2, 16, true, output_type::CARROT_V1);
-        assert_eq!(fee, (weight as u64) * FEE_PER_BYTE * 5);
+        let raw = (weight as u64) * FEE_PER_BYTE * 5;
+        let mask = fee_quantization_mask();
+        let expected = ((raw + mask) / (mask + 1)) * (mask + 1);
+        assert_eq!(fee, expected);
     }
 
     #[test]
@@ -331,5 +410,62 @@ mod tests {
         assert!(uses_tclsag(rct_type::SALVIUM_ONE));
         assert!(!uses_tclsag(rct_type::CLSAG));
         assert!(!uses_tclsag(rct_type::BULLETPROOF_PLUS));
+    }
+
+    // ─── dynamic_fee_per_byte tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_dynamic_fee_per_byte_zero_reward() {
+        // base_reward=0 should fall back to FEE_PER_BYTE.
+        assert_eq!(dynamic_fee_per_byte(0, HfVersion::SCALING_2021), FEE_PER_BYTE);
+    }
+
+    #[test]
+    fn test_dynamic_fee_per_byte_pre_scaling() {
+        // Pre-SCALING_2021 hf_version should always return FEE_PER_BYTE.
+        assert_eq!(dynamic_fee_per_byte(500_000_000, 1), FEE_PER_BYTE);
+        assert_eq!(dynamic_fee_per_byte(500_000_000, 0), FEE_PER_BYTE);
+    }
+
+    #[test]
+    fn test_dynamic_fee_per_byte_known_reward() {
+        // With base_reward = DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD (1e9),
+        // fee = (200000/1024 * 1e9) / 1e9 = 200000/1024 = 195 (integer division).
+        let fpb =
+            dynamic_fee_per_byte(DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD, HfVersion::SCALING_2021);
+        assert_eq!(fpb, DYNAMIC_FEE_PER_KB_BASE_FEE / 1024);
+    }
+
+    #[test]
+    fn test_dynamic_fee_per_byte_large_reward() {
+        // Very large base_reward → dynamic fee drops but floors to FEE_PER_BYTE.
+        let fpb = dynamic_fee_per_byte(1_000_000_000_000, HfVersion::SCALING_2021);
+        assert_eq!(fpb, FEE_PER_BYTE);
+    }
+
+    #[test]
+    fn test_dynamic_fee_per_byte_small_reward() {
+        // Small base_reward → high dynamic fee.
+        let fpb = dynamic_fee_per_byte(100_000_000, HfVersion::SCALING_2021);
+        // (200000/1024 * 1e9) / 1e8 = 195 * 10 = 1950
+        let expected = (DYNAMIC_FEE_PER_KB_BASE_FEE / 1024 * DYNAMIC_FEE_PER_KB_BASE_BLOCK_REWARD)
+            / 100_000_000;
+        assert_eq!(fpb, expected);
+        assert!(fpb > FEE_PER_BYTE);
+    }
+
+    #[test]
+    fn test_fee_quantization_mask() {
+        // PER_KB_FEE_QUANTIZATION_DECIMALS = 8, so mask = 10^8 - 1 = 99_999_999.
+        assert_eq!(fee_quantization_mask(), 99_999_999);
+    }
+
+    #[test]
+    fn test_fee_quantization_applied() {
+        // Fees should be rounded up to next multiple of (mask+1) = 100_000_000.
+        let fee =
+            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Low);
+        let quantum = fee_quantization_mask() + 1; // 100_000_000
+        assert_eq!(fee % quantum, 0, "fee {} should be a multiple of {}", fee, quantum);
     }
 }

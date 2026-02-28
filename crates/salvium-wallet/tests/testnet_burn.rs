@@ -96,6 +96,7 @@ async fn test_burn_transaction_build() {
         DEFAULT_RING_SIZE,
         true,
         output_type::CARROT_V1,
+        salvium_types::consensus::FEE_PER_BYTE,
         FeePriority::Normal,
     );
 

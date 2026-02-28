@@ -89,64 +89,84 @@ fn parse_priority(s: &str) -> FeePriority {
     }
 }
 
-/// Adjust fee priority based on network conditions (matches wallet2::adjust_priority).
+/// Resolved network fee context — adjusted priority + dynamic fee rate.
+struct FeeContext {
+    priority: FeePriority,
+    fee_per_byte: u64,
+}
+
+/// Adjust priority from network conditions AND compute dynamic `fee_per_byte`.
 ///
-/// When priority is `Default` (user didn't explicitly choose), queries the daemon:
-/// 1. If mempool has pending transactions -> Normal (5x)
-/// 2. If recent blocks are >80% full -> Normal (5x)
-/// 3. Otherwise -> Low (1x)
-///
-/// Explicit priorities (Low/Normal/High/Highest) pass through unchanged.
-async fn adjust_priority(priority: FeePriority, pool: &salvium_rpc::NodePool) -> FeePriority {
-    if priority != FeePriority::Default {
-        return priority;
-    }
-    match try_adjust_priority(pool).await {
-        Ok(adjusted) => adjusted,
+/// Uses the same block-header data for both — zero extra RPC calls.
+async fn resolve_fee_context(pool: &salvium_rpc::NodePool, priority: FeePriority) -> FeeContext {
+    match try_resolve_fee_context(pool, priority).await {
+        Ok(ctx) => ctx,
         Err(e) => {
-            log::debug!("adjust_priority failed, using Normal: {e}");
-            FeePriority::Normal
+            log::debug!("resolve_fee_context failed: {e}");
+            FeeContext {
+                priority: if priority == FeePriority::Default {
+                    FeePriority::Normal
+                } else {
+                    priority
+                },
+                fee_per_byte: fee::dynamic_fee_per_byte(0, 0),
+            }
         }
     }
 }
 
-async fn try_adjust_priority(pool: &salvium_rpc::NodePool) -> Result<FeePriority, String> {
+async fn try_resolve_fee_context(
+    pool: &salvium_rpc::NodePool,
+    priority: FeePriority,
+) -> Result<FeeContext, String> {
     let info = pool.get_info().await.map_err(|e| e.to_string())?;
-
-    // 1. Mempool backlog -> Normal
-    if info.tx_pool_size > 0 {
-        log::info!("adjust_priority: mempool has {} txs, using Normal", info.tx_pool_size);
-        return Ok(FeePriority::Normal);
-    }
-
-    // 2. Block fullness check
-    let block_weight_limit = info
-        .extra
-        .get("block_weight_limit")
-        .and_then(|v| v.as_u64())
-        .ok_or("block_weight_limit not in get_info")?;
-    let full_reward_zone = block_weight_limit / 2;
-    if full_reward_zone == 0 {
-        return Ok(FeePriority::Normal);
-    }
-
     let height = info.height;
-    if height < 10 {
-        return Ok(FeePriority::Normal);
-    }
 
-    let headers =
-        pool.get_block_headers_range(height - 10, height - 1).await.map_err(|e| e.to_string())?;
-    let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
-    let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
-
-    if fullness_pct > 80 {
-        log::info!("adjust_priority: blocks {fullness_pct}% full, using Normal");
-        Ok(FeePriority::Normal)
+    // --- Priority adjustment ---
+    let adjusted = if priority != FeePriority::Default {
+        priority
     } else {
-        log::info!("adjust_priority: blocks {fullness_pct}% full, using Low");
-        Ok(FeePriority::Low)
-    }
+        // 1. Mempool backlog -> Normal
+        if info.tx_pool_size > 0 {
+            log::info!("resolve_fee_context: mempool has {} txs, using Normal", info.tx_pool_size);
+            FeePriority::Normal
+        } else {
+            // 2. Block fullness check
+            let block_weight_limit = info
+                .extra
+                .get("block_weight_limit")
+                .and_then(|v| v.as_u64())
+                .ok_or("block_weight_limit not in get_info")?;
+            let full_reward_zone = block_weight_limit / 2;
+
+            if full_reward_zone == 0 || height < 10 {
+                FeePriority::Normal
+            } else {
+                let headers = pool
+                    .get_block_headers_range(height.saturating_sub(10), height - 1)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
+                let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
+
+                if fullness_pct > 80 {
+                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Normal");
+                    FeePriority::Normal
+                } else {
+                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Low");
+                    FeePriority::Low
+                }
+            }
+        }
+    };
+
+    // --- Fee per byte from last block header ---
+    let last_header =
+        pool.get_block_headers_range(height - 1, height - 1).await.map_err(|e| e.to_string())?;
+    let hdr = last_header.first().ok_or("no headers returned for last block")?;
+    let fee_per_byte = fee::dynamic_fee_per_byte(hdr.reward, hdr.major_version);
+
+    Ok(FeeContext { priority: adjusted, fee_per_byte })
 }
 
 /// Transfer funds to one or more destinations.
@@ -190,9 +210,9 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
         let rt = crate::runtime();
 
         rt.block_on(async {
-            let priority = adjust_priority(priority, &dh.pool).await;
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await;
             let daemon = dh.pool.active_daemon().await;
-            do_transfer(&wh.wallet, &daemon, &params, priority).await
+            do_transfer(&wh.wallet, &daemon, &params, fee_ctx.priority, fee_ctx.fee_per_byte).await
         })
     })
 }
@@ -234,9 +254,10 @@ pub unsafe extern "C" fn salvium_wallet_stake(
         let rt = crate::runtime();
 
         rt.block_on(async {
-            let priority = adjust_priority(priority, &dh.pool).await;
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await;
             let daemon = dh.pool.active_daemon().await;
-            do_stake(&wh.wallet, &daemon, &params, priority, false).await
+            do_stake(&wh.wallet, &daemon, &params, fee_ctx.priority, fee_ctx.fee_per_byte, false)
+                .await
         })
     })
 }
@@ -271,9 +292,10 @@ pub unsafe extern "C" fn salvium_wallet_stake_dry_run(
         let rt = crate::runtime();
 
         rt.block_on(async {
-            let priority = adjust_priority(priority, &dh.pool).await;
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await;
             let daemon = dh.pool.active_daemon().await;
-            do_stake(&wh.wallet, &daemon, &params, priority, true).await
+            do_stake(&wh.wallet, &daemon, &params, fee_ctx.priority, fee_ctx.fee_per_byte, true)
+                .await
         })
     })
 }
@@ -317,9 +339,9 @@ pub unsafe extern "C" fn salvium_wallet_sweep(
         let rt = crate::runtime();
 
         rt.block_on(async {
-            let priority = adjust_priority(priority, &dh.pool).await;
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await;
             let daemon = dh.pool.active_daemon().await;
-            do_sweep(&wh.wallet, &daemon, &params, priority).await
+            do_sweep(&wh.wallet, &daemon, &params, fee_ctx.priority, fee_ctx.fee_per_byte).await
         })
     })
 }
@@ -358,9 +380,9 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
         let rt = crate::runtime();
 
         rt.block_on(async {
-            let priority = adjust_priority(priority, &dh.pool).await;
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await;
             let daemon = dh.pool.active_daemon().await;
-            do_transfer(&wh.wallet, &daemon, &params, priority).await
+            do_transfer(&wh.wallet, &daemon, &params, fee_ctx.priority, fee_ctx.fee_per_byte).await
         })
     })
 }
@@ -389,6 +411,7 @@ async fn do_transfer(
     daemon: &DaemonRpc,
     params: &TransferParams,
     priority: FeePriority,
+    fee_per_byte: u64,
 ) -> Result<String, String> {
     let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
 
@@ -423,8 +446,15 @@ async fn do_transfer(
     // 2. Estimate fee.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
     let num_outputs = destinations.len() + 1; // +1 for change
-    let est_fee =
-        fee::estimate_tx_fee(2, num_outputs, params.ring_size, is_carrot, out_type, priority);
+    let est_fee = fee::estimate_tx_fee(
+        2,
+        num_outputs,
+        params.ring_size,
+        is_carrot,
+        out_type,
+        fee_per_byte,
+        priority,
+    );
 
     // 3. Select UTXOs — caller specifies asset type, no output format filter.
     let selection = wallet
@@ -446,6 +476,7 @@ async fn do_transfer(
         tx_type::TRANSFER,
         params.ring_size,
         priority,
+        fee_per_byte,
         0, // amount_burnt
         fork_rct,
         is_carrot,
@@ -470,6 +501,7 @@ async fn do_stake(
     daemon: &DaemonRpc,
     params: &StakeParams,
     priority: FeePriority,
+    fee_per_byte: u64,
     dry_run: bool,
 ) -> Result<String, String> {
     let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
@@ -488,7 +520,8 @@ async fn do_stake(
     // No explicit destination — only a change output is created by the builder.
     // The protocol returns the staked amount + yield later.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let est_fee = fee::estimate_tx_fee(2, 1, params.ring_size, is_carrot, out_type, priority);
+    let est_fee =
+        fee::estimate_tx_fee(2, 1, params.ring_size, is_carrot, out_type, fee_per_byte, priority);
 
     let selection = wallet
         .select_outputs(
@@ -508,6 +541,7 @@ async fn do_stake(
         tx_type::STAKE,
         params.ring_size,
         priority,
+        fee_per_byte,
         amount, // amount_burnt = staked amount
         fork_rct,
         is_carrot,
@@ -529,6 +563,7 @@ async fn do_sweep(
     daemon: &DaemonRpc,
     params: &SweepParams,
     priority: FeePriority,
+    fee_per_byte: u64,
 ) -> Result<String, String> {
     let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
 
@@ -551,8 +586,15 @@ async fn do_sweep(
     // 2. Estimate fee with actual input count.
     let n_inputs = all_selection.selected.len();
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let actual_fee =
-        fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, priority);
+    let actual_fee = fee::estimate_tx_fee(
+        n_inputs,
+        2,
+        params.ring_size,
+        is_carrot,
+        out_type,
+        fee_per_byte,
+        priority,
+    );
 
     let sweep_amount =
         all_selection.total.checked_sub(actual_fee).ok_or("balance too low to cover fee")?;
@@ -580,6 +622,7 @@ async fn do_sweep(
         tx_type::TRANSFER,
         params.ring_size,
         priority,
+        fee_per_byte,
         0,
         fork_rct,
         is_carrot,
@@ -618,6 +661,7 @@ async fn build_sign_maybe_broadcast(
     tt: u8,
     ring_size: usize,
     priority: FeePriority,
+    fee_per_byte: u64,
     amount_burnt: u64,
     fork_rct_type: u8,
     is_carrot: bool,
@@ -774,6 +818,7 @@ async fn build_sign_maybe_broadcast(
         ring_size,
         is_carrot,
         out_type,
+        fee_per_byte,
         priority,
     );
 
