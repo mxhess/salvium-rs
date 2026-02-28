@@ -148,6 +148,20 @@ pub unsafe extern "C" fn salvium_daemon_force_race(handle: *mut c_void) -> i32 {
     })
 }
 
+/// Get per-node status as JSON.
+///
+/// Returns a JSON array with each node's health, latency, and failure info.
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_daemon_node_status(handle: *mut c_void) -> *mut c_char {
+    ffi_try_string(|| {
+        let dh = unsafe { borrow_handle::<DaemonHandle>(handle) }?;
+        let rt = crate::runtime();
+        let status = rt.block_on(dh.pool.get_node_status());
+        serde_json::to_string(&status).map_err(|e| e.to_string())
+    })
+}
+
 /// Close a daemon handle.
 ///
 /// If the daemon is in use by a sync operation, this blocks until the sync

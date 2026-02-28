@@ -18,6 +18,18 @@ use tokio::sync::RwLock;
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Per-node status snapshot returned by [`NodePool::get_node_status()`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NodeStatusInfo {
+    pub url: String,
+    pub is_seed: bool,
+    pub is_active: bool,
+    pub is_healthy: bool,
+    pub latency_ms: Option<u64>,
+    pub last_probed_secs_ago: Option<u64>,
+    pub consecutive_failures: u32,
+}
+
 struct NodeState {
     daemon: DaemonRpc,
     url: String,
@@ -178,6 +190,25 @@ impl NodePool {
     pub async fn active_url(&self) -> String {
         let inner = self.inner.read().await;
         inner.nodes[inner.active_index].url.clone()
+    }
+
+    /// Return a snapshot of every node's health, latency, and failure status.
+    pub async fn get_node_status(&self) -> Vec<NodeStatusInfo> {
+        let inner = self.inner.read().await;
+        inner
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, node)| NodeStatusInfo {
+                url: node.url.clone(),
+                is_seed: node.is_seed,
+                is_active: idx == inner.active_index,
+                is_healthy: node.is_healthy,
+                latency_ms: node.last_latency.map(|d| d.as_millis() as u64),
+                last_probed_secs_ago: node.last_probed.map(|i| i.elapsed().as_secs()),
+                consecutive_failures: node.consecutive_failures,
+            })
+            .collect()
     }
 
     // ── Racing ──────────────────────────────────────────────────────────

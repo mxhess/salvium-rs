@@ -17,6 +17,9 @@ pub const DEFAULT_RING_SIZE: usize = 16;
 /// Fee priority levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeePriority {
+    /// Unset — resolves to Low or Normal based on network load via `adjust_priority`.
+    /// Falls back to Normal (5x) if adjustment fails.
+    Default,
     Low,
     Normal,
     High,
@@ -27,6 +30,7 @@ impl FeePriority {
     /// Priority multiplier applied to the base fee.
     pub fn multiplier(&self) -> u64 {
         match self {
+            FeePriority::Default => 5, // safe fallback = Normal
             FeePriority::Low => 1,
             FeePriority::Normal => 5,
             FeePriority::High => 25,
@@ -226,6 +230,7 @@ mod tests {
 
     #[test]
     fn test_fee_priority_multipliers() {
+        assert_eq!(FeePriority::Default.multiplier(), 5);
         assert_eq!(FeePriority::Low.multiplier(), 1);
         assert_eq!(FeePriority::Normal.multiplier(), 5);
         assert_eq!(FeePriority::High.multiplier(), 25);

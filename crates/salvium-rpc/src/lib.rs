@@ -27,7 +27,7 @@ pub mod wallet_rpc;
 pub use client::RpcClient;
 pub use daemon::DaemonRpc;
 pub use error::RpcError;
-pub use pool::{DistributedBatchResult, NodePool, PoolConfig};
+pub use pool::{DistributedBatchResult, NodePool, NodeStatusInfo, PoolConfig};
 pub use wallet_rpc::WalletRpc;
 
 /// Seed nodes per network.

@@ -830,6 +830,7 @@ pub struct AppContext {
     pub daemon_url: String,
     pub extra_nodes: Vec<String>,
     pub wallet_path: PathBuf,
+    pub pool: salvium_rpc::NodePool,
 }
 
 impl AppContext {
@@ -843,7 +844,13 @@ impl AppContext {
             default_wallet_dir(&cli.network).join("wallet.db")
         };
 
-        Self { network, daemon_url, extra_nodes: cli.nodes.clone(), wallet_path }
+        let pool = salvium_rpc::NodePool::new(salvium_rpc::PoolConfig {
+            network,
+            primary_url: Some(daemon_url.clone()),
+            ..Default::default()
+        });
+
+        Self { network, daemon_url, extra_nodes: cli.nodes.clone(), wallet_path, pool }
     }
 }
 

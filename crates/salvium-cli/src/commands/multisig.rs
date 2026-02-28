@@ -264,7 +264,8 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     println!("  Amount: {} SAL", format_sal_u64(amount));
     println!();
 
-    let fee_priority = salvium_tx::fee::FeePriority::Normal;
+    let fee_priority =
+        tx_common::adjust_priority(salvium_tx::fee::FeePriority::Default, &ctx.pool).await;
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
 

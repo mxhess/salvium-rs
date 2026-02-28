@@ -4,7 +4,7 @@
 //! → sign → submit logic used by transfer, stake, burn, convert, sweep, etc.
 
 use crate::AppContext;
-use salvium_rpc::DaemonRpc;
+use salvium_rpc::NodePool;
 use salvium_wallet::Wallet;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -20,7 +20,7 @@ pub struct SignedResult {
 /// Shared pipeline for building, signing, and optionally submitting transactions.
 pub struct TxPipeline<'a> {
     pub wallet: &'a Wallet,
-    pub daemon: DaemonRpc,
+    pub pool: NodePool,
     pub fee_priority: salvium_tx::fee::FeePriority,
 }
 
@@ -30,7 +30,7 @@ impl<'a> TxPipeline<'a> {
         ctx: &AppContext,
         fee_priority: salvium_tx::fee::FeePriority,
     ) -> Self {
-        Self { wallet, daemon: DaemonRpc::new(&ctx.daemon_url), fee_priority }
+        Self { wallet, pool: ctx.pool.clone(), fee_priority }
     }
 
     /// Select UTXOs for the given amount + fee, derive spend keys, and return
@@ -135,8 +135,8 @@ impl<'a> TxPipeline<'a> {
         inputs: &[InputData],
     ) -> Result<Vec<salvium_tx::builder::PreparedInput>> {
         println!("Fetching decoy data from daemon...");
-        let info = self.daemon.get_info().await?;
-        let dist = self.daemon.get_output_distribution(&[0], 0, info.height, true, "").await?;
+        let info = self.pool.get_info().await?;
+        let dist = self.pool.get_output_distribution(&[0], 0, info.height, true, "").await?;
         let rct_offsets =
             dist.first().ok_or("no output distribution returned from daemon")?.distribution.clone();
         let decoy_selector = salvium_tx::DecoySelector::new(rct_offsets)
@@ -154,7 +154,7 @@ impl<'a> TxPipeline<'a> {
                 .iter()
                 .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
                 .collect();
-            let outs_info = self.daemon.get_outs(&requests, false, "").await?;
+            let outs_info = self.pool.get_outs(&requests, false, "").await?;
 
             let mut ring_keys = Vec::with_capacity(ring_size);
             let mut ring_commitments = Vec::with_capacity(ring_size);
@@ -199,8 +199,8 @@ impl<'a> TxPipeline<'a> {
 
         println!("Submitting transaction...");
         let result = self
-            .daemon
-            .send_raw_transaction(&tx_hex, false)
+            .pool
+            .send_raw_transaction_ex(&tx_hex, false, true, "SAL")
             .await
             .map_err(|e| format!("submission: {}", e))?;
 
@@ -245,9 +245,79 @@ pub fn hex_to_32(s: &str) -> std::result::Result<[u8; 32], Box<dyn std::error::E
 pub fn parse_fee_priority(s: &str) -> salvium_tx::fee::FeePriority {
     match s {
         "low" => salvium_tx::fee::FeePriority::Low,
+        "normal" => salvium_tx::fee::FeePriority::Normal,
         "high" => salvium_tx::fee::FeePriority::High,
         "urgent" | "highest" => salvium_tx::fee::FeePriority::Highest,
-        _ => salvium_tx::fee::FeePriority::Normal,
+        _ => salvium_tx::fee::FeePriority::Default,
+    }
+}
+
+/// Adjust fee priority based on network conditions (matches wallet2::adjust_priority).
+///
+/// When priority is `Default` (user didn't explicitly choose), queries the daemon:
+/// 1. If mempool has pending transactions -> Normal (5x)
+/// 2. If recent blocks are >80% full -> Normal (5x)
+/// 3. Otherwise -> Low (1x)
+///
+/// Explicit priorities (Low/Normal/High/Highest) pass through unchanged.
+pub async fn adjust_priority(
+    priority: salvium_tx::fee::FeePriority,
+    pool: &NodePool,
+) -> salvium_tx::fee::FeePriority {
+    use salvium_tx::fee::FeePriority;
+
+    if priority != FeePriority::Default {
+        return priority;
+    }
+    match try_adjust_priority(pool).await {
+        Ok(adjusted) => adjusted,
+        Err(e) => {
+            log::debug!("adjust_priority failed, using Normal: {e}");
+            FeePriority::Normal
+        }
+    }
+}
+
+async fn try_adjust_priority(
+    pool: &NodePool,
+) -> std::result::Result<salvium_tx::fee::FeePriority, String> {
+    use salvium_tx::fee::FeePriority;
+
+    let info = pool.get_info().await.map_err(|e| e.to_string())?;
+
+    // 1. Mempool backlog -> Normal
+    if info.tx_pool_size > 0 {
+        log::info!("adjust_priority: mempool has {} txs, using Normal", info.tx_pool_size);
+        return Ok(FeePriority::Normal);
+    }
+
+    // 2. Block fullness check
+    let block_weight_limit = info
+        .extra
+        .get("block_weight_limit")
+        .and_then(|v| v.as_u64())
+        .ok_or("block_weight_limit not in get_info")?;
+    let full_reward_zone = block_weight_limit / 2;
+    if full_reward_zone == 0 {
+        return Ok(FeePriority::Normal);
+    }
+
+    let height = info.height;
+    if height < 10 {
+        return Ok(FeePriority::Normal);
+    }
+
+    let headers =
+        pool.get_block_headers_range(height - 10, height - 1).await.map_err(|e| e.to_string())?;
+    let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
+    let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
+
+    if fullness_pct > 80 {
+        log::info!("adjust_priority: blocks {fullness_pct}% full, using Normal");
+        Ok(FeePriority::Normal)
+    } else {
+        log::info!("adjust_priority: blocks {fullness_pct}% full, using Low");
+        Ok(FeePriority::Low)
     }
 }
 

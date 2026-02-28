@@ -73,7 +73,7 @@ struct SweepParams {
 }
 
 fn default_priority() -> String {
-    "normal".into()
+    "default".into()
 }
 fn default_ring_size() -> usize {
     16
@@ -82,10 +82,70 @@ fn default_ring_size() -> usize {
 fn parse_priority(s: &str) -> FeePriority {
     match s.to_lowercase().as_str() {
         "low" => FeePriority::Low,
-        "normal" | "default" => FeePriority::Normal,
+        "normal" => FeePriority::Normal,
         "high" | "elevated" => FeePriority::High,
         "highest" | "urgent" => FeePriority::Highest,
-        _ => FeePriority::Normal,
+        _ => FeePriority::Default,
+    }
+}
+
+/// Adjust fee priority based on network conditions (matches wallet2::adjust_priority).
+///
+/// When priority is `Default` (user didn't explicitly choose), queries the daemon:
+/// 1. If mempool has pending transactions -> Normal (5x)
+/// 2. If recent blocks are >80% full -> Normal (5x)
+/// 3. Otherwise -> Low (1x)
+///
+/// Explicit priorities (Low/Normal/High/Highest) pass through unchanged.
+async fn adjust_priority(priority: FeePriority, pool: &salvium_rpc::NodePool) -> FeePriority {
+    if priority != FeePriority::Default {
+        return priority;
+    }
+    match try_adjust_priority(pool).await {
+        Ok(adjusted) => adjusted,
+        Err(e) => {
+            log::debug!("adjust_priority failed, using Normal: {e}");
+            FeePriority::Normal
+        }
+    }
+}
+
+async fn try_adjust_priority(pool: &salvium_rpc::NodePool) -> Result<FeePriority, String> {
+    let info = pool.get_info().await.map_err(|e| e.to_string())?;
+
+    // 1. Mempool backlog -> Normal
+    if info.tx_pool_size > 0 {
+        log::info!("adjust_priority: mempool has {} txs, using Normal", info.tx_pool_size);
+        return Ok(FeePriority::Normal);
+    }
+
+    // 2. Block fullness check
+    let block_weight_limit = info
+        .extra
+        .get("block_weight_limit")
+        .and_then(|v| v.as_u64())
+        .ok_or("block_weight_limit not in get_info")?;
+    let full_reward_zone = block_weight_limit / 2;
+    if full_reward_zone == 0 {
+        return Ok(FeePriority::Normal);
+    }
+
+    let height = info.height;
+    if height < 10 {
+        return Ok(FeePriority::Normal);
+    }
+
+    let headers =
+        pool.get_block_headers_range(height - 10, height - 1).await.map_err(|e| e.to_string())?;
+    let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
+    let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
+
+    if fullness_pct > 80 {
+        log::info!("adjust_priority: blocks {fullness_pct}% full, using Normal");
+        Ok(FeePriority::Normal)
+    } else {
+        log::info!("adjust_priority: blocks {fullness_pct}% full, using Low");
+        Ok(FeePriority::Low)
     }
 }
 
@@ -130,6 +190,7 @@ pub unsafe extern "C" fn salvium_wallet_transfer(
         let rt = crate::runtime();
 
         rt.block_on(async {
+            let priority = adjust_priority(priority, &dh.pool).await;
             let daemon = dh.pool.active_daemon().await;
             do_transfer(&wh.wallet, &daemon, &params, priority).await
         })
@@ -173,6 +234,7 @@ pub unsafe extern "C" fn salvium_wallet_stake(
         let rt = crate::runtime();
 
         rt.block_on(async {
+            let priority = adjust_priority(priority, &dh.pool).await;
             let daemon = dh.pool.active_daemon().await;
             do_stake(&wh.wallet, &daemon, &params, priority, false).await
         })
@@ -209,6 +271,7 @@ pub unsafe extern "C" fn salvium_wallet_stake_dry_run(
         let rt = crate::runtime();
 
         rt.block_on(async {
+            let priority = adjust_priority(priority, &dh.pool).await;
             let daemon = dh.pool.active_daemon().await;
             do_stake(&wh.wallet, &daemon, &params, priority, true).await
         })
@@ -254,6 +317,7 @@ pub unsafe extern "C" fn salvium_wallet_sweep(
         let rt = crate::runtime();
 
         rt.block_on(async {
+            let priority = adjust_priority(priority, &dh.pool).await;
             let daemon = dh.pool.active_daemon().await;
             do_sweep(&wh.wallet, &daemon, &params, priority).await
         })
@@ -294,6 +358,7 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
         let rt = crate::runtime();
 
         rt.block_on(async {
+            let priority = adjust_priority(priority, &dh.pool).await;
             let daemon = dh.pool.active_daemon().await;
             do_transfer(&wh.wallet, &daemon, &params, priority).await
         })

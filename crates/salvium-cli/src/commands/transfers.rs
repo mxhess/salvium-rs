@@ -16,6 +16,7 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     println!("Transfer:");
     println!("  To:     {}", address);
@@ -91,7 +92,8 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
     println!("  Amount: {} SAL", format_sal_u64(amount));
     println!();
 
-    let fee_priority = salvium_tx::fee::FeePriority::Normal;
+    let fee_priority =
+        tx_common::adjust_priority(salvium_tx::fee::FeePriority::Default, &ctx.pool).await;
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_priority);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
     println!();
@@ -155,6 +157,7 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
 
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     println!("Burn:");
     println!("  Amount: {} SAL", format_sal_u64(amount));
@@ -221,6 +224,7 @@ pub async fn convert(
 
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     println!("Convert:");
     println!("  Amount: {} {}", format_sal_u64(amount), source_asset);
@@ -290,6 +294,7 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
     }
 
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     // Audit sweeps all funds back to self as a verifiable on-chain proof.
     let balance = wallet.get_balance("SAL", 0)?;
@@ -360,6 +365,7 @@ pub async fn locked_transfer(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     println!("Locked Transfer:");
     println!("  To:          {}", address);
@@ -421,6 +427,7 @@ pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Resul
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     let balance = wallet.get_balance("SAL", 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
@@ -492,6 +499,7 @@ pub async fn sweep_below(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     // Get outputs below threshold.
     let query = salvium_crypto::storage::OutputQuery {
@@ -580,6 +588,7 @@ pub async fn sweep_single(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     let output = wallet
         .get_output(key_image)?
@@ -669,7 +678,8 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
         return Ok(());
     }
 
-    let fee_priority = salvium_tx::fee::FeePriority::Normal;
+    let fee_priority =
+        tx_common::adjust_priority(salvium_tx::fee::FeePriority::Default, &ctx.pool).await;
     let pipeline = TxPipeline::new(&wallet, ctx, fee_priority);
     let est_fee = salvium_tx::estimate_tx_fee(unmixable.len(), 1, 16, true, 0x04, fee_priority);
 
@@ -724,6 +734,7 @@ pub async fn locked_sweep_all(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     let balance = wallet.get_balance("SAL", 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
@@ -784,6 +795,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
     }
 
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     // Look up the incoming TX to find the sender's info.
     let query = salvium_crypto::storage::TxQuery {
@@ -888,6 +900,7 @@ pub async fn sweep_account(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
+    let fee_priority = tx_common::adjust_priority(fee_priority, &ctx.pool).await;
 
     // Get outputs for the specific account (and optional subaddress filter).
     let query = salvium_crypto::storage::OutputQuery {
