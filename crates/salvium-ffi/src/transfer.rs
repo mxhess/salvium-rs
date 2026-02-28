@@ -419,25 +419,11 @@ async fn do_stake(
         return Err("stake amount must be > 0".into());
     }
 
-    // Stake destination is the wallet's own address.
-    let keys = wallet.keys();
-    let (spend_pub, view_pub) = if is_carrot {
-        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
-    } else {
-        (keys.cn.spend_public_key, keys.cn.view_public_key)
-    };
-
-    let destinations = vec![Destination {
-        spend_pubkey: spend_pub,
-        view_pubkey: view_pub,
-        amount,
-        asset_type: params.asset_type.clone(),
-        payment_id: [0u8; 8],
-        is_subaddress: false,
-    }];
-
+    // STAKE: the staked amount is handled entirely via amount_burnt.
+    // No explicit destination — only a change output is created by the builder.
+    // The protocol returns the staked amount + yield later.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, priority);
+    let est_fee = fee::estimate_tx_fee(2, 1, params.ring_size, is_carrot, out_type, priority);
 
     let selection = wallet
         .select_outputs(
@@ -451,7 +437,7 @@ async fn do_stake(
     let built = build_sign_maybe_broadcast(
         wallet,
         daemon,
-        &destinations,
+        &[], // no destinations — stake amount is in amount_burnt
         &selection,
         &params.asset_type,
         tx_type::STAKE,
@@ -776,9 +762,41 @@ async fn build_sign_maybe_broadcast(
             .map_err(|e| format!("broadcast failed: {e}"))?;
 
         if send_result.status != "OK" {
+            let mut flags = Vec::new();
+            if send_result.double_spend {
+                flags.push("double_spend");
+            }
+            if send_result.fee_too_low {
+                flags.push("fee_too_low");
+            }
+            if send_result.invalid_input {
+                flags.push("invalid_input");
+            }
+            if send_result.invalid_output {
+                flags.push("invalid_output");
+            }
+            if send_result.overspend {
+                flags.push("overspend");
+            }
+            if send_result.too_big {
+                flags.push("too_big");
+            }
+            if send_result.sanity_check_failed {
+                flags.push("sanity_check_failed");
+            }
+            if send_result.tx_extra_too_big {
+                flags.push("tx_extra_too_big");
+            }
+            let detail = if !flags.is_empty() {
+                flags.join(", ")
+            } else if !send_result.reason.is_empty() {
+                send_result.reason.clone()
+            } else {
+                "unknown".to_string()
+            };
             return Err(format!(
-                "daemon rejected transaction: {} (reason: {})",
-                send_result.status, send_result.reason
+                "daemon rejected transaction: {} ({})",
+                send_result.status, detail
             ));
         }
 
