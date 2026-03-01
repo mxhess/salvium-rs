@@ -1026,12 +1026,11 @@ pub async fn build_sign_maybe_broadcast(
             if send_result.tx_extra_too_big {
                 flags.push("tx_extra_too_big");
             }
-            let detail = if !flags.is_empty() {
-                flags.join(", ")
-            } else if !send_result.reason.is_empty() {
-                send_result.reason.clone()
-            } else {
-                "unknown".to_string()
+            let detail = match (flags.is_empty(), send_result.reason.is_empty()) {
+                (false, false) => format!("{}: {}", flags.join(", "), send_result.reason),
+                (false, true) => flags.join(", "),
+                (true, false) => send_result.reason.clone(),
+                (true, true) => "unknown".to_string(),
             };
             return Err(format!(
                 "daemon rejected transaction: {} ({}) [est_weight={} actual_weight={} fee={} fee_needed={} fpb={}]",
