@@ -475,6 +475,7 @@ async fn do_transfer(
         priority,
         fee_per_byte,
         0, // amount_burnt
+        0, // unlock_time (no lock for TRANSFER)
         fork_rct,
         is_carrot,
         params.dry_run,
@@ -528,6 +529,11 @@ async fn do_stake(
         )
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
+    // STAKE requires unlock_time = current_height + stake_lock_period.
+    let info = daemon.get_info().await.map_err(|e| format!("get_info failed: {e}"))?;
+    let lock_period = salvium_types::constants::network_config(wallet.network()).stake_lock_period;
+    let unlock_time = info.height + lock_period;
+
     let built = build_sign_maybe_broadcast(
         wallet,
         daemon,
@@ -539,6 +545,7 @@ async fn do_stake(
         priority,
         fee_per_byte,
         amount, // amount_burnt = staked amount
+        unlock_time,
         fork_rct,
         is_carrot,
         dry_run,
@@ -612,7 +619,8 @@ async fn do_sweep(
         params.ring_size,
         priority,
         fee_per_byte,
-        0,
+        0, // amount_burnt
+        0, // unlock_time (no lock for sweep)
         fork_rct,
         is_carrot,
         params.dry_run,
@@ -652,6 +660,7 @@ async fn build_sign_maybe_broadcast(
     priority: FeePriority,
     fee_per_byte: u64,
     amount_burnt: u64,
+    unlock_time: u64,
     fork_rct_type: u8,
     is_carrot: bool,
     dry_run: bool,
@@ -774,7 +783,10 @@ async fn build_sign_maybe_broadcast(
                 output_row.subaddress_index.major as u32,
                 output_row.subaddress_index.minor as u32,
             );
-            (secret, None)
+            // For TCLSAG (rct_type >= SALVIUM_ONE), legacy outputs need secret_key_y = zero.
+            // C++ uses carrot_ctkey{x, y=rct::zero(), mask} for non-CARROT inputs.
+            let sk_y = if fork_rct_type >= rct_type::SALVIUM_ONE { Some([0u8; 32]) } else { None };
+            (secret, sk_y)
         };
 
         let mask = hex_to_32(
@@ -801,14 +813,11 @@ async fn build_sign_maybe_broadcast(
 
     // 3. Build the unsigned transaction.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let actual_fee = fee::estimate_tx_fee(
-        prepared_inputs.len(),
-        destinations.len() + 1,
-        ring_size,
-        is_carrot,
-        out_type,
-        fee_per_byte,
-    );
+    let n_inputs = prepared_inputs.len();
+    let n_outputs = destinations.len() + 1; // +1 for change
+    let estimated_weight =
+        fee::estimate_tx_weight(n_inputs, n_outputs, ring_size, is_carrot, out_type);
+    let actual_fee = fee::calculate_fee_from_weight(fee_per_byte, estimated_weight as u64);
 
     // Change address: use CARROT keys when in CARROT mode, CN keys otherwise.
     let (chg_spend, chg_view) = if is_carrot {
@@ -822,6 +831,7 @@ async fn build_sign_maybe_broadcast(
         .set_change_address(chg_spend, chg_view)
         .set_tx_type(tt)
         .set_fee(actual_fee)
+        .set_unlock_time(unlock_time)
         .set_priority(priority)
         .set_asset_types(asset_type, asset_type)
         .set_rct_type(fork_rct_type)
@@ -841,6 +851,7 @@ async fn build_sign_maybe_broadcast(
     }
 
     let unsigned = builder.build().map_err(|e| format!("transaction build failed: {e}"))?;
+    let actual_fee = unsigned.fee;
 
     // 4. Sign the transaction.
     let signed = salvium_tx::sign_transaction(unsigned)
@@ -851,6 +862,32 @@ async fn build_sign_maybe_broadcast(
     let tx_bytes = signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
     let tx_hex = hex::encode(&tx_bytes);
     let weight = tx_bytes.len() as u64;
+
+    // Diagnostic: compare estimated weight vs actual serialized size.
+    let fee_needed_for_actual = fee::calculate_fee_from_weight(fee_per_byte, weight);
+    let weight_diff = weight as i64 - estimated_weight as i64;
+    let weight_pct = if estimated_weight > 0 {
+        100.0 * weight_diff as f64 / estimated_weight as f64
+    } else {
+        0.0
+    };
+    log::info!(
+        "FEE DIAGNOSTIC: tx_type={} inputs={} outputs={} carrot={} \
+         estimated_weight={} actual_blob_size={} diff={} ({:+.1}%) \
+         fee_set={} fee_needed_for_blob={} fee_per_byte={} {}",
+        tt,
+        n_inputs,
+        n_outputs,
+        is_carrot,
+        estimated_weight,
+        weight,
+        weight_diff,
+        weight_pct,
+        actual_fee,
+        fee_needed_for_actual,
+        fee_per_byte,
+        if fee_needed_for_actual > actual_fee { "*** FEE TOO LOW ***" } else { "OK" }
+    );
 
     // 6. Broadcast (unless dry run).
     if !dry_run {

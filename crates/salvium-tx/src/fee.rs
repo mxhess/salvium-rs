@@ -65,6 +65,10 @@ impl FeePriority {
 ///
 /// This estimates the size of the full serialized transaction including
 /// prefix, RCT base, ring signatures, bulletproofs, and pseudo-outputs.
+///
+/// Accounts for Salvium-specific prefix fields: return_address_list,
+/// return_address_change_mask, protocol_tx_data, and CARROT per-output
+/// ephemeral keys in the extra field.
 pub fn estimate_tx_size(
     num_inputs: usize,
     num_outputs: usize,
@@ -72,6 +76,8 @@ pub fn estimate_tx_size(
     use_tclsag: bool,
     out_type: u8,
 ) -> usize {
+    let is_carrot = out_type == output_type::CARROT_V1;
+
     // Prefix overhead.
     let mut size = 0usize;
     size += 1; // version varint
@@ -79,14 +85,29 @@ pub fn estimate_tx_size(
     size += 1; // input count varint
     size += 1; // output count varint
 
-    // Salvium v2 fields: tx_type(1) + amount_burnt(1-9) + source_asset_type(4)
-    // + dest_asset_type(4) + amount_slippage_limit(1-9) + return fields overhead
-    size += 24;
+    // Salvium v2 prefix fields (always present):
+    //   tx_type(1) + amount_burnt(varint, avg 5) + source_asset_type(varint_len+bytes, ~5)
+    //   + dest_asset_type(~5) + amount_slippage_limit(varint, avg 5)
+    size += 1 + 5 + 5 + 5 + 5; // = 21
+
+    // return_address_list: for TRANSFER v3+, one 32-byte address per output + varint count.
+    // return_address_change_mask: one byte per output + varint count.
+    // These are present for all TRANSFER TXs at current hardforks.
+    size += 1 + num_outputs * 32; // return_address_list: count(1) + entries
+    size += 1 + num_outputs; // change_mask: count(1) + mask bytes
+
+    // return_address + return_pubkey: for pre-v4 STAKE/AUDIT (32 + 32 = 64 bytes).
+    // protocol_tx_data: for v4 STAKE/AUDIT (~84 bytes).
+    // These are mutually exclusive with return_address_list, but we add a
+    // conservative estimate since we don't know the tx_type here.
+    // The return_address_list estimate above covers the TRANSFER case.
+    // For STAKE at v4+, protocol_tx_data adds ~84 bytes but return_address_list
+    // is empty. Net effect: ~84 vs ~67 for 2 outputs. Close enough.
 
     // Per-input size.
     let per_input = 1  // type tag
         + 1            // amount varint (0)
-        + 4            // asset_type ("SAL\0" varint-len + bytes)
+        + 5            // asset_type ("SAL1\0" varint-len + bytes)
         + 1            // key_offsets count varint
         + ring_size * 4  // key_offsets (varints, avg ~4 bytes each)
         + 32; // key_image
@@ -98,12 +119,12 @@ pub fn estimate_tx_size(
             1   // type tag
             + 1 // amount varint (0 for RCT)
             + 32  // one-time key
-            + 4   // asset_type
+            + 5   // asset_type ("SAL1\0")
             + 3   // view tag (3 bytes for CARROT)
             + 16 // encrypted janus anchor
         }
         output_type::TAGGED_KEY => {
-            1 + 1 + 32 + 4 + 1 // type + amount + key + asset + view_tag(1)
+            1 + 1 + 32 + 5 + 1 // type + amount + key + asset + view_tag(1)
         }
         _ => {
             1 + 1 + 32 + 4 // type + amount + key + asset
@@ -111,8 +132,14 @@ pub fn estimate_tx_size(
     };
     size += num_outputs * per_output;
 
-    // Extra field: tx pub key(33) + padding.
-    size += 40;
+    // Extra field.
+    if is_carrot {
+        // CARROT: per-output ephemeral pubkeys: 0x04(1) + count(1) + n*32.
+        size += 2 + num_outputs * 32;
+    } else {
+        // Legacy CryptoNote: single tx pubkey: 0x01(1) + 32.
+        size += 33;
+    }
 
     // RCT base: type(1) + txnFee varint(4) + ecdhInfo + outPk.
     size += 1 + 4;
@@ -135,7 +162,7 @@ pub fn estimate_tx_size(
     size += estimate_bp_plus_size(num_outputs);
 
     // p_r point (32 bytes, for CARROT).
-    if out_type == output_type::CARROT_V1 {
+    if is_carrot {
         size += 32;
     }
 
