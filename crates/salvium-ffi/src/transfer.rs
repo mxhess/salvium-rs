@@ -957,7 +957,11 @@ pub async fn build_sign_maybe_broadcast(
 
         log::info!(
             "FEE LOOP: fee={} weight={} fee_needed={} (estimated_weight={} initial_fee={})",
-            fee, w, fee_needed, estimated_weight, initial_fee,
+            fee,
+            w,
+            fee_needed,
+            estimated_weight,
+            initial_fee,
         );
 
         if fee >= fee_needed {
