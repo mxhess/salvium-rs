@@ -486,10 +486,12 @@ async fn do_transfer(
         "tx_hash": built.tx_hash,
         "fee": built.fee.to_string(),
         "amount": total_amount.to_string(),
+        "weight": built.weight,
+        "estimated_weight": built.estimated_weight,
+        "fee_per_byte": built.fee_per_byte,
     });
     if params.dry_run {
         result["tx_hex"] = serde_json::Value::String(built.tx_hex);
-        result["weight"] = serde_json::Value::Number(built.weight.into());
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
@@ -557,6 +559,8 @@ async fn do_stake(
         "fee": built.fee.to_string(),
         "amount": amount.to_string(),
         "weight": built.weight,
+        "estimated_weight": built.estimated_weight,
+        "fee_per_byte": built.fee_per_byte,
     });
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
@@ -631,10 +635,12 @@ async fn do_sweep(
         "tx_hash": built.tx_hash,
         "fee": built.fee.to_string(),
         "amount": sweep_amount.to_string(),
+        "weight": built.weight,
+        "estimated_weight": built.estimated_weight,
+        "fee_per_byte": built.fee_per_byte,
     });
     if params.dry_run {
         result["tx_hex"] = serde_json::Value::String(built.tx_hex);
-        result["weight"] = serde_json::Value::Number(built.weight.into());
     }
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
@@ -645,6 +651,8 @@ struct BuiltTx {
     fee: u64,
     tx_hex: String,
     weight: u64,
+    estimated_weight: u64,
+    fee_per_byte: u64,
 }
 
 /// Core TX construction pipeline shared by transfer, stake, and sweep.
@@ -930,8 +938,9 @@ async fn build_sign_maybe_broadcast(
                 "unknown".to_string()
             };
             return Err(format!(
-                "daemon rejected transaction: {} ({})",
-                send_result.status, detail
+                "daemon rejected transaction: {} ({}) [est_weight={} actual_weight={} fee={} fee_needed={} fpb={}]",
+                send_result.status, detail,
+                estimated_weight, weight, actual_fee, fee_needed_for_actual, fee_per_byte
             ));
         }
 
@@ -941,7 +950,14 @@ async fn build_sign_maybe_broadcast(
         }
     }
 
-    Ok(BuiltTx { tx_hash, fee: actual_fee, tx_hex, weight })
+    Ok(BuiltTx {
+        tx_hash,
+        fee: actual_fee,
+        tx_hex,
+        weight,
+        estimated_weight: estimated_weight as u64,
+        fee_per_byte,
+    })
 }
 
 fn hex_to_32(hex_str: &str) -> Result<[u8; 32], String> {
