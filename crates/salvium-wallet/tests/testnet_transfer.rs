@@ -152,16 +152,22 @@ async fn test_real_testnet_transfer() {
     // ── Step 5: Select UTXOs ────────────────────────────────────────────────
     println!("\n[5/8] Selecting outputs...");
 
-    // Use daemon's dynamic fee estimate (accounts for current block size/reward).
+    // Use daemon's dynamic fee estimate — fees[tier_index] already includes priority.
     let fee_estimate = daemon.get_fee_estimate(10).await.expect("failed to get fee estimate");
-    let daemon_fee_per_byte = fee_estimate.fee;
-    println!("  Daemon fee per byte: {} atomic", daemon_fee_per_byte);
+    let tier = FeePriority::Normal.tier_index();
+    let daemon_fee_per_byte =
+        if tier < fee_estimate.fees.len() { fee_estimate.fees[tier] } else { fee_estimate.fee };
+    println!("  Daemon fee per byte: {} atomic (tier {})", daemon_fee_per_byte, tier);
 
     // Estimate TX weight and compute fee using daemon's rate.
-    let est_weight = fee::estimate_tx_weight(1, 2, DEFAULT_RING_SIZE, true, output_type::CARROT_V1);
-    let estimated_fee =
-        (est_weight as u64) * daemon_fee_per_byte * FeePriority::Normal.multiplier();
-    println!("  Estimated weight: {} bytes", est_weight);
+    let estimated_fee = fee::estimate_tx_fee(
+        1,
+        2,
+        DEFAULT_RING_SIZE,
+        true,
+        output_type::CARROT_V1,
+        daemon_fee_per_byte,
+    );
     println!("  Estimated fee: {:.9} SAL ({} atomic)", estimated_fee as f64 / 1e9, estimated_fee);
 
     let selection = wallet

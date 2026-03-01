@@ -109,7 +109,6 @@ async fn test_stake_transaction_build() {
         true,
         output_type::CARROT_V1,
         salvium_types::consensus::FEE_PER_BYTE,
-        FeePriority::Normal,
     );
     let selection = wallet
         .select_carrot_outputs(
@@ -207,10 +206,13 @@ async fn test_stake_submit_testnet() {
     let current_height = info.height;
     let unlock_time = current_height + 20; // testnet lock period
 
-    // Fee
+    // Fee — use fees[tier_index] (priority already baked in), no multiplier.
     let fee_estimate = d.get_fee_estimate(10).await.unwrap();
-    let est_weight = fee::estimate_tx_weight(1, 2, DEFAULT_RING_SIZE, true, output_type::CARROT_V1);
-    let estimated_fee = (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier();
+    let tier = FeePriority::Normal.tier_index();
+    let fee_per_byte =
+        if tier < fee_estimate.fees.len() { fee_estimate.fees[tier] } else { fee_estimate.fee };
+    let estimated_fee =
+        fee::estimate_tx_fee(1, 2, DEFAULT_RING_SIZE, true, output_type::CARROT_V1, fee_per_byte);
 
     // Select outputs
     let selection = wallet

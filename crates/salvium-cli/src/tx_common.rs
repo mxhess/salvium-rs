@@ -17,13 +17,12 @@ pub struct SignedResult {
     pub fee: u64,
 }
 
-/// Resolved network fee context — adjusted priority + dynamic fee rate.
+/// Resolved network fee context — per-byte rate with priority already baked in.
 ///
-/// Produced by [`resolve_fee_context()`] from a single RPC roundtrip (the same
-/// block headers used for priority adjustment also provide `base_reward` for the
-/// dynamic fee calculation).
+/// Produced by [`resolve_fee_context()`]. The `fee_per_byte` comes from
+/// `fees[priority.tier_index()]` of the daemon's `get_fee_estimate` RPC,
+/// so priority is already incorporated — do NOT multiply again.
 pub struct FeeContext {
-    pub priority: salvium_tx::fee::FeePriority,
     pub fee_per_byte: u64,
 }
 
@@ -31,18 +30,12 @@ pub struct FeeContext {
 pub struct TxPipeline<'a> {
     pub wallet: &'a Wallet,
     pub pool: NodePool,
-    pub fee_priority: salvium_tx::fee::FeePriority,
     pub fee_per_byte: u64,
 }
 
 impl<'a> TxPipeline<'a> {
     pub fn new(wallet: &'a Wallet, ctx: &AppContext, fee_ctx: &FeeContext) -> Self {
-        Self {
-            wallet,
-            pool: ctx.pool.clone(),
-            fee_priority: fee_ctx.priority,
-            fee_per_byte: fee_ctx.fee_per_byte,
-        }
+        Self { wallet, pool: ctx.pool.clone(), fee_per_byte: fee_ctx.fee_per_byte }
     }
 
     /// Select UTXOs for the given amount + fee, derive spend keys, and return
@@ -68,7 +61,6 @@ impl<'a> TxPipeline<'a> {
             true,
             0x04,
             self.fee_per_byte,
-            self.fee_priority,
         );
 
         let keys = self.wallet.keys();
@@ -267,43 +259,22 @@ pub fn parse_fee_priority(s: &str) -> salvium_tx::fee::FeePriority {
 
 /// Adjust priority from network conditions AND fetch the dynamic `fee_per_byte`.
 ///
-/// - Priority: mempool check + block fullness from the last 10 headers.
-/// - Fee rate: fetched from the daemon via `get_fee_estimate` RPC, which uses
-///   the 2021-scaling formula (`base_reward * 3000 / median²`) — the same formula
-///   the daemon's `check_fee()` validates against.
+/// Resolves fee context from the daemon's `get_fee_estimate` RPC.
 ///
-/// Falls back to `Normal` priority and the static `FEE_PER_BYTE` on any RPC failure.
+/// Uses `fees[priority.tier_index()]` directly — matching the C++ wallet2
+/// behavior where 2021-scaling tiers already include priority.
+///
+/// Returns an error if the RPC fails — no silent fallback to a wrong constant.
 pub async fn resolve_fee_context(
     pool: &NodePool,
     priority: salvium_tx::fee::FeePriority,
-) -> FeeContext {
-    match try_resolve_fee_context(pool, priority).await {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            log::debug!("resolve_fee_context failed: {e}");
-            // Safe fallback: Normal priority, static FEE_PER_BYTE.
-            FeeContext {
-                priority: if priority == salvium_tx::fee::FeePriority::Default {
-                    salvium_tx::fee::FeePriority::Normal
-                } else {
-                    priority
-                },
-                fee_per_byte: salvium_types::consensus::FEE_PER_BYTE,
-            }
-        }
-    }
-}
-
-async fn try_resolve_fee_context(
-    pool: &NodePool,
-    priority: salvium_tx::fee::FeePriority,
-) -> std::result::Result<FeeContext, String> {
+) -> Result<FeeContext> {
     use salvium_tx::fee::FeePriority;
 
-    let info = pool.get_info().await.map_err(|e| e.to_string())?;
+    let info = pool.get_info().await?;
     let height = info.height;
 
-    // --- Priority adjustment (existing logic) ---
+    // --- Priority adjustment ---
     let adjusted = if priority != FeePriority::Default {
         priority
     } else {
@@ -312,43 +283,57 @@ async fn try_resolve_fee_context(
             log::info!("resolve_fee_context: mempool has {} txs, using Normal", info.tx_pool_size);
             FeePriority::Normal
         } else {
-            // 2. Block fullness check — needs headers
-            let block_weight_limit = info
-                .extra
-                .get("block_weight_limit")
-                .and_then(|v| v.as_u64())
-                .ok_or("block_weight_limit not in get_info")?;
+            // 2. Block fullness check
+            let block_weight_limit =
+                info.extra.get("block_weight_limit").and_then(|v| v.as_u64()).unwrap_or(600_000); // safe default = 2 * ZONE_V5
             let full_reward_zone = block_weight_limit / 2;
 
             if full_reward_zone == 0 || height < 10 {
                 FeePriority::Normal
             } else {
-                let headers = pool
-                    .get_block_headers_range(height.saturating_sub(10), height - 1)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
-                let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
-
-                if fullness_pct > 80 {
-                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Normal");
-                    FeePriority::Normal
-                } else {
-                    log::info!("resolve_fee_context: blocks {fullness_pct}% full, using Low");
-                    FeePriority::Low
+                match pool.get_block_headers_range(height.saturating_sub(10), height - 1).await {
+                    Ok(headers) => {
+                        let weight_sum: u64 = headers.iter().map(|h| h.block_weight).sum();
+                        let fullness_pct = 100 * weight_sum / (10 * full_reward_zone);
+                        if fullness_pct > 80 {
+                            log::info!(
+                                "resolve_fee_context: blocks {fullness_pct}% full, using Normal"
+                            );
+                            FeePriority::Normal
+                        } else {
+                            log::info!(
+                                "resolve_fee_context: blocks {fullness_pct}% full, using Low"
+                            );
+                            FeePriority::Low
+                        }
+                    }
+                    Err(_) => FeePriority::Normal,
                 }
             }
         }
     };
 
     // --- Fee per byte from daemon's get_fee_estimate RPC ---
-    // This uses the 2021-scaling formula internally (base_reward * 3000 / median²),
-    // matching what check_fee() validates. 10 grace blocks = standard wallet default.
-    let fee_estimate = pool.get_fee_estimate(10).await.map_err(|e| e.to_string())?;
-    let fee_per_byte = fee_estimate.fee;
-    log::info!("resolve_fee_context: daemon fee_per_byte={fee_per_byte}");
+    // The daemon returns fees[] = [Fl, Fn, Fm, Fh] with priority already baked in.
+    // Select the right tier — matches C++ wallet2::get_base_fee(priority).
+    let fee_estimate = pool.get_fee_estimate(10).await?;
 
-    Ok(FeeContext { priority: adjusted, fee_per_byte })
+    let tier = adjusted.tier_index();
+    let fee_per_byte = if tier < fee_estimate.fees.len() {
+        fee_estimate.fees[tier]
+    } else {
+        // Fallback: older daemon without fees array — use fee (= fees[0])
+        fee_estimate.fee
+    };
+    log::info!(
+        "resolve_fee_context: priority={:?} tier={} fee_per_byte={} (fees={:?})",
+        adjusted,
+        tier,
+        fee_per_byte,
+        fee_estimate.fees
+    );
+
+    Ok(FeeContext { fee_per_byte })
 }
 
 /// Confirm with the user before proceeding.

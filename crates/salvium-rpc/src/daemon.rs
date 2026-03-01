@@ -180,9 +180,18 @@ pub struct OutputDistribution {
 }
 
 /// Fee estimate response.
+///
+/// The daemon returns both `fee` (= `fees[0]`, lowest tier) and `fees`
+/// (4-tier array `[Fl, Fn, Fm, Fh]` with priority already baked in).
+/// Callers should use `fees[priority.tier_index()]` to get the correct
+/// per-byte rate for a given priority level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeeEstimate {
     pub fee: u64,
+    /// 4-tier fee array: `[Fl, Fn, Fm, Fh]` from 2021-scaling.
+    /// Empty on older daemons or RPC errors.
+    #[serde(default)]
+    pub fees: Vec<u64>,
     #[serde(default)]
     pub quantization_mask: u64,
     pub status: String,

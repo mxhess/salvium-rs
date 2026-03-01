@@ -29,10 +29,30 @@ pub enum FeePriority {
 }
 
 impl FeePriority {
-    /// Priority multiplier applied to the base fee.
+    /// Map priority to 2021-scaling fee tier index (0–3).
+    ///
+    /// Matches C++ `wallet2::get_base_fee(priority)`:
+    ///   priority 0 (default) or 1 (low) → index 0 (Fl)
+    ///   priority 2 (normal)             → index 1 (Fn = 4×Fl)
+    ///   priority 3 (high/elevated)      → index 2 (Fm)
+    ///   priority 4 (highest/urgent)     → index 3 (Fh)
+    pub fn tier_index(&self) -> usize {
+        match self {
+            FeePriority::Default | FeePriority::Low => 0,
+            FeePriority::Normal => 1,
+            FeePriority::High => 2,
+            FeePriority::Highest => 3,
+        }
+    }
+
+    /// Legacy priority multiplier (pre-2021-scaling only).
+    ///
+    /// With 2021-scaling, use `fees[priority.tier_index()]` from the daemon's
+    /// `get_fee_estimate` RPC instead — the priority is already baked into each tier.
+    #[deprecated(note = "Use tier_index() with fees array from get_fee_estimate RPC")]
     pub fn multiplier(&self) -> u64 {
         match self {
-            FeePriority::Default => 5, // safe fallback = Normal
+            FeePriority::Default => 5,
             FeePriority::Low => 1,
             FeePriority::Normal => 5,
             FeePriority::High => 25,
@@ -293,8 +313,11 @@ pub fn fee_quantization_mask() -> u64 {
 
 /// Estimate the fee for a transaction.
 ///
-/// `fee_per_byte` should come from [`dynamic_fee_per_byte()`]. The fee is quantized
-/// upward to match the daemon's rounding.
+/// `fee_per_byte` must already include the priority tier — use
+/// `fees[priority.tier_index()]` from the daemon's `get_fee_estimate` RPC.
+///
+/// Matches C++ `calculate_fee_from_weight(base_fee, weight, mask)`:
+///   `fee = weight * base_fee`, rounded up to quantization mask.
 pub fn estimate_tx_fee(
     num_inputs: usize,
     num_outputs: usize,
@@ -302,18 +325,25 @@ pub fn estimate_tx_fee(
     use_tclsag: bool,
     out_type: u8,
     fee_per_byte: u64,
-    priority: FeePriority,
 ) -> u64 {
     let weight = estimate_tx_weight(num_inputs, num_outputs, ring_size, use_tclsag, out_type);
-    let mut fee = weight as u64 * fee_per_byte * priority.multiplier();
-    // Quantize — matches C++ `calculate_fee_from_weight`:
-    //   fee = (fee + fee_quantization_mask - 1) / fee_quantization_mask * fee_quantization_mask
+    calculate_fee_from_weight(fee_per_byte, weight as u64)
+}
+
+/// Compute fee from weight and per-byte rate.
+///
+/// Matches C++ `calculate_fee_from_weight(base_fee, weight, fee_quantization_mask)`:
+///   `fee = weight * base_fee`, quantized upward to mask boundary.
+pub fn calculate_fee_from_weight(fee_per_byte: u64, weight: u64) -> u64 {
+    let mut fee = weight * fee_per_byte;
     let mask = fee_quantization_mask();
     fee = fee.div_ceil(mask) * mask;
     fee
 }
 
-/// Quick fee estimate using defaults (CARROT, TCLSAG, Normal priority).
+/// Quick fee estimate using defaults (CARROT, TCLSAG).
+///
+/// `fee_per_byte` must already include the priority tier.
 pub fn estimate_fee_simple(num_inputs: usize, num_outputs: usize, fee_per_byte: u64) -> u64 {
     estimate_tx_fee(
         num_inputs,
@@ -322,7 +352,6 @@ pub fn estimate_fee_simple(num_inputs: usize, num_outputs: usize, fee_per_byte: 
         true,
         output_type::CARROT_V1,
         fee_per_byte,
-        FeePriority::Normal,
     )
 }
 
@@ -391,7 +420,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fee_priority_multipliers() {
+    #[allow(deprecated)]
+    fn test_fee_priority_multipliers_legacy() {
         assert_eq!(FeePriority::Default.multiplier(), 5);
         assert_eq!(FeePriority::Low.multiplier(), 1);
         assert_eq!(FeePriority::Normal.multiplier(), 5);
@@ -431,64 +461,34 @@ mod tests {
 
     #[test]
     fn test_fee_estimation_nonzero() {
-        let fee = estimate_tx_fee(
-            2,
-            2,
-            16,
-            true,
-            output_type::CARROT_V1,
-            FEE_PER_BYTE,
-            FeePriority::Normal,
-        );
+        let fee = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE);
         assert!(fee > 0, "fee should be nonzero");
     }
 
     #[test]
-    fn test_fee_increases_with_priority() {
-        let low =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Low);
-        let normal = estimate_tx_fee(
-            2,
-            2,
-            16,
-            true,
-            output_type::CARROT_V1,
-            FEE_PER_BYTE,
-            FeePriority::Normal,
-        );
-        let high = estimate_tx_fee(
-            2,
-            2,
-            16,
-            true,
-            output_type::CARROT_V1,
-            FEE_PER_BYTE,
-            FeePriority::High,
-        );
-        let highest = estimate_tx_fee(
-            2,
-            2,
-            16,
-            true,
-            output_type::CARROT_V1,
-            FEE_PER_BYTE,
-            FeePriority::Highest,
-        );
-        // With quantization, low/normal may round to the same quantum.
-        // But the ordering must hold weakly (>=), and extreme priorities must differ.
-        assert!(normal >= low);
-        assert!(high >= normal);
-        assert!(highest > high, "Highest priority should exceed High");
-        assert!(highest > low, "Highest priority should exceed Low");
+    fn test_tier_index_mapping() {
+        assert_eq!(FeePriority::Default.tier_index(), 0);
+        assert_eq!(FeePriority::Low.tier_index(), 0);
+        assert_eq!(FeePriority::Normal.tier_index(), 1);
+        assert_eq!(FeePriority::High.tier_index(), 2);
+        assert_eq!(FeePriority::Highest.tier_index(), 3);
+    }
+
+    #[test]
+    fn test_fee_scales_with_fee_per_byte() {
+        // Higher fee_per_byte (from higher priority tiers) → higher fee.
+        let fee_low = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, 100);
+        let fee_high = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, 400);
+        assert!(fee_high > fee_low, "higher fee_per_byte should give higher fee");
     }
 
     #[test]
     fn test_estimate_fee_simple() {
         let fee = estimate_fee_simple(2, 2, FEE_PER_BYTE);
         assert!(fee > 0);
-        // With mask=1, fee = weight * FEE_PER_BYTE * Normal(5), no rounding.
+        // With mask=1, fee = weight * fee_per_byte, no rounding.
         let weight = estimate_tx_weight(2, 2, 16, true, output_type::CARROT_V1);
-        let expected = (weight as u64) * FEE_PER_BYTE * 5;
+        let expected = (weight as u64) * FEE_PER_BYTE;
         assert_eq!(fee, expected);
     }
 
@@ -601,13 +601,12 @@ mod tests {
     #[test]
     fn test_fee_quantization_applied() {
         // With mask=1, fees are multiples of 1 (every integer), so no rounding occurs.
-        let fee =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE, FeePriority::Low);
+        let fee = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE);
         let mask = fee_quantization_mask();
         assert_eq!(mask, 1, "mask should be 1");
-        // Fee should equal raw weight * fee_per_byte * priority (no rounding with mask=1).
+        // Fee should equal raw weight * fee_per_byte (no rounding with mask=1).
         let weight = estimate_tx_weight(2, 2, 16, true, output_type::CARROT_V1);
-        let expected = weight as u64 * FEE_PER_BYTE * FeePriority::Low.multiplier();
+        let expected = weight as u64 * FEE_PER_BYTE;
         assert_eq!(fee, expected);
     }
 
@@ -623,43 +622,27 @@ mod tests {
         let fpb = get_dynamic_base_fee(4_000_000_000, 300_000, HfVersion::SCALING_2021);
         assert!(fpb > 0, "fee_per_byte should be nonzero");
 
-        let fee_low =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::Low);
-        let fee_normal =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::Normal);
-        let fee_high =
-            estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb, FeePriority::High);
+        // fpb = Fl (lowest tier). Simulate 4-tier scaling matching daemon.
+        let fee_fl = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb);
+        let fee_fn = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, fpb * 4);
 
-        // Low (1x): must be < 0.1 SAL.
+        // Fl tier: must be < 0.1 SAL.
         assert!(
-            fee_low < COIN / 10,
-            "Low-priority fee {fee_low} >= 0.1 SAL ({}) — fee is too high",
+            fee_fl < COIN / 10,
+            "Fl-tier fee {fee_fl} >= 0.1 SAL ({}) — fee is too high",
             COIN / 10
         );
-        // Normal (5x): must be < 0.5 SAL.
+        // Fn tier (4x): must be < 0.5 SAL.
         assert!(
-            fee_normal < COIN / 2,
-            "Normal-priority fee {fee_normal} >= 0.5 SAL ({}) — fee is too high",
+            fee_fn < COIN / 2,
+            "Fn-tier fee {fee_fn} >= 0.5 SAL ({}) — fee is too high",
             COIN / 2
         );
-        // High (25x): must be < 1 SAL.
+        // Static FEE_PER_BYTE (30): must be < 0.01 SAL.
+        let fee_static = estimate_tx_fee(2, 2, 16, true, output_type::CARROT_V1, FEE_PER_BYTE);
         assert!(
-            fee_high < COIN,
-            "High-priority fee {fee_high} >= 1 SAL ({COIN}) — fee is too high"
-        );
-        // Static FEE_PER_BYTE (30) with Normal (5x): must be < 0.1 SAL.
-        let fee_static = estimate_tx_fee(
-            2,
-            2,
-            16,
-            true,
-            output_type::CARROT_V1,
-            FEE_PER_BYTE,
-            FeePriority::Normal,
-        );
-        assert!(
-            fee_static < COIN / 10,
-            "Static-rate Normal fee {fee_static} >= 0.1 SAL — fee is too high"
+            fee_static < COIN / 100,
+            "Static-rate fee {fee_static} >= 0.01 SAL — fee is too high"
         );
     }
 

@@ -16,7 +16,7 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     println!("Transfer:");
     println!("  To:     {}", address);
@@ -24,8 +24,7 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
     println!("  Format: {:?}", parsed_addr.format);
     println!();
 
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
     println!();
 
@@ -94,9 +93,8 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
     println!();
 
     let fee_ctx =
-        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await;
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
     println!();
 
@@ -159,14 +157,13 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
 
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     println!("Burn:");
     println!("  Amount: {} SAL", format_sal_u64(amount));
     println!();
 
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
 
     let balance = wallet.get_balance("SAL", 0)?;
@@ -227,7 +224,7 @@ pub async fn convert(
 
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     println!("Convert:");
     println!("  Amount: {} {}", format_sal_u64(amount), source_asset);
@@ -235,8 +232,7 @@ pub async fn convert(
     println!("  To:     {}", dest_asset);
     println!();
 
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
     println!("  Estimated fee: {} {}", format_sal_u64(est_fee), source_asset);
 
     let balance = wallet.get_balance(source_asset, 0)?;
@@ -298,13 +294,12 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
     }
 
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     // Audit sweeps all funds back to self as a verifiable on-chain proof.
     let balance = wallet.get_balance("SAL", 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
-    let est_fee =
-        salvium_tx::estimate_tx_fee(4, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(4, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if unlocked <= est_fee {
         return Err("insufficient balance for audit transaction".into());
@@ -370,7 +365,7 @@ pub async fn locked_transfer(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     println!("Locked Transfer:");
     println!("  To:          {}", address);
@@ -378,8 +373,7 @@ pub async fn locked_transfer(
     println!("  Unlock time: {}", unlock_time);
     println!();
 
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
     println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
 
     if !tx_common::confirm("Confirm locked transfer? [y/N] ")? {
@@ -433,12 +427,11 @@ pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Resul
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     let balance = wallet.get_balance("SAL", 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
-    let est_fee =
-        salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if unlocked <= est_fee {
         return Err("insufficient balance for sweep".into());
@@ -506,7 +499,7 @@ pub async fn sweep_below(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     // Get outputs below threshold.
     let query = salvium_crypto::storage::OutputQuery {
@@ -529,15 +522,7 @@ pub async fn sweep_below(
     }
 
     let total: u64 = below.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
-    let est_fee = salvium_tx::estimate_tx_fee(
-        below.len(),
-        1,
-        16,
-        true,
-        0x04,
-        fee_ctx.fee_per_byte,
-        fee_ctx.priority,
-    );
+    let est_fee = salvium_tx::estimate_tx_fee(below.len(), 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if total <= est_fee {
         return Err("total of outputs below threshold doesn't cover the fee".into());
@@ -603,15 +588,14 @@ pub async fn sweep_single(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     let output = wallet
         .get_output(key_image)?
         .ok_or_else(|| format!("output not found for key image: {}", key_image))?;
 
     let amount: u64 = output.amount.parse().unwrap_or(0);
-    let est_fee =
-        salvium_tx::estimate_tx_fee(1, 1, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(1, 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if amount <= est_fee {
         return Err("output amount doesn't cover the fee".into());
@@ -695,17 +679,10 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
     }
 
     let fee_ctx =
-        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await;
+        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
     let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
-    let est_fee = salvium_tx::estimate_tx_fee(
-        unmixable.len(),
-        1,
-        16,
-        true,
-        0x04,
-        fee_ctx.fee_per_byte,
-        fee_ctx.priority,
-    );
+    let est_fee =
+        salvium_tx::estimate_tx_fee(unmixable.len(), 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if total <= est_fee {
         return Err("total of unmixable outputs doesn't cover the fee".into());
@@ -758,12 +735,11 @@ pub async fn locked_sweep_all(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     let balance = wallet.get_balance("SAL", 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
-    let est_fee =
-        salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if unlocked <= est_fee {
         return Err("insufficient balance".into());
@@ -820,7 +796,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
     }
 
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     // Look up the incoming TX to find the sender's info.
     let query = salvium_crypto::storage::TxQuery {
@@ -857,8 +833,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
     let parsed_addr = salvium_types::address::parse_address(&return_addr)
         .map_err(|e| format!("invalid return address: {}", e))?;
 
-    let est_fee =
-        salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte, fee_ctx.priority);
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     println!("Return payment:");
     println!("  Original TX: {}", tx_hash);
@@ -926,7 +901,7 @@ pub async fn sweep_account(
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
-    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await;
+    let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
 
     // Get outputs for the specific account (and optional subaddress filter).
     let query = salvium_crypto::storage::OutputQuery {
@@ -957,15 +932,8 @@ pub async fn sweep_account(
     }
 
     let total: u64 = filtered.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
-    let est_fee = salvium_tx::estimate_tx_fee(
-        filtered.len(),
-        1,
-        16,
-        true,
-        0x04,
-        fee_ctx.fee_per_byte,
-        fee_ctx.priority,
-    );
+    let est_fee =
+        salvium_tx::estimate_tx_fee(filtered.len(), 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
     if total <= est_fee {
         return Err("total of outputs in account doesn't cover the fee".into());

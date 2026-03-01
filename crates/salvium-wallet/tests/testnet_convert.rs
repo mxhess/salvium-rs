@@ -149,7 +149,10 @@ async fn test_convert_expected_rejection() {
     // Fee
     let fee_estimate = d.get_fee_estimate(10).await.unwrap();
     let est_weight = fee::estimate_tx_weight(1, 1, DEFAULT_RING_SIZE, true, output_type::CARROT_V1);
-    let estimated_fee = (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier();
+    let tier = FeePriority::Normal.tier_index();
+    let fpb =
+        if tier < fee_estimate.fees.len() { fee_estimate.fees[tier] } else { fee_estimate.fee };
+    let estimated_fee = fee::calculate_fee_from_weight(fpb, est_weight as u64);
 
     let selection = wallet
         .select_carrot_outputs(

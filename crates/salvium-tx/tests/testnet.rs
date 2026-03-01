@@ -231,31 +231,18 @@ async fn test_address_generation_testnet() {
 #[tokio::test]
 #[ignore]
 async fn test_fee_estimation_realistic() {
-    use salvium_tx::fee::{estimate_tx_fee, FeePriority};
+    use salvium_tx::fee::estimate_tx_fee;
 
     use salvium_types::consensus::FEE_PER_BYTE;
 
     // Standard transfer: 2 inputs, 2 outputs, ring size 16, TCLSAG, CARROT.
-    let fee = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Normal);
+    // fee_per_byte already includes priority tier (from daemon's fees[] array).
+    let fee = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE);
     assert!(fee > 0, "fee should be positive");
 
     let fee_sal = fee as f64 / 1e9;
     println!("Standard 2-in/2-out TCLSAG fee: {} atomic ({:.9} SAL)", fee, fee_sal);
     assert!(fee_sal < 1.0, "fee should be less than 1 SAL for a normal TX");
-
-    // Compare priorities.
-    let fee_low = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Low);
-    let fee_high = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::High);
-    let fee_highest = estimate_tx_fee(2, 2, 16, true, 0x04, FEE_PER_BYTE, FeePriority::Highest);
-
-    assert!(fee_low <= fee, "low priority fee should be <= normal");
-    assert!(fee_high >= fee, "high priority fee should be >= normal");
-    assert!(fee_highest >= fee_high, "highest priority should be >= high");
-
-    println!(
-        "Fees by priority: low={} normal={} high={} highest={}",
-        fee_low, fee, fee_high, fee_highest
-    );
 }
 
 // ─── 6. Full Build + Sign (synthetic, no daemon submission) ──────────────────
@@ -322,7 +309,6 @@ async fn test_build_and_sign_with_real_decoys() {
         true,
         0x04,
         salvium_types::consensus::FEE_PER_BYTE,
-        salvium_tx::fee::FeePriority::Normal,
     );
     let change = amount - send_amount - fee;
 

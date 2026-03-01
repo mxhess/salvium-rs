@@ -97,7 +97,6 @@ async fn test_burn_transaction_build() {
         true,
         output_type::CARROT_V1,
         salvium_types::consensus::FEE_PER_BYTE,
-        FeePriority::Normal,
     );
 
     println!("BURN TX config:");
@@ -160,7 +159,10 @@ async fn test_burn_submit_testnet() {
     let fee_estimate = d.get_fee_estimate(10).await.unwrap();
     // BURN: 1 input, 1 output (change only, no recipient)
     let est_weight = fee::estimate_tx_weight(1, 1, DEFAULT_RING_SIZE, true, output_type::CARROT_V1);
-    let estimated_fee = (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier();
+    let tier = FeePriority::Normal.tier_index();
+    let fpb =
+        if tier < fee_estimate.fees.len() { fee_estimate.fees[tier] } else { fee_estimate.fee };
+    let estimated_fee = fee::calculate_fee_from_weight(fpb, est_weight as u64);
 
     let selection = wallet
         .select_carrot_outputs(

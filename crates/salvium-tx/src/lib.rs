@@ -15,7 +15,7 @@ pub mod types;
 
 pub use builder::TransactionBuilder;
 pub use decoy::DecoySelector;
-pub use fee::estimate_tx_fee;
+pub use fee::{calculate_fee_from_weight, estimate_tx_fee};
 pub use sign::sign_transaction;
 pub use types::{ProtocolTxData, RctSignatures, Transaction, TxInput, TxOutput, TxPrefix};
 

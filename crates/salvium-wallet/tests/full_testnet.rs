@@ -675,7 +675,15 @@ impl<'a> TestTransactor<'a> {
         let out_type = if fork.hf >= 10 { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
         let est_weight =
             fee::estimate_tx_weight(n_inputs, n_outputs, DEFAULT_RING_SIZE, true, out_type);
-        (est_weight as u64) * fee_estimate.fee * FeePriority::Normal.multiplier()
+        {
+            let tier = FeePriority::Normal.tier_index();
+            let fpb = if tier < fee_estimate.fees.len() {
+                fee_estimate.fees[tier]
+            } else {
+                fee_estimate.fee
+            };
+            fee::calculate_fee_from_weight(fpb, est_weight as u64)
+        }
     }
 
     fn db_asset_type(&self, fork: &ForkSpec) -> &str {
