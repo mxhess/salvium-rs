@@ -920,51 +920,19 @@ pub async fn build_sign_maybe_broadcast(
         (keys.cn.spend_public_key, keys.cn.view_public_key)
     };
 
-    // Clone inputs before first build (builder consumes them).
-    let inputs_for_rebuild = prepared_inputs.clone();
+    // Inputs are cloned on each loop iteration (builder consumes them).
+    let inputs_for_rebuild = prepared_inputs;
 
-    // --- First pass: build with estimated fee to measure actual blob size ---
-    let mut builder = TransactionBuilder::new()
-        .add_inputs(prepared_inputs)
-        .set_change_address(chg_spend, chg_view)
-        .set_tx_type(tt)
-        .set_fee(initial_fee)
-        .set_unlock_time(unlock_time)
-        .set_priority(priority)
-        .set_asset_types(asset_type, asset_type)
-        .set_rct_type(fork_rct_type);
-    if is_carrot {
-        builder = builder.set_change_view_balance_secret(keys.carrot.view_balance_secret);
-    }
-    if amount_burnt > 0 {
-        builder = builder.set_amount_burnt(amount_burnt);
-    }
-    for dest in destinations {
-        builder = builder.add_destination(dest.clone());
-    }
-
-    let first_unsigned = builder.build().map_err(|e| format!("transaction build failed: {e}"))?;
-    let first_signed = salvium_tx::sign_transaction(first_unsigned)
-        .map_err(|e| format!("transaction signing failed: {e}"))?;
-    let first_bytes = first_signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
-    let actual_weight = first_bytes.len() as u64;
-    let exact_fee = fee::calculate_fee_from_weight(fee_per_byte, actual_weight);
-
-    // --- Second pass (if needed): rebuild with exact fee ---
-    let (signed, tx_bytes, actual_fee, weight) = if exact_fee != initial_fee {
-        log::info!(
-            "FEE REBUILD: initial_fee={} exact_fee={} delta={} (actual_weight={}, estimated={})",
-            initial_fee,
-            exact_fee,
-            initial_fee as i64 - exact_fee as i64,
-            actual_weight,
-            estimated_weight,
-        );
+    // Build-measure-rebuild loop: each build may produce a slightly different
+    // weight (signing randomness, varint encoding), so we loop until the fee
+    // covers the actual blob.  Converges in 1-2 iterations.
+    let mut current_fee = initial_fee;
+    let (signed, tx_bytes, actual_fee, weight) = loop {
         let mut builder = TransactionBuilder::new()
-            .add_inputs(inputs_for_rebuild)
+            .add_inputs(inputs_for_rebuild.clone())
             .set_change_address(chg_spend, chg_view)
             .set_tx_type(tt)
-            .set_fee(exact_fee)
+            .set_fee(current_fee)
             .set_unlock_time(unlock_time)
             .set_priority(priority)
             .set_asset_types(asset_type, asset_type)
@@ -979,17 +947,23 @@ pub async fn build_sign_maybe_broadcast(
             builder = builder.add_destination(dest.clone());
         }
 
-        let unsigned =
-            builder.build().map_err(|e| format!("transaction build failed (rebuild): {e}"))?;
+        let unsigned = builder.build().map_err(|e| format!("transaction build failed: {e}"))?;
         let fee = unsigned.fee;
         let signed = salvium_tx::sign_transaction(unsigned)
-            .map_err(|e| format!("transaction signing failed (rebuild): {e}"))?;
-        let tx_bytes =
-            signed.to_bytes().map_err(|e| format!("tx serialize failed (rebuild): {e}"))?;
+            .map_err(|e| format!("transaction signing failed: {e}"))?;
+        let tx_bytes = signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
         let w = tx_bytes.len() as u64;
-        (signed, tx_bytes, fee, w)
-    } else {
-        (first_signed, first_bytes, initial_fee, actual_weight)
+        let fee_needed = fee::calculate_fee_from_weight(fee_per_byte, w);
+
+        log::info!(
+            "FEE LOOP: fee={} weight={} fee_needed={} (estimated_weight={} initial_fee={})",
+            fee, w, fee_needed, estimated_weight, initial_fee,
+        );
+
+        if fee >= fee_needed {
+            break (signed, tx_bytes, fee, w);
+        }
+        current_fee = fee_needed;
     };
 
     // 4. Final serialization.
