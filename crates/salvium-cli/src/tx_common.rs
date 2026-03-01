@@ -24,6 +24,8 @@ pub struct SignedResult {
 /// so priority is already incorporated — do NOT multiply again.
 pub struct FeeContext {
     pub fee_per_byte: u64,
+    /// Native asset type for the current network HF ("SAL" or "SAL1").
+    pub native_asset: String,
 }
 
 /// Shared pipeline for building, signing, and optionally submitting transactions.
@@ -49,9 +51,10 @@ impl<'a> TxPipeline<'a> {
     ) -> Result<(Vec<InputData>, u64)> {
         let selection = self.wallet.select_outputs(amount, estimated_fee, asset_type, strategy)?;
         println!(
-            "Selected {} input(s), total {} SAL",
+            "Selected {} input(s), total {} {}",
             selection.selected.len(),
-            crate::commands::format_sal_u64(selection.total)
+            crate::commands::format_sal_u64(selection.total),
+            asset_type,
         );
 
         let actual_fee = salvium_tx::estimate_tx_fee(
@@ -121,7 +124,7 @@ impl<'a> TxPipeline<'a> {
             };
 
             inputs.push(InputData {
-                global_index: utxo.global_index,
+                block_height: utxo.block_height,
                 public_key,
                 mask,
                 secret_key,
@@ -135,31 +138,72 @@ impl<'a> TxPipeline<'a> {
 
     /// Fetch decoy data from the daemon and build rings for each input,
     /// returning fully-prepared inputs ready for `TransactionBuilder`.
+    ///
+    /// Uses asset-type-specific indices for distribution, rings, and output
+    /// fetches — matching how the daemon verifies ring members.
     pub async fn fetch_decoys(
         &self,
         inputs: &[InputData],
+        asset_type: &str,
     ) -> Result<Vec<salvium_tx::builder::PreparedInput>> {
         println!("Fetching decoy data from daemon...");
-        let info = self.pool.get_info().await?;
-        let dist = self.pool.get_output_distribution(&[0], 0, info.height, true, "").await?;
-        let rct_offsets =
-            dist.first().ok_or("no output distribution returned from daemon")?.distribution.clone();
-        let decoy_selector = salvium_tx::DecoySelector::new(rct_offsets)
+        let dist = self.pool.get_output_distribution(&[0], 0, 0, true, asset_type).await?;
+        let dist_entry = dist.first().ok_or("no output distribution returned from daemon")?;
+        let rct_offsets = dist_entry.distribution.clone();
+        let dist_start_height = dist_entry.start_height;
+        let decoy_selector = salvium_tx::DecoySelector::new(rct_offsets.clone())
             .map_err(|e| format!("decoy selector: {}", e))?;
 
         let ring_size = salvium_tx::decoy::DEFAULT_RING_SIZE;
         let mut prepared = Vec::new();
 
         for inp in inputs {
+            // Convert global_index → asset-type-specific index.
+            let h_idx = if inp.block_height >= dist_start_height {
+                (inp.block_height - dist_start_height) as usize
+            } else {
+                0
+            };
+
+            let at_start =
+                if h_idx == 0 { 0 } else { rct_offsets[h_idx.min(rct_offsets.len()) - 1] };
+            let at_end = rct_offsets[h_idx.min(rct_offsets.len() - 1)];
+            let at_count = at_end - at_start;
+
+            let asset_type_index = if at_count == 1 {
+                at_start
+            } else {
+                // Multiple outputs at this height — probe to find the matching public key.
+                let candidates: Vec<salvium_rpc::daemon::OutputRequest> = (at_start..at_end)
+                    .map(|idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
+                    .collect();
+                let probe = self.pool.get_outs(&candidates, false, asset_type).await?;
+
+                let pub_key_hex = hex::encode(inp.public_key);
+                probe
+                    .iter()
+                    .enumerate()
+                    .find(|(_, out)| out.key == pub_key_hex)
+                    .map(|(i, _)| at_start + i as u64)
+                    .ok_or_else(|| {
+                        format!(
+                            "could not find asset-type index for output at height {} (range {}..{}, key={})",
+                            inp.block_height, at_start, at_end, pub_key_hex
+                        )
+                    })?
+            };
+
+            // Pick decoy indices in asset-type index space.
             let (ring_indices, real_pos) = decoy_selector
-                .build_ring(inp.global_index, ring_size)
+                .build_ring(asset_type_index, ring_size)
                 .map_err(|e| format!("ring build: {}", e))?;
 
+            // Fetch ring member data using asset-type indices.
             let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices
                 .iter()
                 .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
                 .collect();
-            let outs_info = self.pool.get_outs(&requests, false, "").await?;
+            let outs_info = self.pool.get_outs(&requests, true, asset_type).await?;
 
             let mut ring_keys = Vec::with_capacity(ring_size);
             let mut ring_commitments = Vec::with_capacity(ring_size);
@@ -174,8 +218,8 @@ impl<'a> TxPipeline<'a> {
                 public_key: inp.public_key,
                 amount: inp.amount,
                 mask: inp.mask,
-                asset_type: "SAL".to_string(),
-                global_index: inp.global_index,
+                asset_type: asset_type.to_string(),
+                global_index: asset_type_index, // asset-type-specific index for key_offsets
                 ring: ring_keys,
                 ring_commitments,
                 ring_indices,
@@ -190,6 +234,7 @@ impl<'a> TxPipeline<'a> {
     pub async fn build_sign_submit(
         &self,
         builder: salvium_tx::TransactionBuilder,
+        asset_type: &str,
     ) -> Result<SignedResult> {
         println!("Building transaction...");
         let unsigned = builder.build().map_err(|e| format!("tx build: {}", e))?;
@@ -205,7 +250,7 @@ impl<'a> TxPipeline<'a> {
         println!("Submitting transaction...");
         let result = self
             .pool
-            .send_raw_transaction_ex(&tx_hex, false, true, "SAL")
+            .send_raw_transaction_ex(&tx_hex, false, true, asset_type)
             .await
             .map_err(|e| format!("submission: {}", e))?;
 
@@ -228,7 +273,7 @@ impl<'a> TxPipeline<'a> {
 
 /// Intermediate representation of a selected UTXO with derived keys.
 pub struct InputData {
-    pub global_index: u64,
+    pub block_height: u64,
     pub public_key: [u8; 32],
     pub mask: [u8; 32],
     pub secret_key: [u8; 32],
@@ -333,7 +378,13 @@ pub async fn resolve_fee_context(
         fee_estimate.fees
     );
 
-    Ok(FeeContext { fee_per_byte })
+    // Derive native asset from hard fork version.
+    let native_asset = match pool.hard_fork_info().await {
+        Ok(hf) => if hf.version >= 6 { "SAL1" } else { "SAL" }.to_string(),
+        Err(_) => "SAL1".to_string(), // all active networks are past HF6
+    };
+
+    Ok(FeeContext { fee_per_byte, native_asset })
 }
 
 /// Confirm with the user before proceeding.

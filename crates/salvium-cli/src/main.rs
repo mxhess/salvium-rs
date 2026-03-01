@@ -228,6 +228,9 @@ enum Commands {
         amount: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Transfer with a lock time.
     LockedTransfer {
@@ -239,24 +242,34 @@ enum Commands {
         unlock_time: u64,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
-    /// Stake SAL tokens.
+    /// Stake tokens.
     Stake {
         #[arg(long)]
         amount: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
-    /// Burn SAL tokens (irreversible).
+    /// Burn tokens (irreversible).
     Burn {
         #[arg(long)]
         amount: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
-    /// Convert between asset types (e.g., SAL to VSD).
+    /// Convert between asset types (e.g., SAL1 to VSD).
     Convert {
         #[arg(long)]
         amount: String,
-        #[arg(long, default_value = "SAL")]
+        /// Source asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
         source: String,
         #[arg(long, default_value = "VSD")]
         dest: String,
@@ -267,6 +280,9 @@ enum Commands {
     Audit {
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Sweep all funds to an address.
     SweepAll {
@@ -274,6 +290,9 @@ enum Commands {
         address: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Sweep all funds from a specific account to an address.
     SweepAccount {
@@ -286,6 +305,9 @@ enum Commands {
         /// Optional subaddress indices to restrict sweep.
         #[arg(long, num_args = 0..)]
         indices: Vec<u32>,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Sweep outputs below a threshold.
     SweepBelow {
@@ -295,6 +317,9 @@ enum Commands {
         threshold: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Sweep a single output by key image.
     SweepSingle {
@@ -304,9 +329,16 @@ enum Commands {
         address: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Sweep unmixable (dust) outputs.
-    SweepUnmixable,
+    SweepUnmixable {
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
+    },
     /// Sweep all funds with a lock time.
     LockedSweepAll {
         #[arg(long)]
@@ -315,6 +347,9 @@ enum Commands {
         unlock_time: u64,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Return a received payment to the sender.
     ReturnPayment {
@@ -322,6 +357,9 @@ enum Commands {
         tx_hash: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
     /// Donate to the Salvium project.
     Donate {
@@ -329,6 +367,9 @@ enum Commands {
         amount: String,
         #[arg(long, default_value = "normal")]
         priority: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
 
     // ── History ──────────────────────────────────────────────────────────────
@@ -722,6 +763,9 @@ enum Commands {
         address: String,
         #[arg(long)]
         amount: String,
+        /// Asset type (default: auto-detect from network).
+        #[arg(long, default_value = "")]
+        asset: String,
     },
 
     // ── MMS (Multisig Messaging System) ──────────────────────────────────────
@@ -939,38 +983,42 @@ async fn main() {
         Commands::AddressBookDelete { index } => commands::address_book_delete(&ctx, index).await,
 
         // Transfers
-        Commands::Transfer { address, amount, priority } => {
-            commands::transfer(&ctx, &address, &amount, &priority).await
+        Commands::Transfer { address, amount, priority, asset } => {
+            commands::transfer(&ctx, &address, &amount, &priority, &asset).await
         }
-        Commands::LockedTransfer { address, amount, unlock_time, priority } => {
-            commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority).await
+        Commands::LockedTransfer { address, amount, unlock_time, priority, asset } => {
+            commands::locked_transfer(&ctx, &address, &amount, unlock_time, &priority, &asset).await
         }
-        Commands::Stake { amount } => commands::stake(&ctx, &amount).await,
-        Commands::Burn { amount, priority } => commands::burn(&ctx, &amount, &priority).await,
+        Commands::Stake { amount, asset } => commands::stake(&ctx, &amount, &asset).await,
+        Commands::Burn { amount, priority, asset } => {
+            commands::burn(&ctx, &amount, &priority, &asset).await
+        }
         Commands::Convert { amount, source, dest, priority } => {
             commands::convert(&ctx, &amount, &source, &dest, &priority).await
         }
-        Commands::Audit { priority } => commands::audit(&ctx, &priority).await,
-        Commands::SweepAll { address, priority } => {
-            commands::sweep_all(&ctx, &address, &priority).await
+        Commands::Audit { priority, asset } => commands::audit(&ctx, &priority, &asset).await,
+        Commands::SweepAll { address, priority, asset } => {
+            commands::sweep_all(&ctx, &address, &priority, &asset).await
         }
-        Commands::SweepAccount { account, address, priority, indices } => {
-            commands::sweep_account(&ctx, account, &address, &priority, &indices).await
+        Commands::SweepAccount { account, address, priority, indices, asset } => {
+            commands::sweep_account(&ctx, account, &address, &priority, &indices, &asset).await
         }
-        Commands::SweepBelow { address, threshold, priority } => {
-            commands::sweep_below(&ctx, &address, &threshold, &priority).await
+        Commands::SweepBelow { address, threshold, priority, asset } => {
+            commands::sweep_below(&ctx, &address, &threshold, &priority, &asset).await
         }
-        Commands::SweepSingle { key_image, address, priority } => {
-            commands::sweep_single(&ctx, &key_image, &address, &priority).await
+        Commands::SweepSingle { key_image, address, priority, asset } => {
+            commands::sweep_single(&ctx, &key_image, &address, &priority, &asset).await
         }
-        Commands::SweepUnmixable => commands::sweep_unmixable(&ctx).await,
-        Commands::LockedSweepAll { address, unlock_time, priority } => {
-            commands::locked_sweep_all(&ctx, &address, unlock_time, &priority).await
+        Commands::SweepUnmixable { asset } => commands::sweep_unmixable(&ctx, &asset).await,
+        Commands::LockedSweepAll { address, unlock_time, priority, asset } => {
+            commands::locked_sweep_all(&ctx, &address, unlock_time, &priority, &asset).await
         }
-        Commands::ReturnPayment { tx_hash, priority } => {
-            commands::return_payment(&ctx, &tx_hash, &priority).await
+        Commands::ReturnPayment { tx_hash, priority, asset } => {
+            commands::return_payment(&ctx, &tx_hash, &priority, &asset).await
         }
-        Commands::Donate { amount, priority } => commands::donate(&ctx, &amount, &priority).await,
+        Commands::Donate { amount, priority, asset } => {
+            commands::donate(&ctx, &amount, &priority, &asset).await
+        }
 
         // History
         Commands::History { account, limit } => commands::show_history(&ctx, account, limit).await,
@@ -1143,8 +1191,8 @@ async fn main() {
         Commands::ExportRawMultisigTx { input } => {
             commands::export_raw_multisig_tx(&ctx, &input).await
         }
-        Commands::TransferMultisig { address, amount } => {
-            commands::transfer_multisig(&ctx, &address, &amount).await
+        Commands::TransferMultisig { address, amount, asset } => {
+            commands::transfer_multisig(&ctx, &address, &amount, &asset).await
         }
 
         // MMS

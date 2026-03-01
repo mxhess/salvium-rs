@@ -63,12 +63,9 @@ impl FeePriority {
 
 /// Estimate the serialized byte size of a transaction.
 ///
-/// This estimates the size of the full serialized transaction including
-/// prefix, RCT base, ring signatures, bulletproofs, and pseudo-outputs.
-///
-/// Accounts for Salvium-specific prefix fields: return_address_list,
-/// return_address_change_mask, protocol_tx_data, and CARROT per-output
-/// ephemeral keys in the extra field.
+/// Traces through the exact serialization path in `tx_serialize.rs` to
+/// count every byte: prefix, RCT base (including salvium_data), ring
+/// signatures, bulletproofs+, and pseudo-outputs.
 pub fn estimate_tx_size(
     num_inputs: usize,
     num_outputs: usize,
@@ -78,73 +75,91 @@ pub fn estimate_tx_size(
 ) -> usize {
     let is_carrot = out_type == output_type::CARROT_V1;
 
-    // Prefix overhead.
+    // ── TX Prefix ────────────────────────────────────────────────────────
     let mut size = 0usize;
-    size += 1; // version varint
-    size += 1; // unlock_time varint
-    size += 1; // input count varint
-    size += 1; // output count varint
+    size += 1; // version varint (4 = 1 byte)
+    size += 1; // unlock_time varint (small values = 1 byte)
+    size += 1; // vin count varint
+    size += 1; // vout count varint
 
-    // Salvium v2 prefix fields (always present):
-    //   tx_type(1) + amount_burnt(varint, avg 5) + source_asset_type(varint_len+bytes, ~5)
-    //   + dest_asset_type(~5) + amount_slippage_limit(varint, avg 5)
-    size += 1 + 5 + 5 + 5 + 5; // = 21
-
-    // return_address_list: for TRANSFER v3+, one 32-byte address per output + varint count.
-    // return_address_change_mask: one byte per output + varint count.
-    // These are present for all TRANSFER TXs at current hardforks.
-    size += 1 + num_outputs * 32; // return_address_list: count(1) + entries
-    size += 1 + num_outputs; // change_mask: count(1) + mask bytes
-
-    // return_address + return_pubkey: for pre-v4 STAKE/AUDIT (32 + 32 = 64 bytes).
-    // protocol_tx_data: for v4 STAKE/AUDIT (~84 bytes).
-    // These are mutually exclusive with return_address_list, but we add a
-    // conservative estimate since we don't know the tx_type here.
-    // The return_address_list estimate above covers the TRANSFER case.
-    // For STAKE at v4+, protocol_tx_data adds ~84 bytes but return_address_list
-    // is empty. Net effect: ~84 vs ~67 for 2 outputs. Close enough.
-
-    // Per-input size.
-    let per_input = 1  // type tag
-        + 1            // amount varint (0)
-        + 5            // asset_type ("SAL1\0" varint-len + bytes)
-        + 1            // key_offsets count varint
+    // Per-input: matches serialize_tx_prefix_inner / TXIN_KEY path.
+    //   tag(1) + amount varint(1) + asset_type string(5) +
+    //   key_offsets count varint(1) + key_offsets + key_image(32)
+    let per_input = 1 + 1 + 5 + 1
         + ring_size * 4  // key_offsets (varints, avg ~4 bytes each)
         + 32; // key_image
     size += num_inputs * per_input;
 
-    // Per-output size.
+    // Per-output: matches serialize_tx_prefix_inner output paths.
     let per_output = match out_type {
         output_type::CARROT_V1 => {
-            1   // type tag
-            + 1 // amount varint (0 for RCT)
-            + 32  // one-time key
-            + 5   // asset_type ("SAL1\0")
-            + 3   // view tag (3 bytes for CARROT)
-            + 16 // encrypted janus anchor
+            // amount varint(1) + tag(1) + key(32) + asset_type string(5) +
+            // viewTag(3) + encryptedJanusAnchor(16)
+            1 + 1 + 32 + 5 + 3 + 16
         }
         output_type::TAGGED_KEY => {
-            1 + 1 + 32 + 5 + 1 // type + amount + key + asset + view_tag(1)
+            // amount(1) + tag(1) + key(32) + asset_type string(5) +
+            // unlockTime varint(1) + viewTag(1)
+            1 + 1 + 32 + 5 + 1 + 1
         }
         _ => {
-            1 + 1 + 32 + 4 // type + amount + key + asset
+            // amount(1) + tag(1) + key(32) + asset_type string(5)
+            1 + 1 + 32 + 5
         }
     };
     size += num_outputs * per_output;
 
-    // Extra field.
-    if is_carrot {
-        // CARROT: per-output ephemeral pubkeys: 0x04(1) + count(1) + n*32.
-        size += 2 + num_outputs * 32;
+    // Extra field: varint(length) + extra bytes.
+    let extra_bytes = if is_carrot {
+        // CARROT: 0x04 tag(1) + count(1) + n*32 ephemeral pubkeys.
+        2 + num_outputs * 32
     } else {
-        // Legacy CryptoNote: single tx pubkey: 0x01(1) + 32.
-        size += 33;
+        // Legacy: 0x01 tag(1) + 32 tx pubkey.
+        33
+    };
+    size += 1 + extra_bytes; // +1 for the extra length varint prefix
+
+    // Salvium v2 prefix fields (tx_type != UNSET && tx_type != PROTOCOL):
+    //   tx_type varint(1) + amount_burnt varint(1-5) +
+    //   return_address_list + change_mask (for TRANSFER v3+) OR
+    //   protocol_tx_data (for STAKE v4+) OR
+    //   return_address(32) + return_pubkey(32) (legacy fallback).
+    //
+    // Since we don't know tx_type, estimate for the TRANSFER case
+    // (return_address_list + change_mask), which is the most common.
+    // STAKE's protocol_tx_data (84 bytes) is similar to TRANSFER's
+    // return_address_list cost for 2 outputs (~68 bytes). The estimate
+    // is conservative enough for both cases.
+    size += 1; // tx_type varint
+    size += 5; // amount_burnt varint (up to 5 bytes)
+    size += 1 + num_outputs * 32; // return_address_list: count varint + entries
+    size += 1 + num_outputs; // change_mask: count varint + mask bytes
+    size += 5; // source_asset_type string ("SAL1" = varint(4) + 4 bytes)
+    size += 5; // destination_asset_type string
+    size += 5; // amount_slippage_limit varint
+
+    // ── RCT Base ─────────────────────────────────────────────────────────
+    // Matches serialize_rct_base: type(1) + fee varint + ecdhInfo + outPk + p_r + salvium_data.
+    size += 1; // rct_type (1 byte, pushed directly)
+    size += 4; // txnFee varint (up to 4 bytes for typical fees)
+    size += num_outputs * 8; // ecdhInfo (8 bytes each, compact format)
+    size += num_outputs * 32; // outPk (32 bytes each)
+    size += 32; // p_r point (always serialized, identity if not set)
+
+    // salvium_data: present for SALVIUM_ZERO (8) and SALVIUM_ONE (9).
+    // Format: varint(salvium_data_type) + pr_proof(96) + sa_proof(96).
+    if use_tclsag {
+        size += 1; // salvium_data_type varint (value 0 or 2)
+        size += 96; // pr_proof: R(32) + z1(32) + z2(32)
+        size += 96; // sa_proof: R(32) + z1(32) + z2(32)
     }
 
-    // RCT base: type(1) + txnFee varint(4) + ecdhInfo + outPk.
-    size += 1 + 4;
-    size += num_outputs * 8; // ecdhInfo (8 bytes each, compact)
-    size += num_outputs * 32; // outPk
+    // ── RCT Prunable ─────────────────────────────────────────────────────
+    // Matches serialize_rct_prunable.
+
+    // Bulletproofs+: count varint(1) + proof data.
+    size += 1; // BP+ proof count varint (always 1)
+    size += estimate_bp_plus_size(num_outputs);
 
     // Ring signatures.
     if use_tclsag {
@@ -157,14 +172,6 @@ pub fn estimate_tx_size(
 
     // Pseudo-outputs: 32 bytes per input.
     size += num_inputs * 32;
-
-    // Bulletproofs+: estimate based on output count.
-    size += estimate_bp_plus_size(num_outputs);
-
-    // p_r point (32 bytes, for CARROT).
-    if is_carrot {
-        size += 32;
-    }
 
     size
 }
@@ -399,15 +406,22 @@ pub fn uses_tclsag(rct_ty: u8) -> bool {
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /// Estimate Bulletproofs+ proof size in bytes.
+///
+/// Matches the serialization in `serialize_rct_prunable`:
+///   A(32) + A1(32) + B(32) + r1(32) + s1(32) + d1(32) = 192
+///   + L count varint(1) + L entries
+///   + R count varint(1) + R entries
 fn estimate_bp_plus_size(num_outputs: usize) -> usize {
     if num_outputs == 0 {
         return 0;
     }
-    // BP+ proof has fixed fields: A(32) + A1(32) + B(32) + r1(32) + s1(32) + d1(32) = 192
-    // Plus L and R vectors: 2 * (6 + log2(padded_outputs)) * 32 each.
     let log_padded = next_power_of_2_log(num_outputs);
-    let nlr = 2 * (6 + log_padded);
-    192 + nlr * 32
+    let n_lr = 6 + log_padded; // entries per L/R vector
+    192             // fixed fields (A, A1, B, r1, s1, d1)
+        + 1         // L count varint
+        + n_lr * 32 // L entries
+        + 1         // R count varint
+        + n_lr * 32 // R entries
 }
 
 /// BP+ weight clawback for > 2 outputs.

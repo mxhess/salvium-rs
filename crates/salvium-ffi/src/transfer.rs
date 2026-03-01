@@ -26,60 +26,60 @@ use salvium_wallet::Wallet;
 
 /// Transfer parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
-struct TransferParams {
-    destinations: Vec<DestinationParam>,
+pub struct TransferParams {
+    pub destinations: Vec<DestinationParam>,
     #[serde(default)]
-    asset_type: String,
+    pub asset_type: String,
     #[serde(default = "default_priority")]
-    priority: String,
+    pub priority: String,
     #[serde(default = "default_ring_size")]
-    ring_size: usize,
+    pub ring_size: usize,
     /// If true, build + sign but don't broadcast. Returns tx_hex in result.
     #[serde(default)]
-    dry_run: bool,
+    pub dry_run: bool,
 }
 
 #[derive(serde::Deserialize)]
-struct DestinationParam {
-    address: String,
-    amount: String,
+pub struct DestinationParam {
+    pub address: String,
+    pub amount: String,
 }
 
 /// Stake parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
-struct StakeParams {
-    amount: String,
+pub struct StakeParams {
+    pub amount: String,
     #[serde(default)]
-    asset_type: String,
+    pub asset_type: String,
     #[serde(default = "default_priority")]
-    priority: String,
+    pub priority: String,
     #[serde(default = "default_ring_size")]
-    ring_size: usize,
+    pub ring_size: usize,
 }
 
 /// Sweep parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
-struct SweepParams {
-    address: String,
+pub struct SweepParams {
+    pub address: String,
     #[serde(default)]
-    asset_type: String,
+    pub asset_type: String,
     #[serde(default = "default_priority")]
-    priority: String,
+    pub priority: String,
     #[serde(default = "default_ring_size")]
-    ring_size: usize,
+    pub ring_size: usize,
     /// If true, build + sign but don't broadcast. Returns tx_hex in result.
     #[serde(default)]
-    dry_run: bool,
+    pub dry_run: bool,
 }
 
-fn default_priority() -> String {
+pub fn default_priority() -> String {
     "default".into()
 }
-fn default_ring_size() -> usize {
+pub fn default_ring_size() -> usize {
     16
 }
 
-fn parse_priority(s: &str) -> FeePriority {
+pub fn parse_priority(s: &str) -> FeePriority {
     match s.to_lowercase().as_str() {
         "low" => FeePriority::Low,
         "normal" => FeePriority::Normal,
@@ -90,11 +90,11 @@ fn parse_priority(s: &str) -> FeePriority {
 }
 
 /// Resolved network fee context — priority + per-byte rate with priority already baked in.
-struct FeeContext {
-    priority: FeePriority,
+pub struct FeeContext {
+    pub priority: FeePriority,
     /// Per-byte fee rate from `fees[priority.tier_index()]`.
     /// Priority is already baked in — do NOT multiply again.
-    fee_per_byte: u64,
+    pub fee_per_byte: u64,
 }
 
 /// Resolve fee context from the daemon's `get_fee_estimate` RPC.
@@ -103,7 +103,7 @@ struct FeeContext {
 /// behavior where 2021-scaling tiers already include priority.
 ///
 /// Returns an error if the RPC fails — no silent fallback to a wrong constant.
-async fn resolve_fee_context(
+pub async fn resolve_fee_context(
     pool: &salvium_rpc::NodePool,
     priority: FeePriority,
 ) -> Result<FeeContext, String> {
@@ -396,7 +396,8 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
 // =============================================================================
 
 /// Determine the fork-appropriate rct_type and output format from the daemon.
-async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(u8, bool), String> {
+/// Returns `(rct_type, is_carrot, native_asset)` for the current hard fork.
+pub async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(u8, bool, String), String> {
     let hf = daemon.hard_fork_info().await.map_err(|e| format!("hard_fork_info failed: {e}"))?;
 
     let (rct, is_carrot) = if hf.version >= 10 {
@@ -407,21 +408,20 @@ async fn detect_fork_params(daemon: &DaemonRpc) -> Result<(u8, bool), String> {
         (rct_type::BULLETPROOF_PLUS, false)
     };
 
-    Ok((rct, is_carrot))
+    let native_asset = if hf.version >= 6 { "SAL1" } else { "SAL" }.to_string();
+
+    Ok((rct, is_carrot, native_asset))
 }
 
-async fn do_transfer(
+pub async fn do_transfer(
     wallet: &Wallet,
     daemon: &DaemonRpc,
     params: &TransferParams,
     priority: FeePriority,
     fee_per_byte: u64,
 ) -> Result<String, String> {
-    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
-
-    if params.asset_type.is_empty() {
-        return Err("asset_type is required".into());
-    }
+    let (fork_rct, is_carrot, native_asset) = detect_fork_params(daemon).await?;
+    let asset_type = if params.asset_type.is_empty() { &native_asset } else { &params.asset_type };
 
     // 1. Parse and validate destinations.
     let mut destinations = Vec::new();
@@ -441,7 +441,7 @@ async fn do_transfer(
             spend_pubkey: parsed.spend_public_key,
             view_pubkey: parsed.view_public_key,
             amount,
-            asset_type: params.asset_type.clone(),
+            asset_type: asset_type.to_string(),
             payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
             is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
         });
@@ -458,7 +458,7 @@ async fn do_transfer(
         .select_outputs(
             total_amount,
             est_fee,
-            &params.asset_type,
+            asset_type,
             salvium_wallet::SelectionStrategy::Default,
         )
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
@@ -469,7 +469,7 @@ async fn do_transfer(
         daemon,
         &destinations,
         &selection,
-        &params.asset_type,
+        asset_type,
         tx_type::TRANSFER,
         params.ring_size,
         priority,
@@ -496,7 +496,7 @@ async fn do_transfer(
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
-async fn do_stake(
+pub async fn do_stake(
     wallet: &Wallet,
     daemon: &DaemonRpc,
     params: &StakeParams,
@@ -504,11 +504,8 @@ async fn do_stake(
     fee_per_byte: u64,
     dry_run: bool,
 ) -> Result<String, String> {
-    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
-
-    if params.asset_type.is_empty() {
-        return Err("asset_type is required".into());
-    }
+    let (fork_rct, is_carrot, native_asset) = detect_fork_params(daemon).await?;
+    let asset_type = if params.asset_type.is_empty() { &native_asset } else { &params.asset_type };
 
     let amount: u64 =
         params.amount.parse().map_err(|e| format!("invalid amount '{}': {e}", params.amount))?;
@@ -523,12 +520,7 @@ async fn do_stake(
     let est_fee = fee::estimate_tx_fee(2, 1, params.ring_size, is_carrot, out_type, fee_per_byte);
 
     let selection = wallet
-        .select_outputs(
-            amount,
-            est_fee,
-            &params.asset_type,
-            salvium_wallet::SelectionStrategy::Default,
-        )
+        .select_outputs(amount, est_fee, asset_type, salvium_wallet::SelectionStrategy::Default)
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     // STAKE requires unlock_time = current_height + stake_lock_period.
@@ -541,7 +533,7 @@ async fn do_stake(
         daemon,
         &[], // no destinations — stake amount is in amount_burnt
         &selection,
-        &params.asset_type,
+        asset_type,
         tx_type::STAKE,
         params.ring_size,
         priority,
@@ -565,99 +557,150 @@ async fn do_stake(
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
-async fn do_sweep(
+/// Maximum inputs per sweep transaction (matches C++ CARROT_MAX_TX_INPUTS).
+const MAX_SWEEP_INPUTS_PER_TX: usize = 64;
+
+pub async fn do_sweep(
     wallet: &Wallet,
     daemon: &DaemonRpc,
     params: &SweepParams,
     priority: FeePriority,
     fee_per_byte: u64,
 ) -> Result<String, String> {
-    let (fork_rct, is_carrot) = detect_fork_params(daemon).await?;
-
-    if params.asset_type.is_empty() {
-        return Err("asset_type is required".into());
-    }
+    let (fork_rct, is_carrot, native_asset) = detect_fork_params(daemon).await?;
+    let asset_type = if params.asset_type.is_empty() { &native_asset } else { &params.asset_type };
 
     let parsed = salvium_types::address::parse_address(&params.address)
         .map_err(|e| format!("invalid address '{}': {e}", params.address))?;
 
-    // 1. Select ALL unlocked outputs.
+    // 1. Select ALL unlocked outputs for the asset type.
     let all_selection = wallet
-        .select_outputs(0, 0, &params.asset_type, salvium_wallet::SelectionStrategy::All)
+        .select_outputs(0, 0, asset_type, salvium_wallet::SelectionStrategy::All)
         .map_err(|e| format!("UTXO selection failed: {e}"))?;
 
     if all_selection.selected.is_empty() {
         return Err("no unlocked outputs to sweep".into());
     }
 
-    // 2. Estimate fee with actual input count.
-    let n_inputs = all_selection.selected.len();
+    let total_inputs = all_selection.selected.len();
+
+    // 2. Split into batches of MAX_SWEEP_INPUTS_PER_TX (64).
+    let batches: Vec<&[salvium_wallet::utxo::UtxoCandidate]> =
+        all_selection.selected.chunks(MAX_SWEEP_INPUTS_PER_TX).collect();
+    let n_batches = batches.len();
+
+    log::info!(
+        "SWEEP: {} total inputs, {} batch(es) of max {}",
+        total_inputs,
+        n_batches,
+        MAX_SWEEP_INPUTS_PER_TX
+    );
+
+    // 3. Build, sign, broadcast each batch.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
-    let actual_fee =
-        fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, fee_per_byte);
+    let mut tx_results = Vec::new();
+    let mut total_fee = 0u64;
+    let mut total_amount = 0u64;
 
-    let sweep_amount =
-        all_selection.total.checked_sub(actual_fee).ok_or("balance too low to cover fee")?;
+    for (i, batch) in batches.iter().enumerate() {
+        let batch_total: u64 = batch.iter().map(|u| u.amount).sum();
+        let n_inputs = batch.len();
 
-    if sweep_amount == 0 {
-        return Err("balance too low to cover fee".into());
+        let est_fee =
+            fee::estimate_tx_fee(n_inputs, 2, params.ring_size, is_carrot, out_type, fee_per_byte);
+
+        let sweep_amount = batch_total
+            .checked_sub(est_fee)
+            .ok_or_else(|| format!("batch {} balance too low to cover fee", i + 1))?;
+
+        if sweep_amount == 0 {
+            log::warn!("SWEEP batch {}/{}: skip (dust, fee exceeds total)", i + 1, n_batches);
+            continue;
+        }
+
+        let batch_selection = salvium_wallet::utxo::SelectionResult {
+            selected: batch.to_vec(),
+            total: batch_total,
+            change: 0,
+        };
+
+        let destinations = vec![Destination {
+            spend_pubkey: parsed.spend_public_key,
+            view_pubkey: parsed.view_public_key,
+            amount: sweep_amount,
+            asset_type: asset_type.to_string(),
+            payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
+            is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
+        }];
+
+        log::info!(
+            "SWEEP batch {}/{}: {} inputs, {:.9} amount",
+            i + 1,
+            n_batches,
+            n_inputs,
+            sweep_amount as f64 / 1e9
+        );
+
+        let built = build_sign_maybe_broadcast(
+            wallet,
+            daemon,
+            &destinations,
+            &batch_selection,
+            asset_type,
+            tx_type::TRANSFER,
+            params.ring_size,
+            priority,
+            fee_per_byte,
+            0, // amount_burnt
+            0, // unlock_time
+            fork_rct,
+            is_carrot,
+            params.dry_run,
+        )
+        .await?;
+
+        total_fee += built.fee;
+        total_amount += sweep_amount;
+
+        let mut tx_json = serde_json::json!({
+            "tx_hash": built.tx_hash,
+            "fee": built.fee.to_string(),
+            "amount": sweep_amount.to_string(),
+            "weight": built.weight,
+            "estimated_weight": built.estimated_weight,
+            "fee_per_byte": built.fee_per_byte,
+            "inputs": n_inputs,
+        });
+        if params.dry_run {
+            tx_json["tx_hex"] = serde_json::Value::String(built.tx_hex);
+        }
+        tx_results.push(tx_json);
     }
 
-    let destinations = vec![Destination {
-        spend_pubkey: parsed.spend_public_key,
-        view_pubkey: parsed.view_public_key,
-        amount: sweep_amount,
-        asset_type: params.asset_type.clone(),
-        payment_id: parsed.payment_id.unwrap_or([0u8; 8]),
-        is_subaddress: parsed.address_type == salvium_types::constants::AddressType::Subaddress,
-    }];
-
-    // 3. Build, sign, broadcast.
-    let built = build_sign_maybe_broadcast(
-        wallet,
-        daemon,
-        &destinations,
-        &all_selection,
-        &params.asset_type,
-        tx_type::TRANSFER,
-        params.ring_size,
-        priority,
-        fee_per_byte,
-        0, // amount_burnt
-        0, // unlock_time (no lock for sweep)
-        fork_rct,
-        is_carrot,
-        params.dry_run,
-    )
-    .await?;
-
-    let mut result = serde_json::json!({
-        "tx_hash": built.tx_hash,
-        "fee": built.fee.to_string(),
-        "amount": sweep_amount.to_string(),
-        "weight": built.weight,
-        "estimated_weight": built.estimated_weight,
-        "fee_per_byte": built.fee_per_byte,
+    let result = serde_json::json!({
+        "transactions": tx_results,
+        "total_fee": total_fee.to_string(),
+        "total_amount": total_amount.to_string(),
+        "total_inputs": total_inputs,
+        "num_transactions": tx_results.len(),
     });
-    if params.dry_run {
-        result["tx_hex"] = serde_json::Value::String(built.tx_hex);
-    }
+
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
 /// Result of building (and optionally broadcasting) a transaction.
-struct BuiltTx {
-    tx_hash: String,
-    fee: u64,
-    tx_hex: String,
-    weight: u64,
-    estimated_weight: u64,
-    fee_per_byte: u64,
+pub struct BuiltTx {
+    pub tx_hash: String,
+    pub fee: u64,
+    pub tx_hex: String,
+    pub weight: u64,
+    pub estimated_weight: u64,
+    pub fee_per_byte: u64,
 }
 
 /// Core TX construction pipeline shared by transfer, stake, and sweep.
 #[allow(clippy::too_many_arguments)]
-async fn build_sign_maybe_broadcast(
+pub async fn build_sign_maybe_broadcast(
     wallet: &Wallet,
     daemon: &DaemonRpc,
     destinations: &[Destination],
@@ -675,41 +718,86 @@ async fn build_sign_maybe_broadcast(
 ) -> Result<BuiltTx, String> {
     let keys = wallet.keys();
 
-    // 1. Get output distribution for decoy selection.
-    // We use global index space (empty asset_type) because our wallet stores
-    // global output indices. Both decoys and the real output use global IDs,
-    // so the index spaces are consistent. This matches salvium-cli's approach.
+    // 1. Get output distribution for decoy selection in asset-type index space.
+    //    The daemon verifies ring members using asset-type-specific indices
+    //    (read from the TX prefix), so distribution, rings, and submission must
+    //    all use the same asset-type index space.
     let dist = daemon
-        .get_output_distribution(&[0], 0, 0, true, "")
+        .get_output_distribution(&[0], 0, 0, true, asset_type)
         .await
         .map_err(|e| format!("get_output_distribution failed: {e}"))?;
 
-    let rct_offsets = if dist.is_empty() {
-        return Err("empty output distribution from daemon".into());
-    } else {
-        dist[0].distribution.clone()
-    };
+    let dist_entry = dist.first().ok_or("empty output distribution from daemon")?;
+    let rct_offsets = dist_entry.distribution.clone();
+    let dist_start_height = dist_entry.start_height;
 
-    let decoy_selector =
-        DecoySelector::new(rct_offsets).map_err(|e| format!("decoy selector init failed: {e}"))?;
+    let decoy_selector = DecoySelector::new(rct_offsets.clone())
+        .map_err(|e| format!("decoy selector init failed: {e}"))?;
 
-    // 2. For each selected UTXO, pick decoys and fetch ring member data.
+    // 2. For each selected UTXO, convert global index → asset-type index,
+    //    pick decoys, and fetch ring member data.
     let mut prepared_inputs = Vec::new();
 
     for utxo in &selection.selected {
-        // Pick decoy indices.
+        // Look up the output row first (needed for public_key matching).
+        let output_row = wallet
+            .get_output(&utxo.key_image)
+            .map_err(|e| format!("get_output failed: {e}"))?
+            .ok_or_else(|| format!("output not found for key_image {}", utxo.key_image))?;
+
+        // Convert global_index → asset-type-specific index.
+        // The distribution tells us how many asset-type outputs exist up to each height.
+        let block_height = utxo.block_height;
+        let h_idx = if block_height >= dist_start_height {
+            (block_height - dist_start_height) as usize
+        } else {
+            0
+        };
+
+        let at_start = if h_idx == 0 { 0 } else { rct_offsets[h_idx.min(rct_offsets.len()) - 1] };
+        let at_end = rct_offsets[h_idx.min(rct_offsets.len() - 1)];
+        let at_count = at_end - at_start;
+
+        let asset_type_index = if at_count == 1 {
+            at_start
+        } else {
+            // Multiple outputs at this height — probe to find the matching public key.
+            let candidates: Vec<salvium_rpc::daemon::OutputRequest> = (at_start..at_end)
+                .map(|idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
+                .collect();
+            let probe = daemon
+                .get_outs(&candidates, false, asset_type)
+                .await
+                .map_err(|e| format!("get_outs probe failed: {e}"))?;
+
+            let pub_key_hex =
+                output_row.public_key.as_deref().ok_or("output missing public_key")?;
+            probe
+                .iter()
+                .enumerate()
+                .find(|(_, out)| out.key == pub_key_hex)
+                .map(|(i, _)| at_start + i as u64)
+                .ok_or_else(|| {
+                    format!(
+                        "could not find asset-type index for output at height {} (range {}..{}, key={})",
+                        block_height, at_start, at_end, pub_key_hex
+                    )
+                })?
+        };
+
+        // Pick decoy indices in asset-type index space.
         let (ring_indices, real_pos) = decoy_selector
-            .build_ring(utxo.global_index, ring_size)
+            .build_ring(asset_type_index, ring_size)
             .map_err(|e| format!("build_ring failed: {e}"))?;
 
-        // Fetch ring member data from daemon.
+        // Fetch ring member data from daemon using asset-type indices.
         let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices
             .iter()
             .map(|&idx| salvium_rpc::daemon::OutputRequest { amount: 0, index: idx })
             .collect();
 
         let outs = daemon
-            .get_outs(&requests, true, "")
+            .get_outs(&requests, true, asset_type)
             .await
             .map_err(|e| format!("get_outs failed: {e}"))?;
 
@@ -722,12 +810,6 @@ async fn build_sign_maybe_broadcast(
 
         let ring_commitments: Vec<[u8; 32]> =
             outs.iter().map(|o| hex_to_32(&o.mask)).collect::<Result<Vec<_>, _>>()?;
-
-        // Derive the spend key for this output.
-        let output_row = wallet
-            .get_output(&utxo.key_image)
-            .map_err(|e| format!("get_output failed: {e}"))?
-            .ok_or_else(|| format!("output not found for key_image {}", utxo.key_image))?;
 
         let output_pub_key =
             hex_to_32(output_row.public_key.as_deref().ok_or("output missing public_key")?)?;
@@ -811,7 +893,7 @@ async fn build_sign_maybe_broadcast(
             amount: utxo.amount,
             mask,
             asset_type: asset_type.to_string(),
-            global_index: utxo.global_index,
+            global_index: asset_type_index, // asset-type-specific index for key_offsets
             ring,
             ring_commitments,
             ring_indices,
@@ -819,13 +901,17 @@ async fn build_sign_maybe_broadcast(
         });
     }
 
-    // 3. Build the unsigned transaction.
+    // 3. Build-measure-rebuild: build once with estimated fee to measure the
+    //    actual blob size, then rebuild with the exact fee derived from the real
+    //    weight.  This ensures the fee shown in dry_run matches what's broadcast.
+    //    The blob size is stable across rebuilds because changing the fee only
+    //    changes the (hidden) change amount — RCT commitments are always 32 bytes.
     let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
     let n_inputs = prepared_inputs.len();
     let n_outputs = destinations.len() + 1; // +1 for change
     let estimated_weight =
         fee::estimate_tx_weight(n_inputs, n_outputs, ring_size, is_carrot, out_type);
-    let actual_fee = fee::calculate_fee_from_weight(fee_per_byte, estimated_weight as u64);
+    let initial_fee = fee::calculate_fee_from_weight(fee_per_byte, estimated_weight as u64);
 
     // Change address: use CARROT keys when in CARROT mode, CN keys otherwise.
     let (chg_spend, chg_view) = if is_carrot {
@@ -834,63 +920,95 @@ async fn build_sign_maybe_broadcast(
         (keys.cn.spend_public_key, keys.cn.view_public_key)
     };
 
+    // Clone inputs before first build (builder consumes them).
+    let inputs_for_rebuild = prepared_inputs.clone();
+
+    // --- First pass: build with estimated fee to measure actual blob size ---
     let mut builder = TransactionBuilder::new()
         .add_inputs(prepared_inputs)
         .set_change_address(chg_spend, chg_view)
         .set_tx_type(tt)
-        .set_fee(actual_fee)
+        .set_fee(initial_fee)
         .set_unlock_time(unlock_time)
         .set_priority(priority)
         .set_asset_types(asset_type, asset_type)
-        .set_rct_type(fork_rct_type)
-        .set_view_secret_key(keys.cn.view_secret_key);
-
-    // CARROT outputs need the view_balance_secret for self-send ECDH.
+        .set_rct_type(fork_rct_type);
     if is_carrot {
         builder = builder.set_change_view_balance_secret(keys.carrot.view_balance_secret);
     }
-
     if amount_burnt > 0 {
         builder = builder.set_amount_burnt(amount_burnt);
     }
-
     for dest in destinations {
         builder = builder.add_destination(dest.clone());
     }
 
-    let unsigned = builder.build().map_err(|e| format!("transaction build failed: {e}"))?;
-    let actual_fee = unsigned.fee;
-
-    // 4. Sign the transaction.
-    let signed = salvium_tx::sign_transaction(unsigned)
+    let first_unsigned = builder.build().map_err(|e| format!("transaction build failed: {e}"))?;
+    let first_signed = salvium_tx::sign_transaction(first_unsigned)
         .map_err(|e| format!("transaction signing failed: {e}"))?;
+    let first_bytes = first_signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
+    let actual_weight = first_bytes.len() as u64;
+    let exact_fee = fee::calculate_fee_from_weight(fee_per_byte, actual_weight);
 
-    // 5. Serialize.
-    let tx_hash = hex::encode(signed.tx_hash().map_err(|e| format!("tx hash failed: {e}"))?);
-    let tx_bytes = signed.to_bytes().map_err(|e| format!("tx serialize failed: {e}"))?;
-    let tx_hex = hex::encode(&tx_bytes);
-    let weight = tx_bytes.len() as u64;
+    // --- Second pass (if needed): rebuild with exact fee ---
+    let (signed, tx_bytes, actual_fee, weight) = if exact_fee != initial_fee {
+        log::info!(
+            "FEE REBUILD: initial_fee={} exact_fee={} delta={} (actual_weight={}, estimated={})",
+            initial_fee,
+            exact_fee,
+            initial_fee as i64 - exact_fee as i64,
+            actual_weight,
+            estimated_weight,
+        );
+        let mut builder = TransactionBuilder::new()
+            .add_inputs(inputs_for_rebuild)
+            .set_change_address(chg_spend, chg_view)
+            .set_tx_type(tt)
+            .set_fee(exact_fee)
+            .set_unlock_time(unlock_time)
+            .set_priority(priority)
+            .set_asset_types(asset_type, asset_type)
+            .set_rct_type(fork_rct_type);
+        if is_carrot {
+            builder = builder.set_change_view_balance_secret(keys.carrot.view_balance_secret);
+        }
+        if amount_burnt > 0 {
+            builder = builder.set_amount_burnt(amount_burnt);
+        }
+        for dest in destinations {
+            builder = builder.add_destination(dest.clone());
+        }
 
-    // Diagnostic: compare estimated weight vs actual serialized size.
-    let fee_needed_for_actual = fee::calculate_fee_from_weight(fee_per_byte, weight);
-    let weight_diff = weight as i64 - estimated_weight as i64;
-    let weight_pct = if estimated_weight > 0 {
-        100.0 * weight_diff as f64 / estimated_weight as f64
+        let unsigned =
+            builder.build().map_err(|e| format!("transaction build failed (rebuild): {e}"))?;
+        let fee = unsigned.fee;
+        let signed = salvium_tx::sign_transaction(unsigned)
+            .map_err(|e| format!("transaction signing failed (rebuild): {e}"))?;
+        let tx_bytes =
+            signed.to_bytes().map_err(|e| format!("tx serialize failed (rebuild): {e}"))?;
+        let w = tx_bytes.len() as u64;
+        (signed, tx_bytes, fee, w)
     } else {
-        0.0
+        (first_signed, first_bytes, initial_fee, actual_weight)
     };
+
+    // 4. Final serialization.
+    let tx_hash = hex::encode(signed.tx_hash().map_err(|e| format!("tx hash failed: {e}"))?);
+    let tx_hex = hex::encode(&tx_bytes);
+
+    // Diagnostic: verify the fee is now exact.
+    let fee_needed_for_actual = fee::calculate_fee_from_weight(fee_per_byte, weight);
     log::info!(
-        "FEE DIAGNOSTIC: tx_type={} inputs={} outputs={} carrot={} \
-         estimated_weight={} actual_blob_size={} diff={} ({:+.1}%) \
-         fee_set={} fee_needed_for_blob={} fee_per_byte={} {}",
+        "FEE FINAL: tx_type={} inputs={} outputs={} carrot={} \
+         estimated_weight={} actual_weight={} \
+         initial_fee={} exact_fee={} fee_needed={} fee_per_byte={} {}",
         tt,
         n_inputs,
         n_outputs,
         is_carrot,
         estimated_weight,
         weight,
-        weight_diff,
-        weight_pct,
+        initial_fee,
         actual_fee,
         fee_needed_for_actual,
         fee_per_byte,
@@ -960,7 +1078,7 @@ async fn build_sign_maybe_broadcast(
     })
 }
 
-fn hex_to_32(hex_str: &str) -> Result<[u8; 32], String> {
+pub fn hex_to_32(hex_str: &str) -> Result<[u8; 32], String> {
     let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex '{hex_str}': {e}"))?;
     if bytes.len() != 32 {
         return Err(format!("expected 32 bytes, got {} from hex '{hex_str}'", bytes.len()));

@@ -962,6 +962,7 @@ impl DaemonRpc {
                 }),
             )
             .await?;
+        log::debug!("send_raw_transaction raw response: {}", val);
         Ok(serde_json::from_value(val)?)
     }
 

@@ -241,7 +241,12 @@ pub async fn export_raw_multisig_tx(ctx: &AppContext, input_file: &str) -> Resul
 ///
 /// Writes the resulting `MultisigTxSet` to `multisig_tx_set.json` for
 /// co-signers to sign with `sign_multisig`.
-pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str) -> Result {
+pub async fn transfer_multisig(
+    ctx: &AppContext,
+    address: &str,
+    amount_str: &str,
+    asset_override: &str,
+) -> Result {
     use crate::tx_common::{self, hex_to_32, TxPipeline};
 
     let wallet = open_wallet(ctx)?;
@@ -259,23 +264,27 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     let parsed_addr = salvium_types::address::parse_address(address)
         .map_err(|e| format!("invalid destination address: {}", e))?;
 
-    println!("Multisig Transfer:");
-    println!("  To:     {}", address);
-    println!("  Amount: {} SAL", format_sal_u64(amount));
-    println!();
-
     let fee_ctx =
         tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
-    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    println!("Multisig Transfer:");
+    println!("  To:     {}", address);
+    println!("  Amount: {} {}", format_sal_u64(amount), asset);
+    println!();
+
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), asset);
+
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     if unlocked < amount + est_fee {
         return Err(format!(
-            "insufficient unlocked balance: have {} SAL, need {} SAL",
+            "insufficient unlocked balance: have {} {}, need {} {}",
             format_sal_u64(unlocked),
-            format_sal_u64(amount + est_fee)
+            asset,
+            format_sal_u64(amount + est_fee),
+            asset,
         )
         .into());
     }
@@ -290,16 +299,17 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
     let (input_data, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
 
     // 2. Fetch decoys from the daemon and build rings.
-    let prepared = pipeline.fetch_decoys(&input_data).await?;
+    let prepared = pipeline.fetch_decoys(&input_data, asset).await?;
     println!(
-        "Built rings for {} input(s), fee = {} SAL",
+        "Built rings for {} input(s), fee = {} {}",
         prepared.len(),
-        format_sal_u64(actual_fee)
+        format_sal_u64(actual_fee),
+        asset,
     );
 
     // 3. Compute per-input key offsets, key images, and y keys.
@@ -368,7 +378,7 @@ pub async fn transfer_multisig(ctx: &AppContext, address: &str, amount_str: &str
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })

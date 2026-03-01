@@ -5,7 +5,13 @@
 use super::*;
 use crate::tx_common::{self, TxPipeline};
 
-pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priority: &str) -> Result {
+pub async fn transfer(
+    ctx: &AppContext,
+    address: &str,
+    amount_str: &str,
+    priority: &str,
+    asset_override: &str,
+) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -17,24 +23,27 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     println!("Transfer:");
     println!("  To:     {}", address);
-    println!("  Amount: {} SAL", format_sal_u64(amount));
+    println!("  Amount: {} {}", format_sal_u64(amount), asset);
     println!("  Format: {:?}", parsed_addr.format);
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), asset);
     println!();
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     if unlocked < amount + est_fee {
         return Err(format!(
-            "insufficient unlocked balance: have {} SAL, need {} SAL",
+            "insufficient unlocked balance: have {} {}, need {} {}",
             format_sal_u64(unlocked),
-            format_sal_u64(amount + est_fee)
+            asset,
+            format_sal_u64(amount + est_fee),
+            asset,
         )
         .into());
     }
@@ -48,10 +57,10 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let is_subaddress =
@@ -63,7 +72,7 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
@@ -71,15 +80,15 @@ pub async fn transfer(ctx: &AppContext, address: &str, amount_str: &str, priorit
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Transaction submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
+    println!("  Fee:     {} {}", format_sal_u64(actual_fee), asset);
 
     Ok(())
 }
 
-pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
+pub async fn stake(ctx: &AppContext, amount_str: &str, asset_override: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -88,23 +97,27 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
 
     let amount = parse_sal_amount(amount_str)?;
 
-    println!("Stake:");
-    println!("  Amount: {} SAL", format_sal_u64(amount));
-    println!();
-
     let fee_ctx =
         tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
-    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
+
+    println!("Stake:");
+    println!("  Amount: {} {}", format_sal_u64(amount), asset);
     println!();
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), asset);
+    println!();
+
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     if unlocked < amount + est_fee {
         return Err(format!(
-            "insufficient unlocked balance: have {} SAL, need {} SAL",
+            "insufficient unlocked balance: have {} {}, need {} {}",
             format_sal_u64(unlocked),
-            format_sal_u64(amount + est_fee)
+            asset,
+            format_sal_u64(amount + est_fee),
+            asset,
         )
         .into());
     }
@@ -118,10 +131,10 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
@@ -130,7 +143,7 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
             spend_pubkey: keys.carrot.account_spend_pubkey,
             view_pubkey: keys.carrot.account_view_pubkey,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
@@ -139,16 +152,21 @@ pub async fn stake(ctx: &AppContext, amount_str: &str) -> Result {
         .set_tx_type(salvium_tx::types::tx_type::STAKE)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Stake transaction submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Amount:  {} SAL", format_sal_u64(amount));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
+    println!("  Amount:  {} {}", format_sal_u64(amount), asset);
+    println!("  Fee:     {} {}", format_sal_u64(actual_fee), asset);
 
     Ok(())
 }
 
-pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result {
+pub async fn burn(
+    ctx: &AppContext,
+    amount_str: &str,
+    priority: &str,
+    asset_override: &str,
+) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -158,21 +176,24 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     println!("Burn:");
-    println!("  Amount: {} SAL", format_sal_u64(amount));
+    println!("  Amount: {} {}", format_sal_u64(amount), asset);
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), asset);
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     if unlocked < amount + est_fee {
         return Err(format!(
-            "insufficient unlocked balance: have {} SAL, need {} SAL",
+            "insufficient unlocked balance: have {} {}, need {} {}",
             format_sal_u64(unlocked),
-            format_sal_u64(amount + est_fee)
+            asset,
+            format_sal_u64(amount + est_fee),
+            asset,
         )
         .into());
     }
@@ -186,10 +207,10 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
@@ -200,11 +221,11 @@ pub async fn burn(ctx: &AppContext, amount_str: &str, priority: &str) -> Result 
         .set_amount_burnt(amount)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Burn transaction submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Burnt:   {} SAL", format_sal_u64(amount));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
+    println!("  Burnt:   {} {}", format_sal_u64(amount), asset);
+    println!("  Fee:     {} {}", format_sal_u64(actual_fee), asset);
 
     Ok(())
 }
@@ -225,22 +246,23 @@ pub async fn convert(
     let amount = parse_sal_amount(amount_str)?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let source = if source_asset.is_empty() { &fee_ctx.native_asset } else { source_asset };
 
     println!("Convert:");
-    println!("  Amount: {} {}", format_sal_u64(amount), source_asset);
-    println!("  From:   {}", source_asset);
+    println!("  Amount: {} {}", format_sal_u64(amount), source);
+    println!("  From:   {}", source);
     println!("  To:     {}", dest_asset);
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), source_asset);
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), source);
 
-    let balance = wallet.get_balance(source_asset, 0)?;
+    let balance = wallet.get_balance(source, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     if unlocked < amount + est_fee {
         return Err(format!(
             "insufficient unlocked {} balance: have {}, need {}",
-            source_asset,
+            source,
             format_sal_u64(unlocked),
             format_sal_u64(amount + est_fee)
         )
@@ -256,10 +278,10 @@ pub async fn convert(
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        source_asset,
+        source,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, source).await?;
 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
@@ -275,18 +297,18 @@ pub async fn convert(
         .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
         .set_change_view_balance_secret(keys.carrot.view_balance_secret)
         .set_tx_type(salvium_tx::types::tx_type::CONVERT)
-        .set_asset_types(source_asset, dest_asset)
+        .set_asset_types(source, dest_asset)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, source).await?;
     println!("Conversion submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Fee:     {} {}", format_sal_u64(actual_fee), source_asset);
+    println!("  Fee:     {} {}", format_sal_u64(actual_fee), source);
 
     Ok(())
 }
 
-pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
+pub async fn audit(ctx: &AppContext, priority: &str, asset_override: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -295,9 +317,10 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
 
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     // Audit sweeps all funds back to self as a verifiable on-chain proof.
-    let balance = wallet.get_balance("SAL", 0)?;
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     let est_fee = salvium_tx::estimate_tx_fee(4, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
 
@@ -308,8 +331,8 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
     let amount = unlocked - est_fee;
 
     println!("Audit:");
-    println!("  Amount: {} SAL (sweep to self)", format_sal_u64(amount));
-    println!("  Fee:    {} SAL", format_sal_u64(est_fee));
+    println!("  Amount: {} {} (sweep to self)", format_sal_u64(amount), asset);
+    println!("  Fee:    {} {}", format_sal_u64(est_fee), asset);
 
     if !tx_common::confirm("Confirm audit transaction? [y/N] ")? {
         println!("Audit cancelled.");
@@ -320,10 +343,10 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::All,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
@@ -332,7 +355,7 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
             spend_pubkey: keys.carrot.account_spend_pubkey,
             view_pubkey: keys.carrot.account_view_pubkey,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
@@ -341,7 +364,7 @@ pub async fn audit(ctx: &AppContext, priority: &str) -> Result {
         .set_tx_type(salvium_tx::types::tx_type::AUDIT)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Audit transaction submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
 
@@ -354,6 +377,7 @@ pub async fn locked_transfer(
     amount_str: &str,
     unlock_time: u64,
     priority: &str,
+    asset_override: &str,
 ) -> Result {
     let wallet = open_wallet(ctx)?;
 
@@ -366,15 +390,16 @@ pub async fn locked_transfer(
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     println!("Locked Transfer:");
     println!("  To:          {}", address);
-    println!("  Amount:      {} SAL", format_sal_u64(amount));
+    println!("  Amount:      {} {}", format_sal_u64(amount), asset);
     println!("  Unlock time: {}", unlock_time);
     println!();
 
     let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
-    println!("  Estimated fee: {} SAL", format_sal_u64(est_fee));
+    println!("  Estimated fee: {} {}", format_sal_u64(est_fee), asset);
 
     if !tx_common::confirm("Confirm locked transfer? [y/N] ")? {
         println!("Transfer cancelled.");
@@ -385,10 +410,10 @@ pub async fn locked_transfer(
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let is_subaddress =
@@ -400,7 +425,7 @@ pub async fn locked_transfer(
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
@@ -409,15 +434,130 @@ pub async fn locked_transfer(
         .set_unlock_time(unlock_time)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Locked transfer submitted successfully!");
     println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
+    println!("  Fee:     {} {}", format_sal_u64(actual_fee), asset);
 
     Ok(())
 }
 
-pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Result {
+/// Max inputs per sweep TX (matches C++ CARROT_MAX_TX_INPUTS).
+const MAX_SWEEP_INPUTS_PER_TX: usize = 64;
+
+/// Sweep `inputs` to `dest_addr` in batches of up to 64 inputs each.
+/// Each batch becomes a separate on-chain transaction.
+async fn sweep_batched(
+    pipeline: &TxPipeline<'_>,
+    all_inputs: Vec<tx_common::InputData>,
+    parsed_addr: &salvium_types::address::ParsedAddress,
+    asset_type: &str,
+) -> Result {
+    let n_total = all_inputs.len();
+
+    // Split into batches.
+    let mut batches: Vec<Vec<tx_common::InputData>> = Vec::new();
+    let mut batch = Vec::new();
+    for input in all_inputs {
+        batch.push(input);
+        if batch.len() >= MAX_SWEEP_INPUTS_PER_TX {
+            batches.push(std::mem::take(&mut batch));
+        }
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+
+    let n_batches = batches.len();
+    if n_batches > 1 {
+        println!(
+            "Splitting {} inputs into {} transactions (max {} per TX).",
+            n_total, n_batches, MAX_SWEEP_INPUTS_PER_TX
+        );
+    }
+
+    let is_subaddress =
+        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
+
+    let mut total_swept = 0u64;
+    let mut total_fee = 0u64;
+
+    for (i, batch_inputs) in batches.into_iter().enumerate() {
+        let n_inputs = batch_inputs.len();
+        let batch_total: u64 = batch_inputs.iter().map(|inp| inp.amount).sum();
+
+        let batch_fee = salvium_tx::estimate_tx_fee(
+            n_inputs,
+            2,
+            salvium_tx::decoy::DEFAULT_RING_SIZE,
+            true,
+            0x04,
+            pipeline.fee_per_byte,
+        );
+
+        if batch_total <= batch_fee {
+            println!("  Batch {}/{}: skip (dust, fee exceeds total)", i + 1, n_batches);
+            continue;
+        }
+
+        let sweep_amount = batch_total - batch_fee;
+
+        if n_batches > 1 {
+            println!(
+                "\n  Batch {}/{}: {} inputs, {} {}",
+                i + 1,
+                n_batches,
+                n_inputs,
+                format_sal_u64(sweep_amount),
+                asset_type
+            );
+        }
+
+        let prepared = pipeline.fetch_decoys(&batch_inputs, asset_type).await?;
+
+        let builder = salvium_tx::TransactionBuilder::new()
+            .add_inputs(prepared)
+            .add_destination(salvium_tx::builder::Destination {
+                spend_pubkey: parsed_addr.spend_public_key,
+                view_pubkey: parsed_addr.view_public_key,
+                amount: sweep_amount,
+                asset_type: asset_type.to_string(),
+                payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
+                is_subaddress,
+            })
+            .set_fee(batch_fee);
+
+        let result = pipeline.build_sign_submit(builder, asset_type).await?;
+        println!("  TX hash: {}", hex::encode(result.tx_hash));
+        println!("  Swept:   {} {}", format_sal_u64(sweep_amount), asset_type);
+        println!("  Fee:     {} {}", format_sal_u64(batch_fee), asset_type);
+
+        total_swept += sweep_amount;
+        total_fee += batch_fee;
+    }
+
+    if n_batches > 1 {
+        println!(
+            "\nSweep complete: {} TX(s), {} {} swept, {} {} total fee",
+            n_batches,
+            format_sal_u64(total_swept),
+            asset_type,
+            format_sal_u64(total_fee),
+            asset_type
+        );
+    } else {
+        println!("Sweep submitted successfully!");
+    }
+
+    Ok(())
+}
+
+pub async fn sweep_all(
+    ctx: &AppContext,
+    address: &str,
+    priority: &str,
+    asset_override: &str,
+) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -428,8 +568,9 @@ pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Resul
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     let est_fee = salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
@@ -440,8 +581,8 @@ pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Resul
     let amount = unlocked - est_fee;
     println!("Sweep all:");
     println!("  To:     {}", address);
-    println!("  Amount: {} SAL", format_sal_u64(amount));
-    println!("  Fee:    ~{} SAL", format_sal_u64(est_fee));
+    println!("  Amount: ~{} {}", format_sal_u64(amount), asset);
+    println!("  Fee:    ~{} {} (per batch)", format_sal_u64(est_fee), asset);
 
     if !tx_common::confirm("Confirm sweep? [y/N] ")? {
         println!("Sweep cancelled.");
@@ -449,38 +590,14 @@ pub async fn sweep_all(ctx: &AppContext, address: &str, priority: &str) -> Resul
     }
 
     let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
-    let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
+    let (inputs, _) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::All,
     )?;
-    let sweep_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
 
-    let is_subaddress =
-        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
-
-    // Sweep: no change output, single destination.
-    let builder = salvium_tx::TransactionBuilder::new()
-        .add_inputs(prepared)
-        .add_destination(salvium_tx::builder::Destination {
-            spend_pubkey: parsed_addr.spend_public_key,
-            view_pubkey: parsed_addr.view_public_key,
-            amount: sweep_amount,
-            asset_type: "SAL".to_string(),
-            payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
-            is_subaddress,
-        })
-        .set_fee(actual_fee);
-
-    let result = pipeline.build_sign_submit(builder).await?;
-    println!("Sweep submitted successfully!");
-    println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Swept:   {} SAL", format_sal_u64(sweep_amount));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
-
-    Ok(())
+    sweep_batched(&pipeline, inputs, &parsed_addr, asset).await
 }
 
 pub async fn sweep_below(
@@ -488,6 +605,7 @@ pub async fn sweep_below(
     address: &str,
     threshold_str: &str,
     priority: &str,
+    asset_override: &str,
 ) -> Result {
     let wallet = open_wallet(ctx)?;
 
@@ -500,12 +618,13 @@ pub async fn sweep_below(
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     // Get outputs below threshold.
     let query = salvium_crypto::storage::OutputQuery {
         is_spent: Some(false),
         is_frozen: Some(false),
-        asset_type: Some("SAL".to_string()),
+        asset_type: Some(asset.to_string()),
         tx_type: None,
         account_index: None,
         subaddress_index: None,
@@ -517,7 +636,7 @@ pub async fn sweep_below(
         outputs.iter().filter(|o| o.amount.parse::<u64>().unwrap_or(0) < threshold).collect();
 
     if below.is_empty() {
-        println!("No outputs found below {} SAL.", format_sal_u64(threshold));
+        println!("No outputs found below {} {}.", format_sal_u64(threshold), asset);
         return Ok(());
     }
 
@@ -529,10 +648,12 @@ pub async fn sweep_below(
     }
 
     println!(
-        "Sweep below {} SAL: {} outputs, total {} SAL",
+        "Sweep below {} {}: {} outputs, total {} {}",
         format_sal_u64(threshold),
+        asset,
         below.len(),
-        format_sal_u64(total)
+        format_sal_u64(total),
+        asset,
     );
 
     if !tx_common::confirm("Confirm sweep? [y/N] ")? {
@@ -541,36 +662,14 @@ pub async fn sweep_below(
     }
 
     let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
-    let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
+    let (inputs, _) = pipeline.select_and_prepare_inputs(
         total - est_fee,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::SmallestFirst,
     )?;
-    let sweep_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
 
-    let is_subaddress =
-        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
-
-    let builder = salvium_tx::TransactionBuilder::new()
-        .add_inputs(prepared)
-        .add_destination(salvium_tx::builder::Destination {
-            spend_pubkey: parsed_addr.spend_public_key,
-            view_pubkey: parsed_addr.view_public_key,
-            amount: sweep_amount,
-            asset_type: "SAL".to_string(),
-            payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
-            is_subaddress,
-        })
-        .set_fee(actual_fee);
-
-    let result = pipeline.build_sign_submit(builder).await?;
-    println!("Sweep submitted successfully!");
-    println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Swept:   {} SAL", format_sal_u64(sweep_amount));
-
-    Ok(())
+    sweep_batched(&pipeline, inputs, &parsed_addr, asset).await
 }
 
 pub async fn sweep_single(
@@ -578,6 +677,7 @@ pub async fn sweep_single(
     key_image: &str,
     address: &str,
     priority: &str,
+    asset_override: &str,
 ) -> Result {
     let wallet = open_wallet(ctx)?;
 
@@ -589,6 +689,7 @@ pub async fn sweep_single(
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     let output = wallet
         .get_output(key_image)?
@@ -603,7 +704,7 @@ pub async fn sweep_single(
 
     println!("Sweep single output:");
     println!("  Key image: {}", key_image);
-    println!("  Amount:    {} SAL", format_sal_u64(amount));
+    println!("  Amount:    {} {}", format_sal_u64(amount), asset);
     println!("  To:        {}", address);
 
     if !tx_common::confirm("Confirm? [y/N] ")? {
@@ -615,11 +716,11 @@ pub async fn sweep_single(
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount - est_fee,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
     let sweep_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let is_subaddress =
         parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
@@ -630,24 +731,28 @@ pub async fn sweep_single(
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount: sweep_amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Sweep submitted! TX hash: {}", hex::encode(result.tx_hash));
 
     Ok(())
 }
 
-pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
+pub async fn sweep_unmixable(ctx: &AppContext, asset_override: &str) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
         return Err("cannot sweep from a view-only wallet".into());
     }
+
+    let fee_ctx =
+        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     // Find outputs with non-zero denomination amounts (pre-RCT or dust).
     let query = salvium_crypto::storage::OutputQuery {
@@ -671,15 +776,18 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
     }
 
     let total: u64 = unmixable.iter().map(|o| o.amount.parse::<u64>().unwrap_or(0)).sum();
-    println!("Found {} unmixable outputs totalling {} SAL", unmixable.len(), format_sal_u64(total));
+    println!(
+        "Found {} unmixable outputs totalling {} {}",
+        unmixable.len(),
+        format_sal_u64(total),
+        asset
+    );
 
     if !tx_common::confirm("Sweep unmixable outputs to self? [y/N] ")? {
         println!("Cancelled.");
         return Ok(());
     }
 
-    let fee_ctx =
-        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Default).await?;
     let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
     let est_fee =
         salvium_tx::estimate_tx_fee(unmixable.len(), 1, 16, true, 0x04, fee_ctx.fee_per_byte);
@@ -691,11 +799,11 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         total - est_fee,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::SmallestFirst,
     )?;
     let sweep_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let builder = salvium_tx::TransactionBuilder::new()
@@ -704,13 +812,13 @@ pub async fn sweep_unmixable(ctx: &AppContext) -> Result {
             spend_pubkey: keys.carrot.account_spend_pubkey,
             view_pubkey: keys.carrot.account_view_pubkey,
             amount: sweep_amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: [0u8; 8],
             is_subaddress: false,
         })
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!(
         "Swept {} unmixable outputs! TX hash: {}",
         unmixable.len(),
@@ -725,6 +833,7 @@ pub async fn locked_sweep_all(
     address: &str,
     unlock_time: u64,
     priority: &str,
+    asset_override: &str,
 ) -> Result {
     let wallet = open_wallet(ctx)?;
 
@@ -736,8 +845,9 @@ pub async fn locked_sweep_all(
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
-    let balance = wallet.get_balance("SAL", 0)?;
+    let balance = wallet.get_balance(asset, 0)?;
     let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
     let est_fee = salvium_tx::estimate_tx_fee(4, 1, 16, true, 0x04, fee_ctx.fee_per_byte);
 
@@ -748,7 +858,7 @@ pub async fn locked_sweep_all(
     let amount = unlocked - est_fee;
     println!("Locked sweep all:");
     println!("  To:          {}", address);
-    println!("  Amount:      {} SAL", format_sal_u64(amount));
+    println!("  Amount:      {} {}", format_sal_u64(amount), asset);
     println!("  Unlock time: {}", unlock_time);
 
     if !tx_common::confirm("Confirm? [y/N] ")? {
@@ -760,11 +870,11 @@ pub async fn locked_sweep_all(
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::All,
     )?;
     let sweep_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let is_subaddress =
         parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
@@ -775,20 +885,25 @@ pub async fn locked_sweep_all(
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount: sweep_amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
         .set_unlock_time(unlock_time)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Locked sweep submitted! TX hash: {}", hex::encode(result.tx_hash));
 
     Ok(())
 }
 
-pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> Result {
+pub async fn return_payment(
+    ctx: &AppContext,
+    tx_hash: &str,
+    priority: &str,
+    asset_override: &str,
+) -> Result {
     let wallet = open_wallet(ctx)?;
 
     if !wallet.can_spend() {
@@ -797,6 +912,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
 
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     // Look up the incoming TX to find the sender's info.
     let query = salvium_crypto::storage::TxQuery {
@@ -837,7 +953,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
 
     println!("Return payment:");
     println!("  Original TX: {}", tx_hash);
-    println!("  Amount:      {} SAL", format_sal_u64(amount));
+    println!("  Amount:      {} {}", format_sal_u64(amount), asset);
     println!("  Return to:   {}", return_addr);
 
     if !tx_common::confirm("Confirm return? [y/N] ")? {
@@ -849,10 +965,10 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
     let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
         amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::Default,
     )?;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
 
     let keys = wallet.keys();
     let is_subaddress =
@@ -864,7 +980,7 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
             spend_pubkey: parsed_addr.spend_public_key,
             view_pubkey: parsed_addr.view_public_key,
             amount,
-            asset_type: "SAL".to_string(),
+            asset_type: asset.to_string(),
             payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
             is_subaddress,
         })
@@ -873,16 +989,21 @@ pub async fn return_payment(ctx: &AppContext, tx_hash: &str, priority: &str) -> 
         .set_tx_type(salvium_tx::types::tx_type::RETURN)
         .set_fee(actual_fee);
 
-    let result = pipeline.build_sign_submit(builder).await?;
+    let result = pipeline.build_sign_submit(builder, asset).await?;
     println!("Return payment submitted! TX hash: {}", hex::encode(result.tx_hash));
 
     Ok(())
 }
 
-pub async fn donate(ctx: &AppContext, amount_str: &str, priority: &str) -> Result {
+pub async fn donate(
+    ctx: &AppContext,
+    amount_str: &str,
+    priority: &str,
+    asset_override: &str,
+) -> Result {
     // Salvium donation address (mainnet).
     let donate_address = "SaLV1DonateXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXaU6oP9";
-    transfer(ctx, donate_address, amount_str, priority).await
+    transfer(ctx, donate_address, amount_str, priority, asset_override).await
 }
 
 pub async fn sweep_account(
@@ -891,6 +1012,7 @@ pub async fn sweep_account(
     address: &str,
     priority: &str,
     subaddr_indices: &[u32],
+    asset_override: &str,
 ) -> Result {
     let wallet = open_wallet(ctx)?;
 
@@ -902,12 +1024,13 @@ pub async fn sweep_account(
         .map_err(|e| format!("invalid destination address: {}", e))?;
     let fee_priority = tx_common::parse_fee_priority(priority);
     let fee_ctx = tx_common::resolve_fee_context(&ctx.pool, fee_priority).await?;
+    let asset = if asset_override.is_empty() { &fee_ctx.native_asset } else { asset_override };
 
     // Get outputs for the specific account (and optional subaddress filter).
     let query = salvium_crypto::storage::OutputQuery {
         is_spent: Some(false),
         is_frozen: Some(false),
-        asset_type: Some("SAL".to_string()),
+        asset_type: Some(asset.to_string()),
         tx_type: None,
         account_index: Some(account as i64),
         subaddress_index: None,
@@ -943,8 +1066,8 @@ pub async fn sweep_account(
     println!("Sweep account {}:", account);
     println!("  To:       {}", address);
     println!("  Outputs:  {}", filtered.len());
-    println!("  Amount:   {} SAL", format_sal_u64(sweep_amount));
-    println!("  Fee:      ~{} SAL", format_sal_u64(est_fee));
+    println!("  Amount:   {} {}", format_sal_u64(sweep_amount), asset);
+    println!("  Fee:      ~{} {}", format_sal_u64(est_fee), asset);
 
     if !tx_common::confirm("Confirm sweep? [y/N] ")? {
         println!("Sweep cancelled.");
@@ -952,35 +1075,12 @@ pub async fn sweep_account(
     }
 
     let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
-    let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
+    let (inputs, _) = pipeline.select_and_prepare_inputs(
         sweep_amount,
         est_fee,
-        "SAL",
+        asset,
         salvium_wallet::utxo::SelectionStrategy::All,
     )?;
-    let final_amount = inputs.iter().map(|i| i.amount).sum::<u64>() - actual_fee;
-    let prepared = pipeline.fetch_decoys(&inputs).await?;
 
-    let is_subaddress =
-        parsed_addr.address_type == salvium_types::constants::AddressType::Subaddress;
-
-    let builder = salvium_tx::TransactionBuilder::new()
-        .add_inputs(prepared)
-        .add_destination(salvium_tx::builder::Destination {
-            spend_pubkey: parsed_addr.spend_public_key,
-            view_pubkey: parsed_addr.view_public_key,
-            amount: final_amount,
-            asset_type: "SAL".to_string(),
-            payment_id: parsed_addr.payment_id.unwrap_or([0u8; 8]),
-            is_subaddress,
-        })
-        .set_fee(actual_fee);
-
-    let result = pipeline.build_sign_submit(builder).await?;
-    println!("Sweep submitted successfully!");
-    println!("  TX hash: {}", hex::encode(result.tx_hash));
-    println!("  Swept:   {} SAL", format_sal_u64(final_amount));
-    println!("  Fee:     {} SAL", format_sal_u64(actual_fee));
-
-    Ok(())
+    sweep_batched(&pipeline, inputs, &parsed_addr, asset).await
 }
