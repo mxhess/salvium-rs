@@ -156,6 +156,7 @@ impl<'a> TxPipeline<'a> {
 
         let ring_size = salvium_tx::decoy::DEFAULT_RING_SIZE;
         let mut prepared = Vec::new();
+        let mut used_ring_indices = std::collections::HashSet::new();
 
         for inp in inputs {
             // Convert global_index → asset-type-specific index.
@@ -193,10 +194,14 @@ impl<'a> TxPipeline<'a> {
                     })?
             };
 
-            // Pick decoy indices in asset-type index space.
+            // Pick decoy indices in asset-type index space, avoiding indices
+            // already used by previous inputs in this transaction.
             let (ring_indices, real_pos) = decoy_selector
-                .build_ring(asset_type_index, ring_size)
+                .build_ring_excluding(asset_type_index, ring_size, &used_ring_indices)
                 .map_err(|e| format!("ring build: {}", e))?;
+            for &idx in &ring_indices {
+                used_ring_indices.insert(idx);
+            }
 
             // Fetch ring member data using asset-type indices.
             let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices

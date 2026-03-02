@@ -736,7 +736,11 @@ pub async fn build_sign_maybe_broadcast(
 
     // 2. For each selected UTXO, convert global index → asset-type index,
     //    pick decoys, and fetch ring member data.
+    //    Track used ring member indices across inputs to prevent excessive
+    //    overlap that would fail the daemon's tx_sanity_check (requires ≥80%
+    //    unique ring members when mainnet has ≥10000 outputs).
     let mut prepared_inputs = Vec::new();
+    let mut used_ring_indices = std::collections::HashSet::new();
 
     for utxo in &selection.selected {
         // Look up the output row first (needed for public_key matching).
@@ -785,10 +789,14 @@ pub async fn build_sign_maybe_broadcast(
                 })?
         };
 
-        // Pick decoy indices in asset-type index space.
+        // Pick decoy indices in asset-type index space, avoiding indices
+        // already used by previous inputs in this transaction.
         let (ring_indices, real_pos) = decoy_selector
-            .build_ring(asset_type_index, ring_size)
+            .build_ring_excluding(asset_type_index, ring_size, &used_ring_indices)
             .map_err(|e| format!("build_ring failed: {e}"))?;
+        for &idx in &ring_indices {
+            used_ring_indices.insert(idx);
+        }
 
         // Fetch ring member data from daemon using asset-type indices.
         let requests: Vec<salvium_rpc::daemon::OutputRequest> = ring_indices

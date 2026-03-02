@@ -6,6 +6,7 @@
 
 use crate::TxError;
 use rand::Rng;
+use std::collections::HashSet;
 
 /// Default ring size (16 = 15 decoys + 1 real).
 pub const DEFAULT_RING_SIZE: usize = 16;
@@ -108,6 +109,64 @@ impl DecoySelector {
         decoys.sort_unstable();
         let real_pos = decoys.iter().position(|&x| x == real_index).unwrap();
         Ok((decoys, real_pos))
+    }
+
+    /// Build a ring while avoiding indices already used by other inputs in the
+    /// same transaction.
+    ///
+    /// This prevents the daemon's `tx_sanity_check` from rejecting multi-input
+    /// transactions (e.g. sweeps) due to excessive ring member overlap.
+    /// The `used` set should be updated by the caller after each call.
+    pub fn build_ring_excluding(
+        &self,
+        real_index: u64,
+        ring_size: usize,
+        used: &HashSet<u64>,
+    ) -> Result<(Vec<u64>, usize), TxError> {
+        let num_decoys = ring_size - 1;
+        let mut rng = rand::thread_rng();
+        let mut decoys = Vec::with_capacity(num_decoys);
+        let mut attempts = 0;
+        let max_attempts = num_decoys * 200; // more headroom with exclusions
+
+        while decoys.len() < num_decoys {
+            attempts += 1;
+            if attempts > max_attempts {
+                return Err(TxError::DecoySelection(format!(
+                    "failed to find {} unique decoys after {} attempts (excluded {})",
+                    num_decoys,
+                    max_attempts,
+                    used.len()
+                )));
+            }
+
+            let idx = self.sample_output_index(&mut rng);
+
+            if idx == real_index || idx >= self.num_usable {
+                continue;
+            }
+            if decoys.contains(&idx) {
+                continue;
+            }
+            // Prefer unused indices but don't hard-reject used ones — we soften
+            // the constraint after many attempts to avoid exhaustion when the
+            // output pool is small.
+            if used.contains(&idx) && attempts < num_decoys * 50 {
+                continue;
+            }
+
+            decoys.push(idx);
+        }
+
+        decoys.push(real_index);
+        decoys.sort_unstable();
+        let real_pos = decoys.iter().position(|&x| x == real_index).unwrap();
+        Ok((decoys, real_pos))
+    }
+
+    /// Number of usable outputs in the distribution.
+    pub fn num_usable_outputs(&self) -> u64 {
+        self.num_usable
     }
 
     /// Sample a single output index using the gamma distribution.
