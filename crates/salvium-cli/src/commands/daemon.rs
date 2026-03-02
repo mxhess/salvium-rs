@@ -184,6 +184,11 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
                 SyncEvent::Cancelled { height } => {
                     println!("Sync cancelled at height {}", height);
                 }
+                SyncEvent::PoolScanComplete { new_txs, dropped_txs } => {
+                    if new_txs > 0 || dropped_txs > 0 {
+                        println!("\nMempool: {} new, {} dropped", new_txs, dropped_txs);
+                    }
+                }
             }
         }
     });

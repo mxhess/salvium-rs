@@ -299,6 +299,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 SyncEvent::Cancelled { height } => {
                     println!("  ** Sync cancelled at height {} **", height);
                 }
+                SyncEvent::PoolScanComplete { new_txs, dropped_txs } => {
+                    if new_txs > 0 || dropped_txs > 0 {
+                        println!("  Mempool scan: {} new, {} dropped", new_txs, dropped_txs);
+                    }
+                }
             }
         }
 

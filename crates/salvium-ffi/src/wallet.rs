@@ -475,6 +475,9 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
         SyncEvent::Cancelled { height } => unsafe {
             cb(6, *height, 0, 0, std::ptr::null());
         },
+        SyncEvent::PoolScanComplete { new_txs, dropped_txs } => unsafe {
+            cb(7, *new_txs as u64, *dropped_txs as u64, 0, std::ptr::null());
+        },
     }
 }
 

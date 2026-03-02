@@ -1051,6 +1051,12 @@ pub async fn build_sign_maybe_broadcast(
         for utxo in &selection.selected {
             let _ = wallet.mark_output_spent(&utxo.key_image, &tx_hash);
         }
+
+        // Store as pending outgoing TX so it appears immediately in transfers.
+        let total_amount: u64 = destinations.iter().map(|d| d.amount).sum::<u64>() + amount_burnt;
+        if let Err(e) = wallet.put_pending_tx(&tx_hash, actual_fee, total_amount, asset_type) {
+            log::warn!("failed to store pending outgoing TX: {}", e);
+        }
     }
 
     Ok(BuiltTx {

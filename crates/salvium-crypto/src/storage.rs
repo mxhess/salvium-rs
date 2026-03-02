@@ -731,6 +731,31 @@ impl WalletDb {
         Ok(())
     }
 
+    /// Mark a transaction as failed and remove it from the mempool.
+    ///
+    /// Used when a pool TX is no longer in the mempool and was never confirmed.
+    pub fn mark_tx_failed(&self, tx_hash: &str) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE transactions SET in_pool = 0, is_failed = 1, updated_at = ?1 WHERE tx_hash = ?2",
+            params![now_millis(), tx_hash],
+        )?;
+        Ok(())
+    }
+
+    /// Get key images of outputs spent by a specific transaction.
+    ///
+    /// Used to restore outputs when a pool TX is dropped (never confirmed).
+    pub fn get_pool_tx_spent_key_images(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Vec<String>, rusqlite::Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key_image FROM outputs WHERE spent_tx_hash = ?1 AND is_spent = 1")?;
+        let rows = stmt.query_map(params![tx_hash], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
     /// Look up an output by its global output index and asset type.
     /// Used by the output tracker cache for view-only CN spent detection.
     pub fn get_output_by_global_index(

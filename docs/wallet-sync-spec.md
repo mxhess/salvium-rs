@@ -172,6 +172,7 @@ void my_callback(int type, uint64_t cur, uint64_t target, uint32_t outs, const c
         case 4: printf("Error: %s\n", msg); break;
         case 5: printf("Parse error at %llu: %s\n", cur, msg); break;
         case 6: printf("Cancelled at %llu\n", cur); break;
+        case 7: printf("Pool scan: %llu new, %llu dropped\n", cur, target); break;
     }
 }
 ```
@@ -185,6 +186,13 @@ void my_callback(int type, uint64_t cur, uint64_t target, uint32_t outs, const c
 | Error | 4 | On RPC/network error | `error_msg` = description |
 | ParseError | 5 | On block parse failure | `current_height` = block height, `error_msg` = details |
 | Cancelled | 6 | When `stop_sync` called | `current_height` = height reached |
+| PoolScanComplete | 7 | After block sync completes | `current_height` = new pool TXs found, `target_height` = dropped pool TXs |
+
+**Event sequence for a normal sync:**
+`Started(0)` → `Progress(1)` × N → `Complete(2)` → `PoolScanComplete(7)`
+
+The mempool scan runs automatically after block sync. If it fails (daemon disconnected, etc.),
+event 7 is simply not emitted — block sync is unaffected.
 
 ### Incremental sync
 
@@ -266,6 +274,8 @@ salvium_string_free(txs);
 | `isIncoming` | bool | Received funds |
 | `isOutgoing` | bool | Sent funds |
 | `isConfirmed` | bool | In a block |
+| `inPool` | bool | Currently in the mempool |
+| `isFailed` | bool | Dropped from mempool without confirming |
 | `incomingAmount` | string | Atomic units received |
 | `outgoingAmount` | string | Atomic units sent |
 | `fee` | string | Transaction fee (atomic) |
@@ -295,7 +305,62 @@ salvium_string_free(txs);
 - `!isIncoming && isOutgoing` — sent funds, show `outgoingAmount - changeAmount`
 - `isIncoming && isOutgoing` — self-transfer, net = `incomingAmount - outgoingAmount`
 
-## 7. Query Outputs (UTXOs)
+## 7. Mempool (Pending Transactions)
+
+Mempool scanning runs **automatically** at the end of every `salvium_wallet_sync` call.
+Outgoing transactions are also stored **immediately at broadcast** — no sync needed to see
+your own sends.
+
+### Querying pool transactions
+
+```c
+// All pending pool TXs
+char* txs = salvium_wallet_get_transfers(wallet, "{\"inPool\":true}");
+
+// Pending outgoing only
+char* txs = salvium_wallet_get_transfers(wallet, "{\"isOutgoing\":true,\"inPool\":true}");
+
+// Pending incoming only
+char* txs = salvium_wallet_get_transfers(wallet, "{\"isIncoming\":true,\"inPool\":true}");
+
+salvium_string_free(txs);
+```
+
+### Pool TX field values
+
+| Field | Pool TX | Confirmed TX | Failed TX |
+|-------|---------|--------------|-----------|
+| `inPool` | `true` | `false` | `false` |
+| `isConfirmed` | `false` | `true` | `false` |
+| `isFailed` | `false` | `false` | `true` |
+| `blockHeight` | `null` / `0` | actual height | `null` / `0` |
+| `confirmations` | `0` | `>= 0` | `0` |
+
+### TX lifecycle
+
+1. **Broadcast** — TX stored immediately with `inPool: true`, `isConfirmed: false`
+2. **Mempool scan** — incoming TXs from others detected and stored with same flags
+3. **Block confirmed** — TX updated to `inPool: false`, `isConfirmed: true`, `blockHeight: N`
+4. **Dropped** — if a pool TX disappears without confirming: `inPool: false`, `isFailed: true`,
+   and any outputs it spent are automatically restored
+
+### Recommended UI pattern
+
+```c
+void my_callback(int type, uint64_t cur, uint64_t target, uint32_t outs, const char* msg) {
+    if (type == 7 && (cur > 0 || target > 0)) {
+        // Pool scan found changes — refresh transfer list
+        refresh_transfers();
+    }
+}
+
+// Combined transfer list (pending first, then confirmed)
+char* pending   = salvium_wallet_get_transfers(wallet, "{\"inPool\":true}");
+char* confirmed = salvium_wallet_get_transfers(wallet, "{\"isConfirmed\":true}");
+// display: pending + confirmed
+```
+
+## 8. Query Outputs (UTXOs)
 
 ```c
 // All unspent outputs
@@ -320,7 +385,7 @@ salvium_string_free(outs);
 | `minAmount` | string | Minimum amount (atomic) |
 | `maxAmount` | string | Maximum amount (atomic) |
 
-## 8. Subaddresses
+## 9. Subaddresses
 
 ```c
 // Create a new subaddress (returns JSON: {"major":0,"minor":1,"address":"..."})
@@ -337,7 +402,7 @@ salvium_wallet_label_subaddress(wallet, 0, 1, "new label");
 
 Subaddresses are automatically CARROT or CryptoNote based on the current chain hardfork.
 
-## 9. Other Wallet Queries
+## 10. Other Wallet Queries
 
 ```c
 // Addresses
@@ -364,7 +429,7 @@ uint64_t h = salvium_wallet_sync_height(wallet);
 int net = salvium_wallet_network(wallet);  // 0=main, 1=test, 2=stage
 ```
 
-## 10. Staking
+## 11. Staking
 
 ```c
 char* stakes = salvium_wallet_get_stakes(wallet, "locked");   // or "returned" or NULL for all
@@ -386,7 +451,7 @@ salvium_string_free(stakes);
 | `returnHeight` | i64/null | Block height of return |
 | `returnAmount` | string | Amount returned (atomic) |
 
-## 11. Sending Transactions
+## 12. Sending Transactions
 
 All transaction functions take a JSON params string. **`assetType` is required** — there is
 no default. Omitting it returns an error.
@@ -467,7 +532,7 @@ salvium_string_free(result);
 
 **Result:** `{"txHash": "...", "fee": "...", "amount": "..."}`
 
-## 12. Cleanup
+## 13. Cleanup
 
 **Close in reverse order.** Always close handles when done.
 
@@ -552,5 +617,6 @@ salvium_daemon_close(daemon);
 | `crates/salvium-ffi/src/strings.rs` | String marshalling, `salvium_string_free` |
 | `crates/salvium-wallet/src/wallet.rs` | Rust wallet implementation |
 | `crates/salvium-wallet/src/sync.rs` | Sync engine internals |
+| `crates/salvium-wallet/src/pool_scan.rs` | Mempool transaction scanning |
 | `crates/salvium-rpc/src/daemon.rs` | RPC client |
 | `crates/salvium-sync-bench/src/main.rs` | Working Rust sync example |

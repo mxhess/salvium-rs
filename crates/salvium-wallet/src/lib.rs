@@ -12,6 +12,8 @@ pub mod js_import;
 pub mod keys;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod mms;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod pool_scan;
 pub mod pqc;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod query;

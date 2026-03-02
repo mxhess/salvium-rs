@@ -37,6 +37,8 @@ pub enum SyncEvent {
     ParseError { height: u64, blob_len: usize, error: String },
     /// Sync cancelled by caller.
     Cancelled { height: u64 },
+    /// Mempool scan completed.
+    PoolScanComplete { new_txs: usize, dropped_txs: usize },
 }
 
 /// Blockchain sync engine.
@@ -1216,10 +1218,10 @@ fn store_found_output_row(
 
 /// Information about spent outputs detected in a transaction.
 #[derive(Debug, Default)]
-struct SpentInfo {
-    count: usize,
-    total_amount: u64,
-    asset_type: Option<String>,
+pub(crate) struct SpentInfo {
+    pub(crate) count: usize,
+    pub(crate) total_amount: u64,
+    pub(crate) asset_type: Option<String>,
 }
 
 /// Parsed block JSON from salvium-crypto's `parse_block_bytes`.
@@ -1255,7 +1257,7 @@ struct ParsedBlock {
 ///   "rct": { "type": 0 }
 /// }
 /// ```
-fn parse_tx_for_scanning(
+pub(crate) fn parse_tx_for_scanning(
     tx_json: &serde_json::Value,
     tx_hash_hex: &str,
     block_height: u64,
@@ -1714,7 +1716,7 @@ fn extract_inputs_with_offsets(prefix: &serde_json::Value) -> Vec<ParsedTxInput>
 ///
 /// Looks for `rct.txnFee` or `rct_signatures.txnFee`. Returns 0 for
 /// coinbase/protocol transactions (which have no fee).
-fn extract_fee(tx_json: &serde_json::Value) -> u64 {
+pub(crate) fn extract_fee(tx_json: &serde_json::Value) -> u64 {
     tx_json
         .get("rct")
         .or_else(|| tx_json.get("rct_signatures"))
@@ -1725,7 +1727,7 @@ fn extract_fee(tx_json: &serde_json::Value) -> u64 {
 
 /// Build a `TransactionRow` from sync data for persistence.
 #[allow(clippy::too_many_arguments)]
-fn build_transaction_row(
+pub(crate) fn build_transaction_row(
     tx_hash_hex: &str,
     tx_pub_key_hex: &str,
     block_height: u64,
@@ -1802,7 +1804,7 @@ fn build_transaction_row(
 ///
 /// Called during the sequential store phase for each regular transaction.
 #[cfg(not(target_arch = "wasm32"))]
-fn detect_spent_outputs(
+pub(crate) fn detect_spent_outputs(
     db: &salvium_crypto::storage::WalletDb,
     tx_json: &serde_json::Value,
     tx_hash_hex: &str,
@@ -1950,7 +1952,7 @@ fn detect_spent_outputs(
 /// Includes Fix #1 (per-output unlock_time), Fix #2 (return output detection),
 /// and Fix #3 (burning bug detection).
 #[cfg(not(target_arch = "wasm32"))]
-fn store_found_outputs(
+pub(crate) fn store_found_outputs(
     db: &salvium_crypto::storage::WalletDb,
     scan_ctx: &mut ScanContext,
     found: &[FoundOutput],
@@ -2294,7 +2296,7 @@ fn compute_coinbase_tx_hash(tx_json: &serde_json::Value) -> Option<String> {
 }
 
 /// Convert a hex string to a 32-byte array.
-fn hex_to_32(s: &str) -> Option<[u8; 32]> {
+pub(crate) fn hex_to_32(s: &str) -> Option<[u8; 32]> {
     let bytes = hex::decode(s).ok()?;
     if bytes.len() != 32 {
         return None;

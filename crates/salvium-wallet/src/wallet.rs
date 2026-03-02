@@ -212,7 +212,7 @@ impl Wallet {
     ) -> Result<u64, WalletError> {
         let lock_period =
             salvium_types::constants::network_config(self.network()).stake_lock_period;
-        SyncEngine::sync(
+        let height = SyncEngine::sync(
             pool,
             self.db.clone(),
             &mut self.scan_context,
@@ -220,7 +220,33 @@ impl Wallet {
             event_tx,
             cancel,
         )
-        .await
+        .await?;
+
+        // Scan mempool for pending transactions (non-fatal).
+        match crate::pool_scan::scan_mempool(pool, self.db.clone(), &self.scan_context).await {
+            Ok(result) => {
+                if result.new_pool_txs > 0 || result.dropped_pool_txs > 0 {
+                    log::info!(
+                        "mempool scan: {} new, {} dropped",
+                        result.new_pool_txs,
+                        result.dropped_pool_txs,
+                    );
+                }
+                if let Some(tx) = event_tx {
+                    let _ = tx
+                        .send(SyncEvent::PoolScanComplete {
+                            new_txs: result.new_pool_txs,
+                            dropped_txs: result.dropped_pool_txs,
+                        })
+                        .await;
+                }
+            }
+            Err(e) => {
+                log::warn!("mempool scan failed (non-fatal): {}", e);
+            }
+        }
+
+        Ok(height)
     }
 
     // ── UTXO selection ───────────────────────────────────────────────────
@@ -354,6 +380,49 @@ impl Wallet {
         let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
         db.mark_spent(key_image, spending_tx_hash, 0)
             .map_err(|e| WalletError::Storage(e.to_string()))
+    }
+
+    /// Store a pending outgoing transaction immediately after broadcast.
+    ///
+    /// This makes the TX visible in transfer history before the next block.
+    /// When the TX is later confirmed in a block, `put_tx()` (INSERT OR REPLACE)
+    /// will update it with the real block data.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn put_pending_tx(
+        &self,
+        tx_hash: &str,
+        fee: u64,
+        amount: u64,
+        asset_type: &str,
+    ) -> Result<(), WalletError> {
+        let row = salvium_crypto::storage::TransactionRow {
+            tx_hash: tx_hash.to_string(),
+            tx_pub_key: None,
+            block_height: None,
+            block_timestamp: None,
+            confirmations: 0,
+            in_pool: true,
+            is_failed: false,
+            is_confirmed: false,
+            is_incoming: false,
+            is_outgoing: true,
+            incoming_amount: "0".to_string(),
+            outgoing_amount: amount.to_string(),
+            fee: fee.to_string(),
+            change_amount: "0".to_string(),
+            transfers: None,
+            payment_id: None,
+            unlock_time: "0".to_string(),
+            tx_type: 3, // standard transfer
+            asset_type: asset_type.to_string(),
+            is_miner_tx: false,
+            is_protocol_tx: false,
+            note: String::new(),
+            created_at: None,
+            updated_at: None,
+        };
+        let db = self.db.lock().map_err(|e| WalletError::Storage(e.to_string()))?;
+        db.put_tx(&row).map_err(|e| WalletError::Storage(e.to_string()))
     }
 
     // ── Transfers query ──────────────────────────────────────────────────
