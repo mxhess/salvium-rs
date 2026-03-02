@@ -335,8 +335,9 @@ impl TransactionBuilder {
                 output_commitments.push(carrot_out.amount_commitment);
             }
 
-            // Change output (if nonzero).
-            if change_amount > 0 {
+            // Change output — always emitted to guarantee ≥ 2 outputs (required
+            // by daemon sanity check). Amount may be 0 for sweeps.
+            {
                 if let (Some(change_spend), Some(change_view)) =
                     (self.change_spend_pubkey, self.change_view_pubkey)
                 {
@@ -432,8 +433,8 @@ impl TransactionBuilder {
                 output_index += 1;
             }
 
-            // Change output.
-            if change_amount > 0 {
+            // Change output — always emitted to guarantee ≥ 2 outputs.
+            {
                 if let (Some(change_spend), Some(change_view)) =
                     (self.change_spend_pubkey, self.change_view_pubkey)
                 {
