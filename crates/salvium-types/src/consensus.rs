@@ -194,10 +194,17 @@ pub fn is_carrot_active(height: u64, network: Network) -> bool {
     is_hf_active(HfVersion::CARROT, height, network)
 }
 
+/// Check if token support (HF11) is active at a given height.
+pub fn is_tokens_active(height: u64, network: Network) -> bool {
+    is_hf_active(HfVersion::ENABLE_TOKENS, height, network)
+}
+
 /// Get the correct TX version for a given TX type and height.
 pub fn tx_version(tx_type: TxType, height: u64, network: Network) -> u8 {
     let hf = hf_version_for_height(height, network);
-    if hf >= HfVersion::CARROT {
+    if hf >= HfVersion::ENABLE_TOKENS {
+        5
+    } else if hf >= HfVersion::CARROT {
         4
     } else if hf >= HfVersion::ENABLE_N_OUTS && tx_type == TxType::Transfer {
         3
@@ -691,9 +698,14 @@ mod tests {
 
         // HF10 at exact activation
         assert_eq!(hf_version_for_height(1100, net), 10);
+        // Just below HF11
+        assert_eq!(hf_version_for_height(1199, net), 10);
+
+        // HF11 at exact activation
+        assert_eq!(hf_version_for_height(1200, net), 11);
         // Well beyond all forks
-        assert_eq!(hf_version_for_height(2000, net), 10);
-        assert_eq!(hf_version_for_height(100_000, net), 10);
+        assert_eq!(hf_version_for_height(2000, net), 11);
+        assert_eq!(hf_version_for_height(100_000, net), 11);
     }
 
     /// Verify TX version selection for each TX type across HF boundaries.
@@ -744,9 +756,18 @@ mod tests {
         assert_eq!(tx_version(TxType::Convert, 1100, net), 4);
         assert_eq!(tx_version(TxType::Audit, 1100, net), 4);
 
-        // --- Well beyond HF10 (height 2000): still v4 ---
-        assert_eq!(tx_version(TxType::Transfer, 2000, net), 4);
-        assert_eq!(tx_version(TxType::Stake, 2000, net), 4);
+        // --- HF11 (height 1200): everything upgrades to v5 ---
+        assert_eq!(tx_version(TxType::Transfer, 1200, net), 5);
+        assert_eq!(tx_version(TxType::Stake, 1200, net), 5);
+        assert_eq!(tx_version(TxType::Burn, 1200, net), 5);
+        assert_eq!(tx_version(TxType::Convert, 1200, net), 5);
+        assert_eq!(tx_version(TxType::Audit, 1200, net), 5);
+        assert_eq!(tx_version(TxType::CreateToken, 1200, net), 5);
+        assert_eq!(tx_version(TxType::Rollup, 1200, net), 5);
+
+        // --- Well beyond HF11 (height 2000): still v5 ---
+        assert_eq!(tx_version(TxType::Transfer, 2000, net), 5);
+        assert_eq!(tx_version(TxType::Stake, 2000, net), 5);
     }
 
     /// Verify RCT type progression: 6 -> 7 -> 8 -> 9 across hard forks.

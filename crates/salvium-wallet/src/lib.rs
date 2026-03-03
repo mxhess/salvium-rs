@@ -20,6 +20,7 @@ pub mod query;
 pub mod scanner;
 pub mod stake;
 pub mod sync;
+pub mod token;
 pub mod utxo;
 pub mod wallet;
 
@@ -27,9 +28,12 @@ pub use account::Account;
 pub use error::WalletError;
 pub use js_import::{decrypt_js_wallet, JsWalletSecrets};
 pub use keys::{CarrotKeys, CnKeys, WalletKeys, WalletType};
+#[cfg(not(target_arch = "wasm32"))]
+pub use pool_scan::PoolScanResult;
 pub use pqc::{decrypt_envelope, encrypt_envelope, PqcEnvelope, WalletSecrets};
 pub use scanner::{FoundOutput, ScanContext};
 pub use sync::{SyncEngine, SyncEvent};
+pub use token::{validate_create_token_params, CreateTokenParams, CREATE_TOKEN_COST};
 pub use utxo::{SelectionOptions, SelectionStrategy};
 pub use wallet::{MultisigStatus, Wallet};
 

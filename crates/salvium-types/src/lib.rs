@@ -12,4 +12,6 @@ pub mod mnemonic;
 pub mod wordlists;
 
 pub use address::ParsedAddress;
-pub use constants::{AddressFormat, AddressType, HfVersion, Network, RctType, TxType};
+pub use constants::{
+    AddressFormat, AddressType, HfVersion, Network, RctType, TxType, ROLLUP_BINDING_TAG_BYTES,
+};

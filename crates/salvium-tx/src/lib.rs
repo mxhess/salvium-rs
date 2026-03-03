@@ -17,7 +17,10 @@ pub use builder::TransactionBuilder;
 pub use decoy::DecoySelector;
 pub use fee::{calculate_fee_from_weight, estimate_tx_fee};
 pub use sign::sign_transaction;
-pub use types::{ProtocolTxData, RctSignatures, Transaction, TxInput, TxOutput, TxPrefix};
+pub use types::{
+    ErcToken, Layer2RollupData, Layer2RollupTx, ProtocolTxData, RctSignatures, RollupBindingTag,
+    SalToken, TokenMetadata, TokenVariant, Transaction, TxInput, TxOutput, TxPrefix,
+};
 
 use thiserror::Error;
 

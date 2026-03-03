@@ -354,6 +354,9 @@ mod tests {
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
+                rollup_binding_tag: None,
+                token_metadata: None,
+                layer2_rollup_data: None,
             },
             rct: Some(RctSignatures {
                 rct_type: rct_type::SALVIUM_ONE,
@@ -427,6 +430,9 @@ mod tests {
                 source_asset_type: "SAL".to_string(),
                 destination_asset_type: "SAL".to_string(),
                 amount_slippage_limit: 0,
+                rollup_binding_tag: None,
+                token_metadata: None,
+                layer2_rollup_data: None,
             },
             rct: None,
         };

@@ -268,6 +268,8 @@ pub(crate) fn tx_type_name(t: i64) -> &'static str {
         6 => "STAKE",
         7 => "RETURN",
         8 => "AUDIT",
+        9 => "CREATE_TOKEN",
+        10 => "ROLLUP",
         _ => "UNKNOWN",
     }
 }

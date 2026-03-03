@@ -249,6 +249,18 @@ impl Wallet {
         Ok(height)
     }
 
+    /// Scan the mempool for pending transactions relevant to this wallet.
+    ///
+    /// Can be called independently of `sync()` — useful when the wallet is
+    /// already at chain tip but new mempool transactions may have arrived.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn scan_mempool(
+        &self,
+        pool: &salvium_rpc::NodePool,
+    ) -> Result<crate::pool_scan::PoolScanResult, WalletError> {
+        crate::pool_scan::scan_mempool(pool, self.db.clone(), &self.scan_context).await
+    }
+
     // ── UTXO selection ───────────────────────────────────────────────────
 
     /// Select unspent outputs for a transfer.

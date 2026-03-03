@@ -237,6 +237,8 @@ pub enum TxType {
     Stake = 6,
     Return = 7,
     Audit = 8,
+    CreateToken = 9,
+    Rollup = 10,
 }
 
 impl TxType {
@@ -251,6 +253,8 @@ impl TxType {
             6 => Some(Self::Stake),
             7 => Some(Self::Return),
             8 => Some(Self::Audit),
+            9 => Some(Self::CreateToken),
+            10 => Some(Self::Rollup),
             _ => None,
         }
     }
@@ -268,6 +272,8 @@ impl std::fmt::Display for TxType {
             Self::Stake => write!(f, "STAKE"),
             Self::Return => write!(f, "RETURN"),
             Self::Audit => write!(f, "AUDIT"),
+            Self::CreateToken => write!(f, "CREATE_TOKEN"),
+            Self::Rollup => write!(f, "ROLLUP"),
         }
     }
 }
@@ -316,8 +322,8 @@ impl RctType {
 // Transaction Versions
 // =============================================================================
 
-/// Current transaction version (CARROT).
-pub const CURRENT_TRANSACTION_VERSION: u8 = 4;
+/// Current transaction version (token-enabled).
+pub const CURRENT_TRANSACTION_VERSION: u8 = 5;
 
 /// TX version supporting 2 outputs.
 pub const TRANSACTION_VERSION_2_OUTS: u8 = 2;
@@ -327,6 +333,9 @@ pub const TRANSACTION_VERSION_N_OUTS: u8 = 3;
 
 /// TX version with CARROT support.
 pub const TRANSACTION_VERSION_CARROT: u8 = 4;
+
+/// TX version with token support (HF11).
+pub const TRANSACTION_VERSION_ENABLE_TOKENS: u8 = 5;
 
 // =============================================================================
 // Hard Fork Versions
@@ -367,6 +376,7 @@ impl HfVersion {
     pub const AUDIT2: u8 = 8;
     pub const AUDIT2_PAUSE: u8 = 9;
     pub const CARROT: u8 = 10;
+    pub const ENABLE_TOKENS: u8 = 11;
 
     // Future (placeholder)
     pub const REQUIRE_VIEW_TAGS: u8 = 255;
@@ -422,6 +432,23 @@ impl std::fmt::Display for AssetType {
 }
 
 // =============================================================================
+// Token Types
+// =============================================================================
+
+/// Token type identifiers for CREATE_TOKEN transactions.
+pub mod token_type {
+    pub const UNSET: u8 = 0;
+    pub const ERC20: u8 = 1;
+    pub const SAL: u8 = 2;
+}
+
+/// Size of a rollup binding tag in bytes.
+pub const ROLLUP_BINDING_TAG_BYTES: usize = 8;
+
+/// Lock period (in blocks) for CREATE_TOKEN transactions.
+pub const CREATE_TOKEN_LOCK_PERIOD: u64 = 10;
+
+// =============================================================================
 // Network Configuration
 // =============================================================================
 
@@ -464,7 +491,7 @@ static MAINNET_HF_HEIGHTS: [(u8, u64); 10] = [
 ];
 
 // Testnet hard fork heights
-static TESTNET_HF_HEIGHTS: [(u8, u64); 10] = [
+static TESTNET_HF_HEIGHTS: [(u8, u64); 11] = [
     (1, 1),
     (2, 250),
     (3, 500),
@@ -475,10 +502,11 @@ static TESTNET_HF_HEIGHTS: [(u8, u64); 10] = [
     (8, 950),
     (9, 1000),
     (10, 1100),
+    (11, 1200),
 ];
 
 // Stagenet hard fork heights (matches testnet)
-static STAGENET_HF_HEIGHTS: [(u8, u64); 10] = [
+static STAGENET_HF_HEIGHTS: [(u8, u64); 11] = [
     (1, 1),
     (2, 250),
     (3, 500),
@@ -489,6 +517,7 @@ static STAGENET_HF_HEIGHTS: [(u8, u64); 10] = [
     (8, 950),
     (9, 1000),
     (10, 1100),
+    (11, 1200),
 ];
 
 pub static MAINNET_CONFIG: NetworkConfig = NetworkConfig {
@@ -648,10 +677,10 @@ mod tests {
 
     #[test]
     fn test_tx_type_roundtrip() {
-        for v in 0..=8u16 {
+        for v in 0..=10u16 {
             let tt = TxType::from_u16(v).unwrap();
             assert_eq!(tt as u16, v);
         }
-        assert!(TxType::from_u16(9).is_none());
+        assert!(TxType::from_u16(11).is_none());
     }
 }

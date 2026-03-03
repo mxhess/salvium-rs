@@ -26,6 +26,7 @@ use salvium_wallet::Wallet;
 
 /// Transfer parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransferParams {
     pub destinations: Vec<DestinationParam>,
     #[serde(default)]
@@ -40,6 +41,7 @@ pub struct TransferParams {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DestinationParam {
     pub address: String,
     pub amount: String,
@@ -47,6 +49,7 @@ pub struct DestinationParam {
 
 /// Stake parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StakeParams {
     pub amount: String,
     #[serde(default)]
@@ -59,6 +62,7 @@ pub struct StakeParams {
 
 /// Sweep parameters (deserialized from JSON).
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SweepParams {
     pub address: String,
     #[serde(default)]
@@ -391,6 +395,84 @@ pub unsafe extern "C" fn salvium_wallet_transfer_dry_run(
     })
 }
 
+/// Create Token parameters (deserialized from JSON).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTokenParams {
+    pub ticker: String,
+    pub supply: u64,
+    #[serde(default = "default_decimals")]
+    pub decimals: u64,
+    #[serde(default)]
+    pub metadata: String,
+    #[serde(default = "default_priority")]
+    pub priority: String,
+    #[serde(default = "default_ring_size")]
+    pub ring_size: usize,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+fn default_decimals() -> u64 {
+    8
+}
+
+/// Create a custom token.
+///
+/// `params_json` schema:
+/// ```json
+/// {
+///   "ticker": "TEST",
+///   "supply": 1000000,
+///   "decimals": 8,
+///   "metadata": "A test token",
+///   "priority": "normal",
+///   "ring_size": 16,
+///   "dry_run": false
+/// }
+/// ```
+///
+/// Returns JSON on success: `{"tx_hash": "...", "fee": "...", "ticker": "..."}`
+/// Returns null on error.
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_create_token(
+    wallet: *mut c_void,
+    daemon: *mut c_void,
+    params_json: *const c_char,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let wh = unsafe { borrow_handle::<crate::wallet::WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
+        let json_str = unsafe { c_str_to_str(params_json) }?;
+
+        let params: CreateTokenParams =
+            serde_json::from_str(json_str).map_err(|e| format!("invalid params: {e}"))?;
+
+        if !wh.wallet.can_spend() {
+            return Err("wallet is view-only".into());
+        }
+
+        // Validate token params.
+        salvium_wallet::validate_create_token_params(
+            &params.ticker,
+            params.supply,
+            params.decimals,
+            &params.metadata,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let priority = parse_priority(&params.priority);
+        let rt = crate::runtime();
+
+        rt.block_on(async {
+            let fee_ctx = resolve_fee_context(&dh.pool, priority).await?;
+            let daemon = dh.pool.active_daemon().await;
+            do_create_token(&wh.wallet, &daemon, &params, fee_ctx.fee_per_byte).await
+        })
+    })
+}
+
 // =============================================================================
 // Internal Transfer Flow
 // =============================================================================
@@ -688,6 +770,93 @@ pub async fn do_sweep(
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }
 
+pub async fn do_create_token(
+    wallet: &Wallet,
+    daemon: &DaemonRpc,
+    params: &CreateTokenParams,
+    fee_per_byte: u64,
+) -> Result<String, String> {
+    let (fork_rct, is_carrot, _) = detect_fork_params(daemon).await?;
+    let asset_type = "SAL1";
+    let cost = salvium_wallet::token::CREATE_TOKEN_COST;
+
+    // Estimate fee: 2 inputs (cost + change), 2 outputs (self + change).
+    let out_type = if is_carrot { output_type::CARROT_V1 } else { output_type::TAGGED_KEY };
+    let est_fee = fee::estimate_tx_fee(2, 2, params.ring_size, is_carrot, out_type, fee_per_byte);
+
+    // Select UTXOs.
+    let selection = wallet
+        .select_outputs(cost, est_fee, asset_type, salvium_wallet::SelectionStrategy::Default)
+        .map_err(|e| format!("UTXO selection failed: {e}"))?;
+
+    // Build token metadata.
+    let token_metadata = salvium_tx::types::TokenMetadata {
+        version: 1,
+        asset_type: params.ticker.clone(),
+        token: salvium_tx::types::TokenVariant::Sal(salvium_tx::types::SalToken {
+            version: 1,
+            supply: params.supply,
+            decimals: params.decimals as u8,
+            metadata: params.metadata.clone(),
+            url: String::new(),
+            signature: [0u8; 32],
+        }),
+    };
+
+    // CREATE_TOKEN sends cost to self. Use build_sign_maybe_broadcast with
+    // a self-destination and the token metadata set on the builder afterward.
+    // Since build_sign_maybe_broadcast doesn't support token_metadata directly,
+    // we use a destination to self for the cost amount.
+    let keys = wallet.keys();
+    let (chg_spend, chg_view) = if is_carrot {
+        (keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+    } else {
+        (keys.cn.spend_public_key, keys.cn.view_public_key)
+    };
+
+    let self_dest = Destination {
+        spend_pubkey: chg_spend,
+        view_pubkey: chg_view,
+        amount: cost,
+        asset_type: asset_type.to_string(),
+        payment_id: [0u8; 8],
+        is_subaddress: false,
+    };
+
+    // We need to manually build the TX since build_sign_maybe_broadcast
+    // doesn't support setting token_metadata. Reuse its UTXO/decoy pipeline.
+    let built = build_sign_maybe_broadcast_with_metadata(
+        wallet,
+        daemon,
+        &[self_dest],
+        &selection,
+        asset_type,
+        tx_type::CREATE_TOKEN,
+        params.ring_size,
+        FeePriority::Normal,
+        fee_per_byte,
+        0, // amount_burnt
+        0, // unlock_time
+        fork_rct,
+        is_carrot,
+        params.dry_run,
+        Some(token_metadata),
+    )
+    .await?;
+
+    let mut result = serde_json::json!({
+        "tx_hash": built.tx_hash,
+        "fee": built.fee.to_string(),
+        "ticker": params.ticker,
+        "supply": params.supply.to_string(),
+        "weight": built.weight,
+    });
+    if params.dry_run {
+        result["tx_hex"] = serde_json::Value::String(built.tx_hex);
+    }
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
 /// Result of building (and optionally broadcasting) a transaction.
 pub struct BuiltTx {
     pub tx_hash: String,
@@ -698,7 +867,7 @@ pub struct BuiltTx {
     pub fee_per_byte: u64,
 }
 
-/// Core TX construction pipeline shared by transfer, stake, and sweep.
+/// Core TX construction pipeline shared by transfer, stake, sweep, and create_token.
 #[allow(clippy::too_many_arguments)]
 pub async fn build_sign_maybe_broadcast(
     wallet: &Wallet,
@@ -715,6 +884,45 @@ pub async fn build_sign_maybe_broadcast(
     fork_rct_type: u8,
     is_carrot: bool,
     dry_run: bool,
+) -> Result<BuiltTx, String> {
+    build_sign_maybe_broadcast_with_metadata(
+        wallet,
+        daemon,
+        destinations,
+        selection,
+        asset_type,
+        tt,
+        ring_size,
+        priority,
+        fee_per_byte,
+        amount_burnt,
+        unlock_time,
+        fork_rct_type,
+        is_carrot,
+        dry_run,
+        None,
+    )
+    .await
+}
+
+/// Core TX construction pipeline with optional token metadata.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_sign_maybe_broadcast_with_metadata(
+    wallet: &Wallet,
+    daemon: &DaemonRpc,
+    destinations: &[Destination],
+    selection: &salvium_wallet::utxo::SelectionResult,
+    asset_type: &str,
+    tt: u8,
+    ring_size: usize,
+    priority: FeePriority,
+    fee_per_byte: u64,
+    amount_burnt: u64,
+    unlock_time: u64,
+    fork_rct_type: u8,
+    is_carrot: bool,
+    dry_run: bool,
+    token_metadata: Option<salvium_tx::types::TokenMetadata>,
 ) -> Result<BuiltTx, String> {
     let keys = wallet.keys();
 
@@ -950,6 +1158,9 @@ pub async fn build_sign_maybe_broadcast(
         }
         if amount_burnt > 0 {
             builder = builder.set_amount_burnt(amount_burnt);
+        }
+        if let Some(ref tm) = token_metadata {
+            builder = builder.set_token_metadata(tm.clone());
         }
         for dest in destinations {
             builder = builder.add_destination(dest.clone());

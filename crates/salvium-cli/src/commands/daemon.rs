@@ -136,6 +136,17 @@ pub async fn sync_wallet(ctx: &AppContext) -> Result {
     let wallet_height = wallet.sync_height().unwrap_or(0);
     if wallet_height >= info.height {
         println!("Wallet is already synchronized at height {}.", wallet_height);
+        // Still scan the mempool for pending transactions.
+        match wallet.scan_mempool(&pool).await {
+            Ok(result) if result.new_pool_txs > 0 || result.dropped_pool_txs > 0 => {
+                println!(
+                    "Mempool: {} new, {} dropped",
+                    result.new_pool_txs, result.dropped_pool_txs
+                );
+            }
+            Err(e) => log::warn!("mempool scan failed: {}", e),
+            _ => {}
+        }
         return Ok(());
     }
 

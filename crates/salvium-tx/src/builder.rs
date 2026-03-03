@@ -97,6 +97,10 @@ pub struct TransactionBuilder {
     rct_type: u8,
     /// Sender's view secret key (needed for STAKE/AUDIT return address derivation).
     view_secret_key: Option<[u8; 32]>,
+    // Salvium 2 (v5) fields.
+    token_metadata: Option<TokenMetadata>,
+    rollup_binding_tag: Option<RollupBindingTag>,
+    layer2_rollup_data: Option<Layer2RollupData>,
 }
 
 impl TransactionBuilder {
@@ -118,6 +122,9 @@ impl TransactionBuilder {
             amount_slippage_limit: 0,
             rct_type: rct_type::SALVIUM_ONE,
             view_secret_key: None,
+            token_metadata: None,
+            rollup_binding_tag: None,
+            layer2_rollup_data: None,
         }
     }
 
@@ -204,6 +211,24 @@ impl TransactionBuilder {
     /// Set sender's view secret key (needed for STAKE/AUDIT return address derivation).
     pub fn set_view_secret_key(mut self, key: [u8; 32]) -> Self {
         self.view_secret_key = Some(key);
+        self
+    }
+
+    /// Set token metadata (for CREATE_TOKEN transactions, v5+).
+    pub fn set_token_metadata(mut self, metadata: TokenMetadata) -> Self {
+        self.token_metadata = Some(metadata);
+        self
+    }
+
+    /// Set rollup binding tag (for TRANSFER/ROLLUP transactions, v5+).
+    pub fn set_rollup_binding_tag(mut self, tag: RollupBindingTag) -> Self {
+        self.rollup_binding_tag = Some(tag);
+        self
+    }
+
+    /// Set layer 2 rollup data (for ROLLUP transactions, v5+).
+    pub fn set_layer2_rollup_data(mut self, data: Layer2RollupData) -> Self {
+        self.layer2_rollup_data = Some(data);
         self
     }
 
@@ -569,8 +594,19 @@ impl TransactionBuilder {
             }
         }
 
-        // Version 4 for CARROT transactions (rct_type >= SALVIUM_ONE), version 2 otherwise.
-        let version = if self.rct_type >= rct_type::SALVIUM_ONE { 4 } else { 2 };
+        // Version 5 for ENABLE_TOKENS tx types (CREATE_TOKEN, ROLLUP) or when
+        // token_metadata / layer2_rollup_data is set; version 4 for CARROT; else 2.
+        let version = if self.token_metadata.is_some()
+            || self.layer2_rollup_data.is_some()
+            || self.tx_type == tx_type::CREATE_TOKEN
+            || self.tx_type == tx_type::ROLLUP
+        {
+            5
+        } else if self.rct_type >= rct_type::SALVIUM_ONE {
+            4
+        } else {
+            2
+        };
 
         // For version >= 3 TRANSFER, populate return_address_list and change_mask.
         let (return_address_list, return_address_change_mask) = if self.tx_type == tx_type::TRANSFER
@@ -694,6 +730,13 @@ impl TransactionBuilder {
                 None
             };
 
+        // Salvium 2 (v5) fields — only populated for version >= 5.
+        let (rollup_binding_tag, token_metadata, layer2_rollup_data) = if version >= 5 {
+            (self.rollup_binding_tag, self.token_metadata, self.layer2_rollup_data)
+        } else {
+            (None, None, None)
+        };
+
         let prefix = TxPrefix {
             version,
             unlock_time: self.unlock_time,
@@ -710,6 +753,9 @@ impl TransactionBuilder {
             source_asset_type: self.source_asset_type,
             destination_asset_type: self.destination_asset_type,
             amount_slippage_limit: self.amount_slippage_limit,
+            rollup_binding_tag,
+            token_metadata,
+            layer2_rollup_data,
         };
 
         Ok(UnsignedTransaction {

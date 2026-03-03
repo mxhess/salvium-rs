@@ -4,8 +4,8 @@
 //! matching the C++ wallet2::create_token() validation logic.
 
 use crate::error::WalletError;
-use salvium_types::constants::COIN;
 use salvium_types::consensus::MONEY_SUPPLY;
+use salvium_types::constants::COIN;
 
 /// Cost in SAL1 atomic units to create a token (1000 SAL1).
 pub const CREATE_TOKEN_COST: u64 = 1000 * COIN;
@@ -64,17 +64,12 @@ pub fn validate_create_token_params(
 
     // Cannot start with "SAL"
     if coin_symbol.starts_with("SAL") {
-        return Err(WalletError::Other(
-            "token symbol cannot start with 'SAL' (reserved)".into(),
-        ));
+        return Err(WalletError::Other("token symbol cannot start with 'SAL' (reserved)".into()));
     }
 
     // Cannot be a reserved name
     if RESERVED_NAMES.contains(&coin_symbol) {
-        return Err(WalletError::Other(format!(
-            "token symbol '{}' is reserved",
-            coin_symbol
-        )));
+        return Err(WalletError::Other(format!("token symbol '{}' is reserved", coin_symbol)));
     }
 
     // Supply must be at least 1

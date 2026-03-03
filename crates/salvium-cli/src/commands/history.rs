@@ -24,9 +24,9 @@ impl Default for TransferFilters {
         Self {
             in_: true,
             out: true,
-            pending: false,
+            pending: true,
             failed: false,
-            pool: false,
+            pool: true,
             coinbase: false,
             burnt: false,
             staked: false,
@@ -56,8 +56,11 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
         } else {
             None
         },
-        is_confirmed: if f.pending { Some(false) } else { None },
-        in_pool: if f.pool { Some(true) } else { None },
+        // When both pending and pool are true (default), show everything —
+        // don't filter by confirmation status or pool membership.
+        // Only filter when the user explicitly requests ONLY pending or ONLY pool.
+        is_confirmed: if f.pending && !f.pool { Some(false) } else { None },
+        in_pool: if f.pool && !f.pending { Some(true) } else { None },
         tx_type: if f.burnt {
             Some(salvium_tx::types::tx_type::BURN as i64)
         } else if f.staked {
@@ -83,7 +86,8 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
     println!("{}", "-".repeat(80));
 
     for tx in transfers.iter().rev().take(f.limit) {
-        let height = tx.block_height.unwrap_or(0);
+        let height_str =
+            if tx.in_pool { "pool".to_string() } else { tx.block_height.unwrap_or(0).to_string() };
         let hash_short = if tx.tx_hash.len() > 16 {
             format!("{}...", &tx.tx_hash[..16])
         } else {
@@ -100,7 +104,7 @@ pub async fn show_transfers(ctx: &AppContext, f: &TransferFilters) -> Result {
 
         println!(
             "{:<8} {:<10} {:<8} {:>16} {}",
-            height,
+            height_str,
             tx_type_name(tx.tx_type),
             &tx.asset_type,
             amount_str,

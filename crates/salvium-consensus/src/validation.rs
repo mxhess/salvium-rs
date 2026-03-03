@@ -15,7 +15,7 @@ use salvium_types::consensus::{
 };
 use salvium_types::constants::{
     network_config, HfVersion, Network, RctType, TxType, DEFAULT_RING_SIZE, DISPLAY_DECIMAL_POINT,
-    TRANSACTION_VERSION_2_OUTS, TRANSACTION_VERSION_CARROT,
+    TRANSACTION_VERSION_2_OUTS, TRANSACTION_VERSION_CARROT, TRANSACTION_VERSION_ENABLE_TOKENS,
 };
 use thiserror::Error;
 
@@ -134,6 +134,15 @@ pub enum ValidationError {
 
     #[error("AUDIT transactions must have positive unlock height")]
     AuditZeroUnlockHeight,
+
+    #[error("CREATE_TOKEN transactions not enabled before HF {0}")]
+    CreateTokenNotEnabled(u8),
+
+    #[error("ROLLUP transactions not enabled before HF {0}")]
+    RollupNotEnabled(u8),
+
+    #[error("CREATE_TOKEN/ROLLUP source and dest must be SAL1")]
+    TokenRollupAssetMismatch,
 }
 
 // =============================================================================
@@ -182,9 +191,9 @@ pub fn validate_tx_type_and_version(
         return Err(ValidationError::TxTypeUnset);
     }
 
-    // TX type must be in valid range (1-8)
+    // TX type must be in valid range (1-10)
     let type_val = tx_type as u16;
-    if !(1..=8).contains(&type_val) {
+    if !(1..=10).contains(&type_val) {
         return Err(ValidationError::InvalidTxType(type_val));
     }
 
@@ -193,8 +202,32 @@ pub fn validate_tx_type_and_version(
         return Err(ValidationError::InvalidTxVersion { version, hf_version });
     }
 
-    // Carrot fork requirements
-    if hf_version >= HfVersion::CARROT
+    // CREATE_TOKEN requires ENABLE_TOKENS HF
+    if tx_type == TxType::CreateToken && hf_version < HfVersion::ENABLE_TOKENS {
+        return Err(ValidationError::CreateTokenNotEnabled(hf_version));
+    }
+
+    // ROLLUP requires ENABLE_TOKENS HF
+    if tx_type == TxType::Rollup && hf_version < HfVersion::ENABLE_TOKENS {
+        return Err(ValidationError::RollupNotEnabled(hf_version));
+    }
+
+    // ENABLE_TOKENS fork: non-coinbase user tx types need version 5
+    if hf_version >= HfVersion::ENABLE_TOKENS
+        && tx_type != TxType::Transfer
+        && tx_type != TxType::Miner
+        && tx_type != TxType::Protocol
+        && version != TRANSACTION_VERSION_ENABLE_TOKENS
+    {
+        return Err(ValidationError::TxVersionMismatch {
+            tx_type: tx_type.to_string(),
+            required: TRANSACTION_VERSION_ENABLE_TOKENS,
+            hf_version,
+        });
+    }
+
+    // Carrot fork requirements (HF10, before ENABLE_TOKENS supersedes)
+    if (HfVersion::CARROT..HfVersion::ENABLE_TOKENS).contains(&hf_version)
         && tx_type != TxType::Transfer
         && tx_type != TxType::Miner
         && tx_type != TxType::Protocol
@@ -262,6 +295,14 @@ pub fn validate_asset_types(
     // Cannot spend BURN coins
     if source_asset == "BURN" {
         return Err(ValidationError::SpendBurn);
+    }
+
+    // CREATE_TOKEN and ROLLUP: source and dest must be SAL1
+    if tx_type == TxType::CreateToken || tx_type == TxType::Rollup {
+        if source_asset != "SAL1" || dest_asset != "SAL1" {
+            return Err(ValidationError::TokenRollupAssetMismatch);
+        }
+        return Ok(());
     }
 
     // CONVERT allows different source and dest (but still subject to HF asset check)
@@ -1132,6 +1173,56 @@ mod tests {
         let result = validate_audit_tx("SAL", "SAL1", "SaLvAddress123", 0, 500000, 0, 0);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ValidationError::NoInputs));
+    }
+
+    // =========================================================================
+    // CREATE_TOKEN / ROLLUP validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_create_token_before_hf11() {
+        let result = validate_tx_type_and_version(TxType::CreateToken, 5, 10);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ValidationError::CreateTokenNotEnabled(10)));
+    }
+
+    #[test]
+    fn test_create_token_at_hf11() {
+        let result = validate_tx_type_and_version(TxType::CreateToken, 5, 11);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rollup_before_hf11() {
+        let result = validate_tx_type_and_version(TxType::Rollup, 5, 10);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ValidationError::RollupNotEnabled(10)));
+    }
+
+    #[test]
+    fn test_rollup_at_hf11() {
+        let result = validate_tx_type_and_version(TxType::Rollup, 5, 11);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_token_wrong_version_at_hf11() {
+        // At HF11, CREATE_TOKEN with version 4 should fail (needs 5)
+        let result = validate_tx_type_and_version(TxType::CreateToken, 4, 11);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_token_asset_types() {
+        assert!(validate_asset_types(TxType::CreateToken, "SAL1", "SAL1", 11).is_ok());
+        assert!(validate_asset_types(TxType::CreateToken, "SAL", "SAL1", 11).is_err());
+        assert!(validate_asset_types(TxType::CreateToken, "SAL1", "SAL", 11).is_err());
+    }
+
+    #[test]
+    fn test_rollup_asset_types() {
+        assert!(validate_asset_types(TxType::Rollup, "SAL1", "SAL1", 11).is_ok());
+        assert!(validate_asset_types(TxType::Rollup, "SAL", "SAL1", 11).is_err());
     }
 
     #[test]

@@ -1084,3 +1084,102 @@ pub async fn sweep_account(
 
     sweep_batched(&pipeline, inputs, &parsed_addr, asset).await
 }
+
+pub async fn create_token(
+    ctx: &AppContext,
+    ticker: &str,
+    supply: u64,
+    decimals: u64,
+    metadata: &str,
+) -> Result {
+    let wallet = open_wallet(ctx)?;
+
+    if !wallet.can_spend() {
+        return Err("cannot create token from a view-only wallet".into());
+    }
+
+    // Validate token params.
+    salvium_wallet::validate_create_token_params(ticker, supply, decimals, metadata)?;
+
+    let fee_ctx =
+        tx_common::resolve_fee_context(&ctx.pool, salvium_tx::fee::FeePriority::Normal).await?;
+    let asset = "SAL1"; // CREATE_TOKEN always uses SAL1
+
+    let cost = salvium_wallet::CREATE_TOKEN_COST;
+    println!("Create Token:");
+    println!("  Ticker:   {}", ticker);
+    println!("  Supply:   {}", supply);
+    println!("  Decimals: {}", decimals);
+    println!("  Cost:     {} SAL1", format_sal_u64(cost));
+    println!();
+
+    let est_fee = salvium_tx::estimate_tx_fee(2, 2, 16, true, 0x04, fee_ctx.fee_per_byte);
+    println!("  Est. fee: {} SAL1", format_sal_u64(est_fee));
+    println!();
+
+    let balance = wallet.get_balance(asset, 0)?;
+    let unlocked: u64 = balance.unlocked_balance.parse().unwrap_or(0);
+    if unlocked < cost + est_fee {
+        return Err(format!(
+            "insufficient balance: have {} SAL1, need {} SAL1",
+            format_sal_u64(unlocked),
+            format_sal_u64(cost + est_fee),
+        )
+        .into());
+    }
+
+    if !tx_common::confirm("Confirm token creation? [y/N] ")? {
+        println!("Token creation cancelled.");
+        return Ok(());
+    }
+
+    let pipeline = TxPipeline::new(&wallet, ctx, &fee_ctx);
+    let (inputs, actual_fee) = pipeline.select_and_prepare_inputs(
+        cost,
+        est_fee,
+        asset,
+        salvium_wallet::utxo::SelectionStrategy::Default,
+    )?;
+    let prepared = pipeline.fetch_decoys(&inputs, asset).await?;
+
+    // Build token metadata.
+    let token_metadata = salvium_tx::types::TokenMetadata {
+        version: 1,
+        asset_type: ticker.to_string(),
+        token: salvium_tx::types::TokenVariant::Sal(salvium_tx::types::SalToken {
+            version: 1,
+            supply,
+            decimals: decimals as u8,
+            metadata: metadata.to_string(),
+            url: String::new(),
+            signature: [0u8; 32],
+        }),
+    };
+
+    // Send cost to self (change address).
+    let keys = wallet.keys();
+    let builder = salvium_tx::TransactionBuilder::new()
+        .add_inputs(prepared)
+        .add_destination(salvium_tx::builder::Destination {
+            spend_pubkey: keys.carrot.account_spend_pubkey,
+            view_pubkey: keys.carrot.account_view_pubkey,
+            amount: cost,
+            asset_type: asset.to_string(),
+            payment_id: [0u8; 8],
+            is_subaddress: false,
+        })
+        .set_change_address(keys.carrot.account_spend_pubkey, keys.carrot.account_view_pubkey)
+        .set_change_view_balance_secret(keys.carrot.view_balance_secret)
+        .set_tx_type(salvium_tx::types::tx_type::CREATE_TOKEN)
+        .set_fee(actual_fee)
+        .set_asset_types(asset, asset)
+        .set_token_metadata(token_metadata);
+
+    let result = pipeline.build_sign_submit(builder, asset).await?;
+    println!("Token created successfully!");
+    println!("  TX hash: {}", hex::encode(result.tx_hash));
+    println!("  Ticker:  {}", ticker);
+    println!("  Fee:     {} SAL1", format_sal_u64(actual_fee));
+
+    Ok(())
+}

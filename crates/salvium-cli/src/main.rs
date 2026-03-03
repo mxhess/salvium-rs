@@ -284,6 +284,21 @@ enum Commands {
         #[arg(long, default_value = "")]
         asset: String,
     },
+    /// Create a custom token (costs 1000 SAL1).
+    CreateToken {
+        /// 4-character uppercase ticker (e.g. "TEST").
+        #[arg(long)]
+        ticker: String,
+        /// Total supply in atomic units.
+        #[arg(long)]
+        supply: u64,
+        /// Number of decimal places (0-8).
+        #[arg(long, default_value = "8")]
+        decimals: u64,
+        /// Token metadata string.
+        #[arg(long, default_value = "")]
+        metadata: String,
+    },
     /// Sweep all funds to an address.
     SweepAll {
         #[arg(long)]
@@ -997,6 +1012,9 @@ async fn main() {
             commands::convert(&ctx, &amount, &source, &dest, &priority).await
         }
         Commands::Audit { priority, asset } => commands::audit(&ctx, &priority, &asset).await,
+        Commands::CreateToken { ticker, supply, decimals, metadata } => {
+            commands::create_token(&ctx, &ticker, supply, decimals, &metadata).await
+        }
         Commands::SweepAll { address, priority, asset } => {
             commands::sweep_all(&ctx, &address, &priority, &asset).await
         }

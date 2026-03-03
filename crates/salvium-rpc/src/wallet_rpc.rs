@@ -470,6 +470,27 @@ pub struct SignMultisigResult {
 }
 
 // =============================================================================
+// Token Creation Types
+// =============================================================================
+
+/// Request body for `create_token` RPC method.
+#[derive(Debug, Serialize)]
+pub struct CreateTokenRequest {
+    pub ticker: String,
+    pub supply: u64,
+    pub decimals: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub metadata: String,
+}
+
+/// Response from `create_token` RPC method.
+#[derive(Debug, Deserialize)]
+pub struct CreateTokenResult {
+    pub tx_hash: String,
+    pub fee: u64,
+}
+
+// =============================================================================
 // WalletRpc
 // =============================================================================
 
@@ -951,6 +972,26 @@ impl WalletRpc {
                     "priority": priority,
                     "ring_size": ring_size,
                     "get_tx_key": true,
+                }),
+            )
+            .await?;
+        Ok(serde_json::from_value(val)?)
+    }
+
+    /// Create a custom token.
+    pub async fn create_token(
+        &self,
+        req: &CreateTokenRequest,
+    ) -> Result<CreateTokenResult, RpcError> {
+        let val = self
+            .client
+            .call(
+                "create_token",
+                serde_json::json!({
+                    "ticker": req.ticker,
+                    "supply": req.supply,
+                    "decimals": req.decimals,
+                    "metadata": req.metadata,
                 }),
             )
             .await?;

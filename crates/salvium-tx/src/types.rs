@@ -5,6 +5,7 @@
 //! and to/from raw bytes.
 
 use crate::TxError;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ─── Transaction Constants ──────────────────────────────────────────────────
@@ -19,6 +20,8 @@ pub mod tx_type {
     pub const STAKE: u8 = 6;
     pub const RETURN: u8 = 7;
     pub const AUDIT: u8 = 8;
+    pub const CREATE_TOKEN: u8 = 9;
+    pub const ROLLUP: u8 = 10;
 }
 
 pub mod rct_type {
@@ -51,6 +54,78 @@ pub struct ProtocolTxData {
     pub return_anchor_enc: [u8; 16],
 }
 
+// ─── Salvium 2 Token / Rollup Types ─────────────────────────────────────────
+
+/// Rollup binding tag — 8 bytes linking TRANSFER/ROLLUP transactions.
+/// C++ ref: carrot_core/core_types.h rollup_binding_tag_t
+pub type RollupBindingTag = [u8; 8];
+
+/// ERC20 bridge token definition.
+/// C++ ref: cryptonote_basic.h erc_token_t
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErcToken {
+    pub version: u8,
+    pub contract_address: String,
+    pub lockbox_address: String,
+    pub ticker: String,
+    pub erc20_asset_id: u64,
+}
+
+/// Native Salvium token definition.
+/// C++ ref: cryptonote_basic.h sal_token_t
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalToken {
+    pub version: u8,
+    pub supply: u64,
+    pub decimals: u8,
+    pub metadata: String,
+    pub url: String,
+    pub signature: [u8; 32],
+}
+
+/// Token variant — either ERC20 bridge or native SAL token.
+/// C++ ref: cryptonote_basic.h token_v (boost::variant<erc_token_t, sal_token_t>)
+/// Variant tags: 0 = ERC20, 1 = SAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum TokenVariant {
+    #[serde(rename = "erc20")]
+    Erc20(ErcToken),
+    #[serde(rename = "sal")]
+    Sal(SalToken),
+}
+
+/// Token metadata attached to CREATE_TOKEN transactions.
+/// C++ ref: cryptonote_basic.h token_metadata_t
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenMetadata {
+    pub version: u8,
+    pub asset_type: String,
+    pub token: TokenVariant,
+}
+
+/// Single transaction in a Layer 2 rollup bundle.
+/// C++ ref: cryptonote_basic.h layer2_rollup_tx_t
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layer2RollupTx {
+    pub tx_prefix_hash: [u8; 32],
+    pub first_key_image: [u8; 32],
+    pub tx_fee: u64,
+}
+
+/// Layer 2 rollup data container.
+/// C++ ref: cryptonote_basic.h layer2_rollup_data_t
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layer2RollupData {
+    pub version: u8,
+    pub txs: Vec<Layer2RollupTx>,
+}
+
 // ─── Core Transaction Types ─────────────────────────────────────────────────
 
 /// Complete transaction (prefix + RingCT signatures).
@@ -79,6 +154,13 @@ pub struct TxPrefix {
     pub source_asset_type: String,
     pub destination_asset_type: String,
     pub amount_slippage_limit: u64,
+    // Salvium 2 (TX version >= 5) fields.
+    /// Rollup binding tag — links TRANSFER/ROLLUP TXs (v5, TRANSFER and ROLLUP only).
+    pub rollup_binding_tag: Option<RollupBindingTag>,
+    /// Token metadata — CREATE_TOKEN transactions only (v5).
+    pub token_metadata: Option<TokenMetadata>,
+    /// Layer 2 rollup data — ROLLUP transactions only (v5).
+    pub layer2_rollup_data: Option<Layer2RollupData>,
 }
 
 /// Transaction input.
@@ -352,6 +434,38 @@ impl TxPrefix {
             })
         });
 
+        // Salvium 2 (v5) fields — conditionally parsed.
+        let rollup_binding_tag = if version >= 5 {
+            v.get("rollup_binding_tag")
+                .and_then(|s| s.as_str())
+                .and_then(|s| hex::decode(s).ok())
+                .and_then(|b| if b.len() == 8 { Some(hex_to_8(&b)) } else { None })
+        } else {
+            None
+        };
+
+        let token_metadata = if version >= 5 {
+            v.get("token_metadata").and_then(|tm| {
+                if tm.is_null() {
+                    return None;
+                }
+                serde_json::from_value(tm.clone()).ok()
+            })
+        } else {
+            None
+        };
+
+        let layer2_rollup_data = if version >= 5 {
+            v.get("layer2_rollup_data").and_then(|rd| {
+                if rd.is_null() {
+                    return None;
+                }
+                serde_json::from_value(rd.clone()).ok()
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             version,
             unlock_time,
@@ -368,6 +482,9 @@ impl TxPrefix {
             source_asset_type,
             destination_asset_type,
             amount_slippage_limit,
+            rollup_binding_tag,
+            token_metadata,
+            layer2_rollup_data,
         })
     }
 
@@ -410,6 +527,25 @@ impl TxPrefix {
                 "return_view_tag": hex::encode(ptd.return_view_tag),
                 "return_anchor_enc": hex::encode(ptd.return_anchor_enc),
             });
+        }
+
+        // Salvium 2 (v5) fields — conditionally serialized by tx_type.
+        if self.version >= 5 {
+            if let Some(ref tag) = self.rollup_binding_tag {
+                if self.tx_type == tx_type::TRANSFER || self.tx_type == tx_type::ROLLUP {
+                    obj["rollup_binding_tag"] = Value::String(hex::encode(tag));
+                }
+            }
+            if let Some(ref tm) = self.token_metadata {
+                if self.tx_type == tx_type::CREATE_TOKEN {
+                    obj["token_metadata"] = serde_json::to_value(tm).unwrap_or(Value::Null);
+                }
+            }
+            if let Some(ref rd) = self.layer2_rollup_data {
+                if self.tx_type == tx_type::ROLLUP {
+                    obj["layer2_rollup_data"] = serde_json::to_value(rd).unwrap_or(Value::Null);
+                }
+            }
         }
 
         obj
@@ -753,6 +889,12 @@ fn to_32(v: &[u8]) -> [u8; 32] {
     arr
 }
 
+fn hex_to_8(b: &[u8]) -> [u8; 8] {
+    let mut arr = [0u8; 8];
+    arr.copy_from_slice(&b[..8]);
+    arr
+}
+
 fn hex_to_32(s: &str) -> Option<[u8; 32]> {
     let bytes = hex::decode(s).ok()?;
     if bytes.len() != 32 {
@@ -958,6 +1100,9 @@ mod tests {
             source_asset_type: "SAL".to_string(),
             destination_asset_type: "SAL".to_string(),
             amount_slippage_limit: 0,
+            rollup_binding_tag: None,
+            token_metadata: None,
+            layer2_rollup_data: None,
         };
 
         let json = prefix.to_json();
