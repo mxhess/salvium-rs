@@ -482,6 +482,39 @@ fn dispatch_sync_event(event: &salvium_wallet::SyncEvent, cb: SyncCallbackFn) {
 }
 
 // =============================================================================
+// Mempool Scan
+// =============================================================================
+
+/// Scan the mempool for transactions belonging to this wallet.
+///
+/// This is a lightweight alternative to a full sync — it only checks the
+/// daemon's transaction pool for new or dropped transactions relevant to the
+/// wallet's keys.
+///
+/// Returns JSON: `{"new_pool_txs": N, "dropped_pool_txs": N}`
+/// Caller must free with `salvium_string_free()`.
+#[no_mangle]
+pub unsafe extern "C" fn salvium_wallet_scan_mempool(
+    wallet: *mut c_void,
+    daemon: *mut c_void,
+) -> *mut c_char {
+    ffi_try_string(|| {
+        let handle = unsafe { borrow_handle::<WalletHandle>(wallet) }?;
+        let dh = unsafe { borrow_handle::<crate::daemon::DaemonHandle>(daemon) }?;
+        let rt = crate::runtime();
+
+        rt.block_on(async {
+            let result = handle.wallet.scan_mempool(&dh.pool).await.map_err(|e| e.to_string())?;
+            serde_json::to_string(&serde_json::json!({
+                "new_pool_txs": result.new_pool_txs,
+                "dropped_pool_txs": result.dropped_pool_txs,
+            }))
+            .map_err(|e| e.to_string())
+        })
+    })
+}
+
+// =============================================================================
 // Query Functions
 // =============================================================================
 
