@@ -54,9 +54,18 @@ fn crc32(data: &str) -> u32 {
     crc ^ 0xFFFF_FFFF
 }
 
-/// Find a word in a word list. Returns the index or None.
+/// Return the first `n` characters of a UTF-8 string (or the whole string if shorter).
+fn utf8_prefix(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((byte_pos, _)) => &s[..byte_pos],
+        None => s,
+    }
+}
+
+/// Find a word in a word list (case-insensitive, Unicode-aware). Returns the index or None.
 fn find_word(word_list: &WordList, word: &str) -> Option<usize> {
-    word_list.words.iter().position(|&w| w == word)
+    let lower = word.to_lowercase();
+    word_list.words.iter().position(|&w| w.to_lowercase() == lower)
 }
 
 /// Detect language from a mnemonic phrase.
@@ -131,14 +140,18 @@ pub fn mnemonic_to_seed(
         indices.push(idx as u32);
     }
 
+    // Use canonical wordlist entries for checksum (preserves original case,
+    // e.g. German nouns are capitalized: "Augapfel" not "augapfel").
+    let canonical: Vec<&str> = indices.iter().map(|&i| word_list.words[i as usize]).collect();
+
     // Verify checksum
     let prefix_len = word_list.prefix_length;
     let checksum_data: String =
-        words[..24].iter().map(|w| &w[..w.len().min(prefix_len)]).collect::<Vec<_>>().join("");
+        canonical[..24].iter().map(|w| utf8_prefix(w, prefix_len)).collect::<Vec<_>>().join("");
     let checksum_index = (crc32(&checksum_data) % 24) as usize;
 
-    let expected_prefix = &words[checksum_index][..words[checksum_index].len().min(prefix_len)];
-    let actual_prefix = &words[24][..words[24].len().min(prefix_len)];
+    let expected_prefix = utf8_prefix(canonical[checksum_index], prefix_len);
+    let actual_prefix = utf8_prefix(canonical[24], prefix_len);
 
     if expected_prefix != actual_prefix {
         return Err(MnemonicError::ChecksumMismatch {
@@ -203,7 +216,7 @@ pub fn seed_to_mnemonic(seed: &[u8; 32], language: Option<&str>) -> Result<Strin
     // Calculate checksum word
     let prefix_len = word_list.prefix_length;
     let checksum_data: String =
-        words.iter().map(|w| &w[..w.len().min(prefix_len)]).collect::<Vec<_>>().join("");
+        words.iter().map(|w| utf8_prefix(w, prefix_len)).collect::<Vec<_>>().join("");
     let checksum_index = (crc32(&checksum_data) % 24) as usize;
     words.push(words[checksum_index]);
 
@@ -252,9 +265,93 @@ mod tests {
     }
 
     #[test]
+    fn test_german_roundtrip() {
+        let seed = [
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77, 0x88, 0x99,
+        ];
+
+        // Encode as German (mixed-case wordlist)
+        let mnemonic = seed_to_mnemonic(&seed, Some("german")).unwrap();
+
+        // Decode with explicit language
+        let result = mnemonic_to_seed(&mnemonic, Some("german")).unwrap();
+        assert_eq!(result.seed, seed, "German roundtrip should preserve seed");
+
+        // Decode with auto-detection
+        let result2 = mnemonic_to_seed(&mnemonic, None).unwrap();
+        assert_eq!(result2.seed, seed, "German auto-detect roundtrip should preserve seed");
+
+        // Decode with user-lowercased input (the actual bug scenario)
+        let lowered = mnemonic.to_lowercase();
+        let result3 = mnemonic_to_seed(&lowered, None).unwrap();
+        assert_eq!(result3.seed, seed, "lowercase German input should still decode correctly");
+    }
+
+    #[test]
+    fn test_all_languages_roundtrip() {
+        let seed = [
+            0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+            0x77, 0x88, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77, 0x88, 0x99,
+        ];
+
+        for lang in available_languages() {
+            let mnemonic =
+                seed_to_mnemonic(&seed, Some(lang)).unwrap_or_else(|e| panic!("{lang}: {e}"));
+
+            // Original-case roundtrip
+            let result = mnemonic_to_seed(&mnemonic, Some(lang))
+                .unwrap_or_else(|e| panic!("{lang} decode: {e}"));
+            assert_eq!(result.seed, seed, "{lang}: roundtrip failed");
+
+            // Lowercased input (user may type all lowercase)
+            let lowered = mnemonic.to_lowercase();
+            let result2 = mnemonic_to_seed(&lowered, Some(lang))
+                .unwrap_or_else(|e| panic!("{lang} lowercase decode: {e}"));
+            assert_eq!(result2.seed, seed, "{lang}: lowercase roundtrip failed");
+
+            // Auto-detect from lowercased input
+            let result3 = mnemonic_to_seed(&lowered, None)
+                .unwrap_or_else(|e| panic!("{lang} auto-detect: {e}"));
+            assert_eq!(result3.seed, seed, "{lang}: auto-detect roundtrip failed");
+        }
+    }
+
+    #[test]
     fn test_wrong_word_count() {
         let result = mnemonic_to_seed("one two three", Some("english"));
         assert!(matches!(result, Err(MnemonicError::WrongWordCount(3))));
+    }
+
+    /// Cross-implementation test using the exact German seed from the C++ test suite
+    /// (`tests/unit_tests/mnemonics.cpp` — `case_tolerance` test).
+    /// Verifies that mixed-case, all-lowercase, and auto-detected decoding all
+    /// produce the same seed bytes.
+    #[test]
+    fn test_cpp_german_case_tolerance() {
+        // Exact seed from C++ test: mixed case with umlaut (Grünalge)
+        let seed_mixed = "Neubau umarmen Abart umarmen Turban feilen Brett Bargeld \
+            Episode Milchkuh Substanz Jahr Armband Maibaum Tand Grünalge Tabak \
+            erziehen Federboa Lobrede Tenor Leuchter Curry Diskurs Tenor";
+
+        // Decode mixed-case (as originally generated)
+        let result1 = mnemonic_to_seed(seed_mixed, None).expect("mixed-case German decode");
+        assert_eq!(result1.language.english_name, "german");
+
+        // All-lowercase (what C++ boost::algorithm::to_lower produces)
+        let seed_lower = seed_mixed.to_lowercase();
+        let result2 = mnemonic_to_seed(&seed_lower, None).expect("lowercase German decode");
+        assert_eq!(result2.language.english_name, "german");
+
+        // Both must produce identical seed bytes
+        assert_eq!(result1.seed, result2.seed, "case should not affect seed derivation");
+
+        // Re-encode from the derived seed and verify roundtrip
+        let re_encoded = seed_to_mnemonic(&result1.seed, Some("german")).unwrap();
+        let result3 = mnemonic_to_seed(&re_encoded, Some("german")).unwrap();
+        assert_eq!(result3.seed, result1.seed, "re-encoded German roundtrip failed");
     }
 
     #[test]
