@@ -23,7 +23,6 @@ jobs:
   # ── Stage 1: Preflight ───────────────────────────────────────────────
   fmt:
     name: Formatting
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache git
@@ -44,7 +43,6 @@ jobs:
 
   compile-wasm:
     name: Compile WASM target
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache git
@@ -58,7 +56,6 @@ jobs:
   compile:
     name: Compile workspace
     needs: [fmt, clippy, compile-wasm]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -73,7 +70,6 @@ jobs:
   test-types:
     name: "Test: types + consensus rules"
     needs: [compile]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -87,7 +83,6 @@ jobs:
   test-crypto:
     name: "Test: crypto verification"
     needs: [compile]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -101,7 +96,6 @@ jobs:
   test-wallet:
     name: "Test: wallet + transactions + CLI"
     needs: [compile]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -117,7 +111,6 @@ jobs:
   test-infra:
     name: "Test: miner + multisig + RPC"
     needs: [compile]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -133,7 +126,6 @@ jobs:
   docs:
     name: Documentation
     needs: [compile]
-    runs-on: self-hosted
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -160,7 +152,6 @@ jobs:
       - test-wallet
       - test-infra
       - docs
-    runs-on: self-hosted
     steps:
       - name: Check all jobs passed
         run: |
