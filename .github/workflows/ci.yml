@@ -23,6 +23,7 @@ jobs:
   # ── Stage 1: Preflight ───────────────────────────────────────────────
   fmt:
     name: Formatting
+    runs-on: ubuntu-latest
     container: rust:alpine
     steps:
       - run: apk add --no-cache git
@@ -32,7 +33,7 @@ jobs:
 
   clippy:
     name: Lint (clippy)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     container: rust:alpine
     steps:
       - run: apk add --no-cache musl-dev perl make git g++ cmake tar
@@ -43,6 +44,7 @@ jobs:
 
   compile-wasm:
     name: Compile WASM target
+    runs-on: ubuntu-latest
     container: rust:alpine
     steps:
       - run: apk add --no-cache git
@@ -55,6 +57,7 @@ jobs:
   # ── Stage 2: Compile workspace ───────────────────────────────────────
   compile:
     name: Compile workspace
+    runs-on: ubuntu-latest
     needs: [fmt, clippy, compile-wasm]
     container: rust:alpine
     steps:
@@ -69,6 +72,7 @@ jobs:
   # ── Stage 3: Tests + docs ───────────────────────────────────────────
   test-types:
     name: "Test: types + consensus rules"
+    runs-on: ubuntu-latest
     needs: [compile]
     container: rust:alpine
     steps:
@@ -82,6 +86,7 @@ jobs:
 
   test-crypto:
     name: "Test: crypto verification"
+    runs-on: ubuntu-latest
     needs: [compile]
     container: rust:alpine
     steps:
@@ -95,6 +100,7 @@ jobs:
 
   test-wallet:
     name: "Test: wallet + transactions + CLI"
+    runs-on: ubuntu-latest
     needs: [compile]
     container: rust:alpine
     steps:
@@ -110,6 +116,7 @@ jobs:
 
   test-infra:
     name: "Test: miner + multisig + RPC"
+    runs-on: ubuntu-latest
     needs: [compile]
     container: rust:alpine
     steps:
@@ -125,6 +132,7 @@ jobs:
 
   docs:
     name: Documentation
+    runs-on: ubuntu-latest
     needs: [compile]
     container: rust:alpine
     steps:
@@ -152,6 +160,7 @@ jobs:
       - test-wallet
       - test-infra
       - docs
+    runs-on: ubuntu-latest  
     steps:
       - name: Check all jobs passed
         run: |
